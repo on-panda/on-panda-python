@@ -1,63 +1,90 @@
 import mxlm
+from copy import deepcopy
+
+
+def sequence_prefix_length(seq1, seq2):
+    for i in range(min(len(seq1), len(seq2))):
+        if seq1[i] != seq2[i]:
+            return i
+    return i + 1
+
+
+RESPONSE_ROLES = ["assistant"]
 
 
 class PandaTreePaser:
     def __init__(self, tokenizer=None):
         self.tokenizer = tokenizer
-    
-    def messages_to_sequence(self, messages):
-        return self.tokenizer.apply_chat_template(messages, tokenize=False)
-        
-    def paser(self, panda_tree):
-        assert 'update_time' in panda_tree, "Never saved data. Which mean may never checked by Annotator."
-        assert len(panda_tree['dialogs']) >= 1, "Empty dialogs!"
-        panda_tree['dialogs'] = {int(k): v for k, v in panda_tree['dialogs'].items()}
-        dialog_ids = sorted(panda_tree['dialogs'].keys())
-        dialogs = panda_tree['dialogs']
-        prompt_hash_to_ids = {}
-        for dialog_id in dialog_ids:
-            dialog = dialogs[dialog_id]
-            assert 'annotate' in dialog, "No annotate in dialog!"
-            prompt = mxlm.remove_last_assistant(dialog['messages'])
-            dialog['prompt_hash'] = mxlm.hash_object_sha256_base64(prompt)
-            prompt_hash_to_ids[dialog['prompt_hash']] = prompt_hash_to_ids.get(dialog['prompt_hash'], []) + [dialog_id]
-            dialog['sequence'] = self.messages_to_sequence(dialog['messages'])
 
-        
-        dense_ids = [k for k in dialog_ids if dialogs[k]["annotate"].get("is_good")]
+    def paser(self, data):
+        return PandaTree(data, tokenizer=self.tokenizer)
 
+
+class PandaTree:
+    def __init__(self, data, tokenizer=None):
+        self.data = data
+        self.tokenizer = tokenizer
+        assert (
+            "update_time" in data
+        ), "Never saved data. Which mean may never checked by Annotator."
+        assert len(data["dialogs"]) >= 1, "Empty dialogs!"
+        data["dialogs"] = {int(k): v for k, v in data["dialogs"].items()}
+        dialogs = data["dialogs"]
+        dialog_valide_keys = [
+            key
+            for key in sorted(data["dialogs"].keys())
+            if dialogs[key]["messages"][-1]["role"] in RESPONSE_ROLES
+        ]
+        prompt_hash_to_keys = {}
+        for dialog_key in dialog_valide_keys:
+            dialog = dialogs[dialog_key]
+            assert "annotate" in dialog, "No annotate in dialog!"
+            prompt = mxlm.remove_last_assistant(dialog["messages"])
+            dialog["prompt_hash"] = mxlm.hash_object_sha256_base64(prompt)
+            prompt_hash_to_keys[dialog["prompt_hash"]] = prompt_hash_to_keys.get(
+                dialog["prompt_hash"], []
+            ) + [dialog_key]
+            dialog["sequence"] = self.messages_to_sequence(dialog["messages"])
+
+        dense_keys = [
+            k for k in dialog_valide_keys if dialogs[k]["annotate"].get("is_good")
+        ]
 
         trees = {}
         to_parent = {}
-        def get_parents(dialog_id):  # include self
-            parents = [dialog_id]
+
+        def get_parents(dialog_key):  # include self
+            parents = [dialog_key]
             while to_parent[parents[-1]]:
                 parents.append(to_parent[parents[-1]])
             return parents[::-1]
-            
-        for dialog_id in dialog_ids:
-            dialog = panda_tree['dialogs'][dialog_id]
-            operations = dialog.get('operations', [])
+
+        for dialog_key in dialog_valide_keys:
+            dialog = data["dialogs"][dialog_key]
+            operations = dialog.get("operations", [])
             is_tree_root = self.is_operation_tree_root(operations)
             if not is_tree_root:
-                parent = int(operations[0]['parent'])
+                parent = int(operations[0]["parent"])
                 if parent not in to_parent:
                     # belong to deleted
                     is_tree_root = True
             if is_tree_root:
-                trees[dialog_id] = {}
-                to_parent[dialog_id] = None
+                trees[dialog_key] = {}
+                to_parent[dialog_key] = None
             else:
-                to_parent[dialog_id] = parent
+                to_parent[dialog_key] = parent
                 parents = get_parents(parent)
-                
+
                 node = trees
                 for _parent in parents:
                     node = node[_parent]
-                node[dialog_id] = {}
+                node[dialog_key] = {}
 
+        # best practice: only do negative supervision for outcome and fork pairs. because dense_keys will provide positive supervision. if do so, negative supervision should duplicate.
+        # pair of (negative, positive)
         outcome_pairs = []
         fork_pairs = []
+
         def flatten_tree(tre):
             if not tre:
                 return []
@@ -66,47 +93,119 @@ class PandaTreePaser:
                 res.append(k)
                 res.extend(flatten_tree(tre[k]))
             return res
-        for tree_id in trees:
-            tre = trees[tree_id]  # avoid boxx.tree variable
-            has_dense = False
-            flattens = [tree_id] + flatten_tree(tre)
-            for dialog_id in flattens:
-                if dialog_id in dense_ids:
-                    has_dense = True
-                    break
-            if has_dense:
-                for dialog_id in flattens:
-                    if dialog_id not in dense_ids:
-                        fork_pairs.append((tree_id, dialog_id))
-            else:
-                pass
 
-                            
+        for tree_key in trees:
+            tre = trees[tree_key]  # avoid boxx.tree variable
+            flattens = [tree_key] + flatten_tree(tre)
+
+            tree_dense_keys = [
+                dialog_key for dialog_key in flattens if dialog_key in dense_keys
+            ]
+
+            if tree_dense_keys:  # this tree has dense, only need to do fork pairs
+                for dialog_key in flattens:
+                    if dialog_key not in dense_keys:
+                        # find in this tree's dense which has nearst sequence as pair dense
+                        # may be multiple pair dense with the same prefix length
+                        min_prefix_len = 9e10
+                        pair_dense_keys = []
+                        for dense_key in tree_dense_keys:
+                            prefix_len = sequence_prefix_length(
+                                dialogs[dialog_key]["sequence"],
+                                dialogs[dense_key]["sequence"],
+                            )
+                            # for multiple pieces of data with the same branching point, token level negative supervision should duplicate
+                            if prefix_len < min_prefix_len:
+                                min_prefix_len = prefix_len
+                                pair_dense_keys = [dense_key]
+                            elif prefix_len == min_prefix_len:
+                                pair_dense_keys.append(dense_key)
+                        for dense_key in pair_dense_keys:
+                            assert (
+                                dialogs[dialog_key]["prompt_hash"]
+                                == dialogs[dense_key]["prompt_hash"]
+                            ), f"Prompt hash of {pair_dense_keys}, {dense_key} not equal!\n{dialogs[dialog_key]['messages']}\n{dialogs[dense_key]['messages']}"
+                        fork_pairs.extend(
+                            [(dialog_key, dense_key) for dense_key in pair_dense_keys]
+                        )
+            else:  # this tree has no dense, need to do outcome pairs
+                for dialog_key in flattens:
+                    dialog = dialogs[dialog_key]
+                    if dialog.get("operations", [{}])[0].get("is_prompt_modified"):
+                        # when prompt modified and no dense in this tree, don't need to as outcome negative supervision
+                        break
+                    for dense_key in dense_keys:
+                        if dialog["prompt_hash"] == dialogs[dense_key]["prompt_hash"]:
+                            outcome_pairs.append((dialog_key, dense_key))
+
+        self.trees = trees
+        self.to_parent = to_parent
+        self.dense_keys = dense_keys
+        self.outcome_pairs = outcome_pairs
+        self.fork_pairs = fork_pairs
+        self.valid_dialog_keys = dialog_valide_keys
         g()
-        
+
     def is_operation_tree_root(self, operations):
         if not operations:
             return True
         operation = operations[0]
-        if operation.get('is_new_generated'):
+        if operation.get("is_new_generated"):
             return True
-        if operation.get('is_prompt_modified'):
+        if operation.get("is_prompt_modified"):
             return True
-        if not operation.get('parent'):
+        if not operation.get("parent"):
             return True
-        
+
+    def messages_to_sequence(self, messages):
+        if not self.tokenizer:
+            # default
+            return mxlm.messages_to_sequence(messages)
+        return self.tokenizer.apply_chat_template(messages, tokenize=False)
+
+    def __str__(self):
+        s = f"""PandaTree({str(self.trees)}):
+    dense_keys: {self.dense_keys}
+    fork_pairs: {self.fork_pairs}
+    outcome_pairs: {self.outcome_pairs}"""
+        return s
+
+    __repr__ = __str__
+
+    def build_legacy_data_v1(self):
+        data = self.data
+        dialogs = data["dialogs"]
+        sfts = []
+        for dense_key in self.dense_keys:
+            dialog = dialogs[dense_key]
+            sfts.append(dialog["messages"])
+        preferences = []
+        for rejected_key, chosen_key in self.outcome_pairs + self.fork_pairs:
+            rejected = dialogs[rejected_key]
+            chosen = dialogs[chosen_key]
+            assert rejected["prompt_hash"] == chosen["prompt_hash"]
+            preference = deepcopy(
+                rejected["messages"][:-1]
+                + [rejected["messages"][-1], chosen["messages"][-1]]
+            )
+            # from Anthropic/hh-rlhf
+            preference[-1]["preference_tag"] = "chosen"
+            preference[-2]["preference_tag"] = "rejected"
+            preferences.append(preference)
+        return dict(sfts=sfts, preferences=preferences)
 
 
 if __name__ == "__main__":
     from boxx import *
     import os
-    os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
     from transformers import AutoTokenizer
 
+    tokenizer = None
     # tokenizer = AutoTokenizer.from_pretrained("HuggingFaceH4/zephyr-7b-beta")
     # tokenizer = AutoTokenizer.from_pretrained("unsloth/llama-3-8b-bnb-4bit")
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
-    parser = PandaTreePaser(tokenizer)
+    # tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
 
     messages = [
         {
@@ -119,19 +218,22 @@ if __name__ == "__main__":
         },
         {"role": "assistant", "content": "2 helicopters"},
     ]
-
-    chatml = tokenizer.apply_chat_template(messages, tokenize=False)
-    print(chatml)
-    data = tokenizer.apply_chat_template(
-        messages,
-        add_generation_prompt=True,
-        return_tensors="pt",
-        return_dict=True,
-        return_assistant_tokens_mask=True,
-    ).data
+    if tokenizer:
+        chatml = tokenizer.apply_chat_template(messages, tokenize=False)
+        print(chatml)
+        data = tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            return_tensors="pt",
+            return_dict=True,
+            return_assistant_tokens_mask=True,
+        ).data
 
     import json
-    pt = panda_tree = json.load(open('../../asset/on-panda-example/how-many-1s.panda.json'))
-    
-    parser.paser(panda_tree)
-    print(panda_tree)
+
+    data = json.load(open("../../asset/on-panda-example/how-many-1s.panda.json"))
+
+    pt = PandaTree(data, tokenizer=tokenizer)
+    legacy = pt.build_legacy_data_v1()
+    print(pt)
+    tree - legacy
