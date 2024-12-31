@@ -5,8 +5,9 @@ Created on Sat Dec 21 16:23:49 2024
 
 @author: DIYer22
 """
-
-from mxlm import *
+true = True
+false = False
+null = None
 
 
 def messages_to_panda_tree(msgs, uuid=None):

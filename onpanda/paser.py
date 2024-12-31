@@ -22,30 +22,11 @@ class PandaTreePaser:
 
 class PandaTree:
     def __init__(self, data, tokenizer=None):
-        self.data = data
+        self.raw_data = data
         self.tokenizer = tokenizer
-        assert (
-            "update_time" in data
-        ), "Never saved data. Which mean may never checked by Annotator."
-        assert len(data["dialogs"]) >= 1, "Empty dialogs!"
-        data["dialogs"] = {int(k): v for k, v in data["dialogs"].items()}
+        self.data = data = self.pre_process(data)
         dialogs = data["dialogs"]
-        dialog_valide_keys = [
-            key
-            for key in sorted(data["dialogs"].keys())
-            if dialogs[key]["messages"][-1]["role"] in RESPONSE_ROLES
-        ]
-        prompt_hash_to_keys = {}
-        for dialog_key in dialog_valide_keys:
-            dialog = dialogs[dialog_key]
-            assert "annotate" in dialog, "No annotate in dialog!"
-            prompt = mxlm.remove_last_assistant(dialog["messages"])
-            dialog["prompt_hash"] = mxlm.hash_object_sha256_base64(prompt)
-            prompt_hash_to_keys[dialog["prompt_hash"]] = prompt_hash_to_keys.get(
-                dialog["prompt_hash"], []
-            ) + [dialog_key]
-            dialog["sequence"] = self.messages_to_sequence(dialog["messages"])
-
+        dialog_valide_keys = sorted(dialogs)
         dense_keys = [
             k for k in dialog_valide_keys if dialogs[k]["annotate"].get("is_good")
         ]
@@ -144,7 +125,47 @@ class PandaTree:
         self.outcome_pairs = outcome_pairs
         self.fork_pairs = fork_pairs
         self.valid_dialog_keys = dialog_valide_keys
-        g()
+        # g()
+
+    def pre_process(self, data):
+        data = deepcopy(data)
+        assert (
+            "update_time" in data
+        ), "Never saved data. Which mean may never checked by Annotator."
+        assert len(data["dialogs"]) >= 1, "Empty dialogs!"
+        data["dialogs"] = {int(k): v for k, v in data["dialogs"].items()}
+        # set default is_good
+        max_key = max(data["dialogs"])
+        for dialog_key in data["dialogs"]:
+            dialog = data["dialogs"][dialog_key]
+            if "annotate" not in dialog:
+                dialog["annotate"] = {}
+            if dialog["annotate"].get("is_good") is None:
+                dialog["annotate"]["is_good"] = dialog_key == max_key
+
+        dialog_valide_keys = [
+            key
+            for key in sorted(data["dialogs"].keys())
+            if data["dialogs"][key]["messages"][-1]["role"] in RESPONSE_ROLES
+        ]
+        data["dialogs"] = {k: data["dialogs"][k] for k in dialog_valide_keys}
+        self.prompt_hash_to_keys = {}
+        for dialog_key in dialog_valide_keys:
+            # set prompt_hash
+            dialog = data["dialogs"][dialog_key]
+            assert "annotate" in dialog, "No annotate in dialog!"
+            prompt = mxlm.remove_last_assistant(dialog["messages"])
+            dialog["prompt_hash"] = mxlm.hash_object_sha256_base64(prompt)
+            self.prompt_hash_to_keys[
+                dialog["prompt_hash"]
+            ] = self.prompt_hash_to_keys.get(dialog["prompt_hash"], []) + [dialog_key]
+            dialog["sequence"] = self.messages_to_sequence(dialog["messages"])
+
+            # set operations' parent to int
+            for operation in dialog.get("operations", []):
+                if "parent" in operation:
+                    operation["parent"] = int(operation["parent"])
+        return data
 
     def is_operation_tree_root(self, operations):
         if not operations:
