@@ -30,6 +30,7 @@ class PandaTree:
         dense_keys = [
             k for k in dialog_valide_keys if dialogs[k]["annotate"].get("is_good")
         ]
+        assert dense_keys, "No any is_good dialog in this data."
 
         trees = {}
         to_parent = {}
@@ -112,7 +113,7 @@ class PandaTree:
             else:  # this tree has no dense, need to do outcome pairs
                 for dialog_key in flattens:
                     dialog = dialogs[dialog_key]
-                    if dialog.get("operations", [{}])[0].get("is_prompt_modified"):
+                    if (dialog.get("operations") or [{}])[0].get("is_prompt_modified"):
                         # when prompt modified and no dense in this tree, don't need to as outcome negative supervision
                         break
                     for dense_key in dense_keys:
@@ -193,13 +194,19 @@ class PandaTree:
 
     __repr__ = __str__
 
-    def build_legacy_data_v1(self):
+    def build_legacy_data_v1(self, only_finish_reason_is_stop=False):
         data = self.data
         dialogs = data["dialogs"]
         sfts = []
         for dense_key in self.dense_keys:
             dialog = dialogs[dense_key]
-            sfts.append(dialog["messages"])
+            messages = deepcopy(dialog["messages"])
+            # add onpanda
+            onpanda_info = {"dialog_key": dense_key}
+            if data.get("uuid"):
+                onpanda_info["uuid"] = data["uuid"]
+            messages[0]["onpanda"] = onpanda_info
+            sfts.append(messages)
         preferences = []
         for rejected_key, chosen_key in self.outcome_pairs + self.fork_pairs:
             rejected = dialogs[rejected_key]
@@ -209,9 +216,19 @@ class PandaTree:
                 rejected["messages"][:-1]
                 + [rejected["messages"][-1], chosen["messages"][-1]]
             )
-            # from Anthropic/hh-rlhf
+            # key name 'chosen, rejected' from Anthropic/hh-rlhf
             preference[-1]["preference_tag"] = "chosen"
             preference[-2]["preference_tag"] = "rejected"
+            onpanda_info = {"dialog_pair": (rejected_key, chosen_key)}
+            if data.get("uuid"):
+                onpanda_info["uuid"] = data["uuid"]
+            preference[0]["onpanda"] = onpanda_info
+            if only_finish_reason_is_stop:
+                if (
+                    preference[-1].get("finish_reason") != "stop"
+                    or preference[-2].get("finish_reason") != "stop"
+                ):
+                    continue
             preferences.append(preference)
         return dict(sfts=sfts, preferences=preferences)
 
