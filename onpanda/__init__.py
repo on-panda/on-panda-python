@@ -2,4 +2,4 @@
 
 from .__info__ import __version__, __description__
 from .onpanda import *
-from .paser import *
+from .parser import *

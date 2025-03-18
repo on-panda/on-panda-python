@@ -58,7 +58,7 @@ if __name__ == "__main__":
                             "temperature": 0.5,
                         },
                         "common_prefix_length": -1,
-                        "operator": "new_generate",
+                        "operator": "generate_new",
                         "is_new_generated": true,
                         "on_policy": true,
                     }

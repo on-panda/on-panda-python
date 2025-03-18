@@ -1,5 +1,27 @@
+import re
 import mxlm
 from copy import deepcopy
+
+
+HASH_TEMPLATE_PREFIX = "<|hash|>"
+HASH_TEMPLATE_REGEX = r"^<\|hash\|>([A-Za-z0-9+\/=]+)$"
+
+
+def recover_hash_map(data):
+    # work on any dialogs
+    def recover(obj):
+        if isinstance(obj, (dict, list)):
+            items = obj.items() if isinstance(obj, dict) else enumerate(obj)
+            for key, value in items:
+                if isinstance(value, str) and re.match(HASH_TEMPLATE_REGEX, value):
+                    hash_value = value.replace(HASH_TEMPLATE_PREFIX, "")
+                    obj[key] = data["hash_map"][hash_value]
+                elif isinstance(value, (list, dict)):
+                    recover(value)
+
+    recover(data["dialogs"])
+    data["hash_map"] = {}
+    return data
 
 
 def sequence_prefix_length(seq1, seq2):
@@ -12,15 +34,17 @@ def sequence_prefix_length(seq1, seq2):
 RESPONSE_ROLES = ["assistant"]
 
 
-class PandaTreePaser:
+class PandaTreeParser:
     def __init__(self, tokenizer=None):
         self.tokenizer = tokenizer
 
-    def paser(self, data):
+    def parser(self, data):
         return PandaTree(data, tokenizer=self.tokenizer)
 
 
 class PandaTree:
+    SUPPORT_PANDA_TREE_VERSION = "2.0"
+
     def __init__(self, data, tokenizer=None):
         self.raw_data = data
         self.tokenizer = tokenizer
@@ -64,7 +88,9 @@ class PandaTree:
 
         # best practice: only do negative supervision for outcome and fork pairs. because dense_keys will provide positive supervision. if do so, negative supervision should duplicate.
         # pair of (negative, positive)
-        outcome_pairs = []
+        outcome_pairs = (
+            []
+        )  # pairs not include token level supervision. similar to DPO pair
         fork_pairs = []
 
         def flatten_tree(tre):
@@ -129,7 +155,12 @@ class PandaTree:
         # g()
 
     def pre_process(self, data):
+        assert "dialogs" in data, "invalid data format."
         data = deepcopy(data)
+        data = recover_hash_map(data)
+        assert (
+            self.SUPPORT_PANDA_TREE_VERSION >= data["version"]
+        ), f"Current parser support data version: {self.SUPPORT_PANDA_TREE_VERSION}, panda tree data version: {data['version']} Need to update onpanda package."
         assert (
             "update_time" in data
         ), "Never saved data. Which mean may never checked by Annotator."
@@ -236,11 +267,13 @@ class PandaTree:
 if __name__ == "__main__":
     from boxx import *
     import os
+    import json
 
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    from transformers import AutoTokenizer
 
     tokenizer = None
+    from transformers import AutoTokenizer
+
     # tokenizer = AutoTokenizer.from_pretrained("HuggingFaceH4/zephyr-7b-beta")
     # tokenizer = AutoTokenizer.from_pretrained("unsloth/llama-3-8b-bnb-4bit")
     # tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
@@ -267,11 +300,13 @@ if __name__ == "__main__":
             return_assistant_tokens_mask=True,
         ).data
 
-    import json
+    test_json = "../../asset/on-panda-example/how-many-1s.panda.json"
+    test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
 
-    data = json.load(open("../../asset/on-panda-example/how-many-1s.panda.json"))
+    data = json.load(open(test_json))
 
     pt = PandaTree(data, tokenizer=tokenizer)
     legacy = pt.build_legacy_data_v1()
+    sfts = legacy["sfts"]
     print(pt)
     tree - legacy
