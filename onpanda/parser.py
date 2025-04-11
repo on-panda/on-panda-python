@@ -158,8 +158,8 @@ class PandaTree:
         assert "dialogs" in data, "invalid data format."
         data = deepcopy(data)
         data = recover_hash_map(data)
-        assert (
-            self.SUPPORT_PANDA_TREE_VERSION >= data["version"]
+        assert self.SUPPORT_PANDA_TREE_VERSION >= data.get(
+            "version", "0.0"
         ), f"Current parser support data version: {self.SUPPORT_PANDA_TREE_VERSION}, panda tree data version: {data['version']} Need to update onpanda package."
         assert (
             "update_time" in data
@@ -217,7 +217,8 @@ class PandaTree:
         return self.tokenizer.apply_chat_template(messages, tokenize=False)
 
     def __str__(self):
-        s = f"""PandaTree({str(self.trees)}):
+        tree_str = str(self.trees).replace(": {}", ":''")
+        s = f"""PandaTree({tree_str}):
     dense_keys: {self.dense_keys}
     fork_pairs: {self.fork_pairs}
     outcome_pairs: {self.outcome_pairs}"""
@@ -251,6 +252,9 @@ class PandaTree:
             preference[-1]["preference_tag"] = "chosen"
             preference[-2]["preference_tag"] = "rejected"
             onpanda_info = {"dialog_pair": (rejected_key, chosen_key)}
+            onpanda_info["pair_type"] = (
+                "fork" if (rejected_key, chosen_key) in self.fork_pairs else "outcome"
+            )
             if data.get("uuid"):
                 onpanda_info["uuid"] = data["uuid"]
             preference[0]["onpanda"] = onpanda_info
@@ -265,7 +269,7 @@ class PandaTree:
 
 
 if __name__ == "__main__":
-    from boxx import *
+    from boxx import *  # pip install boxx
     import os
     import json
 
@@ -301,12 +305,13 @@ if __name__ == "__main__":
         ).data
 
     test_json = "../../asset/on-panda-example/how-many-1s.panda.json"
-    test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
+    # test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
+    test_json = "../../asset/on-panda-example/parse_example.panda.json"
 
-    data = json.load(open(test_json))
+    panda_json = json.load(open(test_json))
 
-    pt = PandaTree(data, tokenizer=tokenizer)
-    legacy = pt.build_legacy_data_v1()
-    sfts = legacy["sfts"]
-    print(pt)
-    tree - legacy
+    panda_tree = PandaTree(panda_json, tokenizer=tokenizer)
+    legacy_data = panda_tree.build_legacy_data_v1()
+    sfts = legacy_data["sfts"]
+    print(panda_tree)
+    tree - legacy_data
