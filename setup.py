@@ -26,7 +26,7 @@ setuptools.setup(
     author=info["__author__"],
     author_email=info["__author_email__"],
     description=info["__description__"],
-    long_description=info["__description__"],
+    long_description=long_description,
     long_description_content_type="text/markdown",
     url=info["__url__"],
     packages=setuptools.find_packages(),
