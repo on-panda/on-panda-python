@@ -1,7 +1,13 @@
 import re
 import mxlm
 from copy import deepcopy
+import mximport
 
+with mximport.inpkg():
+    from .token_level_supervision_utils import (
+        compute_token_level_supervision,
+        unicode_tokenizer,
+    )
 
 HASH_TEMPLATE_PREFIX = "<|hash|>"
 HASH_TEMPLATE_REGEX = r"^<\|hash\|>([A-Za-z0-9+\/=]+)$"
@@ -268,6 +274,80 @@ class PandaTree:
             preferences.append(preference)
         return dict(sfts=sfts, preferences=preferences)
 
+    def build_token_level_supervision_data_v1(self, tokenizer=None):
+        """
+        token_level supervision data v1 structrue like this:
+        tree-token_levels[0]
+        └── /: list  2
+            ├── 0: dict  2
+            │   ├── role: user
+            │   └── content: 1+1=? using English word
+            └── 1: dict  4
+                ├── role: assistant
+                ├── content: list  3
+                │   ├── 0: dict  3
+                │   │   ├── type: text
+                │   │   ├── text: 1+1=
+                │   │   └── ignore_loss: True
+                │   ├── 1: dict  4
+                │   │   ├── type: text
+                │   │   ├── text: two
+                │   │   ├── ignore_loss: False
+                │   │   └── tokens: list  1
+                │   │       └── 0: 99473
+                │   └── 2: dict  3
+                │       ├── type: text
+                │       ├── text: .
+                │       └── ignore_loss: True
+                ├── finish_reason: stop
+                └── token_level: dict  4
+                    ├── fork_token_idx: 15
+                    ├── chosen_token_id: 99473
+                    ├── rejected_token_id: 26288
+                    └── rejected_content: list  3
+                        ├── 0: dict  3
+                        │   ├── type: text
+                        │   ├── text: 1+1=
+                        │   └── ignore_loss: True
+                        ├── 1: dict  5
+                        │   ├── type: text
+                        │   ├── text: three
+                        │   ├── ignore_loss: False
+                        │   ├── tokens: list  1
+                        │   │   └── 0: 26288
+                        │   └── rejected_loss: True
+                        └── 2: dict  3
+                            ├── type: text
+                            ├── text: .
+                            └── ignore_loss: True
+        """
+        tokenizer = tokenizer or self.tokenizer
+        assert (
+            tokenizer
+        ), "token_level_supervision needs to set tokenizer, or you could using onpanda.unicode_tokenizer"
+        token_levels = []
+        for rejected_key, chosen_key in self.fork_pairs:
+            chosen_msgs = self.data["dialogs"][chosen_key]["messages"]
+            rejected_msgs = self.data["dialogs"][rejected_key]["messages"]
+            chosen_content = chosen_msgs[-1]["content"]
+            rejected_content = rejected_msgs[-1]["content"]
+            token_level_info = compute_token_level_supervision(
+                chosen_content=chosen_content,
+                rejected_content=rejected_content,
+                tokenizer=self.tokenizer,
+            )
+            token_level_info["version"] = "1.0"
+            token_level_msgs = chosen_msgs[:-1] + [
+                {
+                    **chosen_msgs[-1],
+                    "content": token_level_info.pop("chosen_content"),
+                    "token_level": token_level_info,
+                }
+            ]
+            token_levels.append(token_level_msgs)
+        # g()
+        return token_levels
+
 
 if __name__ == "__main__":
     from boxx import *  # pip install boxx
@@ -276,25 +356,26 @@ if __name__ == "__main__":
 
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-    tokenizer = None
-    from transformers import AutoTokenizer
+    # tokenizer = None
+    tokenizer = unicode_tokenizer
+    if 0:
+        from transformers import AutoTokenizer
 
-    # tokenizer = AutoTokenizer.from_pretrained("HuggingFaceH4/zephyr-7b-beta")
-    # tokenizer = AutoTokenizer.from_pretrained("unsloth/llama-3-8b-bnb-4bit")
-    # tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
+        # tokenizer = AutoTokenizer.from_pretrained("unsloth/llama-3-8b-bnb-4bit")
+        # tokenizer = AutoTokenizer.from_pretrained("~/audio/asset/tokenizer/step1f")
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4")
 
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a friendly chatbot",
-        },
-        {
-            "role": "user",
-            "content": "How many helicopters can a human eat in one sitting?",
-        },
-        {"role": "assistant", "content": "2 helicopters"},
-    ]
-    if tokenizer:
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a friendly chatbot",
+            },
+            {
+                "role": "user",
+                "content": "How many helicopters can a human eat in one sitting?",
+            },
+            {"role": "assistant", "content": "2 helicopters"},
+        ]
         chatml = tokenizer.apply_chat_template(messages, tokenize=False)
         print(chatml)
         data = tokenizer.apply_chat_template(
@@ -311,8 +392,11 @@ if __name__ == "__main__":
 
     panda_json = json.load(open(test_json))
 
-    panda_tree = PandaTree(panda_json, tokenizer=tokenizer)
+    panda_tree = PandaTree(panda_json)
     legacy_data = panda_tree.build_legacy_data_v1()
     sfts = legacy_data["sfts"]
     print(panda_tree)
-    tree - legacy_data
+    tree(legacy_data)
+
+    token_levels = panda_tree.build_token_level_supervision_data_v1(tokenizer=tokenizer)
+    tree(token_levels)
