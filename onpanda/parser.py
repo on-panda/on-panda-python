@@ -7,6 +7,7 @@ with mximport.inpkg():
     from .token_level_supervision_utils import (
         compute_token_level_supervision,
         unicode_tokenizer,
+        apply_ignore_unicode_loss_mask_to_content,
     )
 
 HASH_TEMPLATE_PREFIX = "<|hash|>"
@@ -195,9 +196,9 @@ class PandaTree:
             assert "annotate" in dialog, "No annotate in dialog!"
             prompt = mxlm.remove_last_assistant(dialog["messages"])
             dialog["prompt_hash"] = mxlm.hash_object_sha256_base64(prompt)
-            self.prompt_hash_to_keys[
-                dialog["prompt_hash"]
-            ] = self.prompt_hash_to_keys.get(dialog["prompt_hash"], []) + [dialog_key]
+            self.prompt_hash_to_keys[dialog["prompt_hash"]] = (
+                self.prompt_hash_to_keys.get(dialog["prompt_hash"], []) + [dialog_key]
+            )
             dialog["sequence"] = self.messages_to_sequence(dialog["messages"])
 
             # set operations' parent to int
@@ -304,6 +305,9 @@ class PandaTree:
                     ├── fork_token_idx: 15
                     ├── chosen_token_id: 99473
                     ├── rejected_token_id: 26288
+                    ├── chosen_dialog_key: 3
+                    ├── rejected_dialog_key: 2
+                    ├── chosen_text: two
                     └── rejected_content: list  3
                         ├── 0: dict  3
                         │   ├── type: text
@@ -334,9 +338,11 @@ class PandaTree:
             token_level_info = compute_token_level_supervision(
                 chosen_content=chosen_content,
                 rejected_content=rejected_content,
-                tokenizer=self.tokenizer,
+                tokenizer=tokenizer,
             )
             token_level_info["version"] = "1.0"
+            token_level_info["chosen_dialog_key"] = chosen_key
+            token_level_info["rejected_dialog_key"] = rejected_key
             token_level_msgs = chosen_msgs[:-1] + [
                 {
                     **chosen_msgs[-1],
@@ -348,6 +354,68 @@ class PandaTree:
         # g()
         return token_levels
 
+    def build_token_level_supervision_data_v2(self, tokenizer=None):
+        """
+        Merge multi token_level_supervision_data_v1 with same chosen_dialog_key into one messages with multi ignore_loss=False tokens (chosen tokens), thus to reduce SFT data number.
+        Also gather token_level to token_levels
+
+        Should save as 'xxx.token.json'
+        """
+        token_level_v1s = self.build_token_level_supervision_data_v1(
+            tokenizer=tokenizer
+        )
+        chosen_dialog_key_to_token_level_v1s = {}
+        for token_level_v1 in token_level_v1s:
+            chosen_dialog_key = token_level_v1[-1]["token_level"]["chosen_dialog_key"]
+            chosen_dialog_key_to_token_level_v1s.setdefault(
+                chosen_dialog_key, []
+            ).append(token_level_v1)
+        token_level_v2s = []
+        for chosen_dialog_key in sorted(chosen_dialog_key_to_token_level_v1s):
+            msg = None
+            ignore_loss_unicode_masks = []
+            token_level_infos = []
+            token_level_v1s = chosen_dialog_key_to_token_level_v1s[chosen_dialog_key]
+            for token_level_v1 in sorted(
+                token_level_v1s,
+                key=lambda msgs: msgs[-1]["token_level"]["fork_token_idx"],
+            ):
+                if msg is None:
+                    msg = deepcopy(token_level_v1[-1])
+                    content_str0 = "".join([c["text"] for c in msg.pop("content")])
+                    msg["token_levels"] = [msg.pop("token_level")]
+
+                content = token_level_v1[-1]["content"]
+                content_str = "".join([c["text"] for c in content])
+                assert (
+                    content_str == content_str0
+                ), f"Chosen content string not equal: {content_str} != {content_str0}"
+                ignore_loss_unicode_mask = sum(
+                    [[c.get("ignore_loss", False)] * len(c["text"]) for c in content],
+                    [],
+                )
+                ignore_loss_unicode_mask += [
+                    content[-1].get("ignore_loss", False)
+                ]  # concat stop token's mask
+                ignore_loss_unicode_masks.append(ignore_loss_unicode_mask)
+                token_level_infos.append(token_level_v1[-1]["token_level"])
+            # ignore_loss_unicode_masks = np.array(ignore_loss_unicode_masks)
+            # ignore_loss_unicode_mask_merged = ~(~ignore_loss_unicode_masks).any(0)
+            ignore_loss_unicode_mask_merged = [
+                all(row[i] for row in ignore_loss_unicode_masks)
+                for i in range(len(ignore_loss_unicode_masks[0]))
+            ]
+            chosen_content_merged = apply_ignore_unicode_loss_mask_to_content(
+                ignore_loss_unicode_mask_merged, content_str0
+            )
+            token_level_v2 = deepcopy(token_level_v1)
+            token_level_v2[-1]["content"] = chosen_content_merged
+            token_level_v2[-1]["token_levels"] = token_level_infos
+            token_level_v2[-1].pop("token_level")
+            token_level_v2s.append(token_level_v2)
+        # g() / 0
+        return token_level_v2s
+
 
 if __name__ == "__main__":
     from boxx import *  # pip install boxx
@@ -358,37 +426,14 @@ if __name__ == "__main__":
 
     # tokenizer = None
     tokenizer = unicode_tokenizer
-    if 0:
-        from transformers import AutoTokenizer
-
-        # tokenizer = AutoTokenizer.from_pretrained("unsloth/llama-3-8b-bnb-4bit")
-        # tokenizer = AutoTokenizer.from_pretrained("~/audio/asset/tokenizer/step1f")
-        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4")
-
-        messages = [
-            {
-                "role": "system",
-                "content": "You are a friendly chatbot",
-            },
-            {
-                "role": "user",
-                "content": "How many helicopters can a human eat in one sitting?",
-            },
-            {"role": "assistant", "content": "2 helicopters"},
-        ]
-        chatml = tokenizer.apply_chat_template(messages, tokenize=False)
-        print(chatml)
-        data = tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            return_tensors="pt",
-            return_dict=True,
-            return_assistant_tokens_mask=True,
-        ).data
+    tokenizer = __import__("transformers").AutoTokenizer.from_pretrained(
+        "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4"
+    )
 
     test_json = "../../asset/on-panda-example/how-many-1s.panda.json"
     # test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
     test_json = "../../asset/on-panda-example/parse_example.panda.json"
+    test_json = "../../asset/on-panda-example/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
 
     panda_json = json.load(open(test_json))
 
@@ -398,5 +443,10 @@ if __name__ == "__main__":
     print(panda_tree)
     tree(legacy_data)
 
-    token_levels = panda_tree.build_token_level_supervision_data_v1(tokenizer=tokenizer)
+    token_levels_v1 = panda_tree.build_token_level_supervision_data_v1(
+        tokenizer=tokenizer
+    )
+
+    token_levels = panda_tree.build_token_level_supervision_data_v2(tokenizer=tokenizer)
+
     tree(token_levels)

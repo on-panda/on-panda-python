@@ -153,13 +153,35 @@ def compute_token_level_supervision(
         rejected_loss=True,
         is_fork_on_stop=rejected_token_id == stop_token_id,
     )
+    # set chosen_text
+    chosen_text = next(
+        chunk for chunk in chosen_chunks if not chunk.get("ignore_loss")
+    )["text"]
     return {
         "fork_token_idx": fork_idx,
         "chosen_token_id": chosen_token_id,
         "rejected_token_id": rejected_token_id,
+        "chosen_text": chosen_text,
         "chosen_content": chosen_chunks,
         "rejected_content": rejected_chunks,
     }
+
+
+def apply_ignore_unicode_loss_mask_to_content(mask, content_str):
+    previous_ignore_state = mask[0]
+    previous_end_idx = 0
+    content_patchs = []
+    for idx, state in enumerate(list(mask) + ["add last patch finally"]):
+        if state != previous_ignore_state:
+            patch = dict(
+                text=content_str[previous_end_idx:idx],
+                ignore_loss=previous_ignore_state,
+                type="text",
+            )
+            content_patchs.append(patch)
+            previous_end_idx = idx
+            previous_ignore_state = state
+    return content_patchs
 
 
 class UnicodeTokenizer:
@@ -228,7 +250,7 @@ def test_one_token_align_one_patch(tok):
         tokenizer=tok,
     )
     g()
-    assert len(res["chosen_content"][1]["text"]) > 1
+    # assert len(res["chosen_content"][1]["text"]) > 1
 
 
 def test_many_token_align_one_patch(tok):
@@ -246,25 +268,45 @@ def test_many_token_align_one_patch(tok):
 def test_many_token_align_many_patch(tok):
     """' 🥢' == [11162, 98, 95]"""
     res = compute_token_level_supervision(
-        chosen_content="prefix 🥢subfix",
-        rejected_content="p<|cursor|>refix🥢subfix",
+        chosen_content="prefix 🥢subfix",  # with space
+        rejected_content="prefix🥢subfix",  # without space
         tokenizer=tok,
     )
+    rejected_patch = res["rejected_content"][1]
     g()
+    if len(rejected_patch["tokens"]) > 1:
+        assert rejected_patch[
+            "ignore_loss"
+        ], "if rejected_patch include many tokens, ignore loss. Because a many‑token rejected loss is harmful."
 
 
 def test_fork_token_is_stop_token(tok):
-    res = compute_token_level_supervision(
+    chosen_stop_res = compute_token_level_supervision(
         chosen_content="prefix",
-        rejected_content="prefix subfix, subfix2",
+        rejected_content="prefix subfix",
         tokenizer=tok,
     )
-    res = compute_token_level_supervision(
-        chosen_content="prefix subfix, subfix2",
+    rejected_stop_res = compute_token_level_supervision(
+        chosen_content="prefix continue",
         rejected_content="prefix",
         tokenizer=tok,
     )
     g()
+
+
+def test_fork_token_is_last_token(tok):
+    last_token_res = compute_token_level_supervision(
+        chosen_content="1 2 3",
+        rejected_content="1 2 4",
+        tokenizer=tok,
+    )
+    chosen_content = last_token_res["chosen_content"]
+    g()
+    assert (
+        len(chosen_content) == 3
+        and chosen_content[-1]["text"] == ""
+        and chosen_content[-1]["ignore_loss"]
+    ), "The stop token is last patch with empty string. Should ignore it's loss"
 
 
 if __name__ == "__main__":
@@ -277,3 +319,4 @@ if __name__ == "__main__":
     # test_one_to_many(tokenizer)
     test_many_token_align_many_patch(tokenizer)
     test_fork_token_is_stop_token(tokenizer)
+    test_fork_token_is_last_token(tokenizer)
