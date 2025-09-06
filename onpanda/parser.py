@@ -11,7 +11,7 @@ with mximport.inpkg():
     )
     from .correcting_sft_utils import (
         correcting_sft_system_prompt_default,
-        convert_rejected_content_to_sft_location,
+        convert_rejected_content_to_ntp_as_location,
     )
 
 HASH_TEMPLATE_PREFIX = "<|hash|>"
@@ -474,10 +474,10 @@ class PandaTree:
             )
             rejected_msgs = token_level_v1[:-1] + [rejected_msg]
 
-            sft_location = convert_rejected_content_to_sft_location(
+            ntp_as_location = convert_rejected_content_to_ntp_as_location(
                 rejected_msgs, tokenizer=tokenizer, max_location_tokens=20
             )
-            correcting_content = f"{sft_location['location_string']}{SPLIT_TOKEN}{sft_location['location_index']}{SPLIT_TOKEN}{token_level_info['chosen_text']}"
+            correcting_content = f"{ntp_as_location['location_string']}{SPLIT_TOKEN}{ntp_as_location['location_index']}{SPLIT_TOKEN}{token_level_info['chosen_text']}"
             correcting_msg = dict(
                 role="assistant",
                 content=correcting_content,

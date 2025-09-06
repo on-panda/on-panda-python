@@ -63,6 +63,15 @@ ASSISTANT:
 
 correcting_sft_system_prompt_default = correcting_sft_system_prompt_cn
 
+# Next Token Prediction as location, return unicode_location dict(message_index=int, unicode_location=int)
+# def get_unicode_location(rejected_msgs, ntp_as_location):  
+
+# return location_index
+# def get_location_index(rejected_msgs, location_string, unicode_location):
+
+
+# convert msgs and token_level to Next Token Prediction as location
+# def convert_rejected_content_to_ntp_as_location
 
 if __name__ == "__main__":
 
@@ -77,9 +86,6 @@ if __name__ == "__main__":
             "content": "人智交融创新篇，  \n工巧技艺谱华年。  \n大展宏图前景阔，  \n有志竟成梦终圆。  \n可期未来科技盛，  \n为民造福永绵延。",
             "finish_reason": "stop",
             "token_level": {
-                "fork_token_idx": 15,
-                "chosen_token_id": 99473,
-                "rejected_token_id": 26288,
                 "chosen_text": "智",
                 "rejected_text": "大",
                 "chosen_text_unicode_location": [22, 1],
