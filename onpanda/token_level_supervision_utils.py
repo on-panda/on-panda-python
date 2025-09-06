@@ -153,15 +153,27 @@ def compute_token_level_supervision(
         rejected_loss=True,
         is_fork_on_stop=rejected_token_id == stop_token_id,
     )
-    # set chosen_text
+    # set chosen_text and rejected_text
     chosen_text = next(
         chunk for chunk in chosen_chunks if not chunk.get("ignore_loss")
+    )["text"]
+    rejected_text = next(
+        chunk for chunk in rejected_chunks if chunk.get("rejected_loss")
     )["text"]
     return {
         "fork_token_idx": fork_idx,
         "chosen_token_id": chosen_token_id,
         "rejected_token_id": rejected_token_id,
         "chosen_text": chosen_text,
+        "rejected_text": rejected_text,
+        "chosen_text_unicode_location": [
+            len(chosen_chunks[0]["text"]),
+            len(chosen_chunks[1]["text"]),
+        ],
+        "rejected_text_unicode_location": [
+            len(rejected_chunks[0]["text"]),
+            len(rejected_chunks[1]["text"]),
+        ],
         "chosen_content": chosen_chunks,
         "rejected_content": rejected_chunks,
     }

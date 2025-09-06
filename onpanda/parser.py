@@ -9,6 +9,7 @@ with mximport.inpkg():
         unicode_tokenizer,
         apply_ignore_unicode_loss_mask_to_content,
     )
+    from .correcting_sft_utils import correcting_sft_system_prompt_default
 
 HASH_TEMPLATE_PREFIX = "<|hash|>"
 HASH_TEMPLATE_REGEX = r"^<\|hash\|>([A-Za-z0-9+\/=]+)$"
@@ -343,6 +344,9 @@ class PandaTree:
             token_level_info["version"] = "1.0"
             token_level_info["chosen_dialog_key"] = chosen_key
             token_level_info["rejected_dialog_key"] = rejected_key
+            token_level_info["rejected_finish_reason"] = rejected_msgs[-1].get(
+                "finish_reason", ""
+            )
             token_level_msgs = chosen_msgs[:-1] + [
                 {
                     **chosen_msgs[-1],
@@ -350,6 +354,13 @@ class PandaTree:
                     "token_level": token_level_info,
                 }
             ]
+            token_level_msgs = deepcopy(token_level_msgs)
+
+            onpanda_info = {"dialog_pair": (rejected_key, chosen_key)}
+            if self.data.get("uuid"):
+                onpanda_info["uuid"] = self.data["uuid"]
+            token_level_msgs[0]["onpanda"] = onpanda_info
+
             token_levels.append(token_level_msgs)
         # g()
         return token_levels
@@ -416,6 +427,57 @@ class PandaTree:
         # g() / 0
         return token_level_v2s
 
+    def build_correcting_sft_data_v1(
+        self,
+        tokenizer=None,
+        SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
+        STOP_TOKEN="<|fim_suffix|>",
+    ):
+        tokenizer = tokenizer or self.tokenizer
+
+        sys_prompt_message = dict(
+            role="system",
+            content=correcting_sft_system_prompt_default.replace(
+                "<SPLIT_TOKEN>", SPLIT_TOKEN
+            ).replace("<STOP_TOKEN>", STOP_TOKEN),
+        )
+        is_good_correcting_msg = dict(
+            role="assistant", content=SPLIT_TOKEN, correcting=dict(is_good=True)
+        )
+        sfts = self.build_legacy_data_v1()["sfts"]
+        [sft[-1].update(ignore_loss=True) for sft in sfts]
+        correcting_sfts = is_good_correcting_sfts = [
+            sft + [sys_prompt_message, is_good_correcting_msg] for sft in sfts
+        ]
+
+        token_level_v1s = self.build_token_level_supervision_data_v1(
+            tokenizer=tokenizer
+        )
+        for token_level_v1 in token_level_v1s:
+            token_level_msg = token_level_v1[-1]
+            token_level_info = token_level_msg["token_level"]
+            rejected_content = token_level_info.pop("rejected_content")
+            # convert_rejected_content_to_sft_location
+
+            correcting_rejected_content = "".join([c["text"] for c in rejected_content])
+            correcting_rejected_msg = dict(
+                role="assistant",
+                ignore_loss=True,
+                content=correcting_rejected_content,
+                finish_reason=token_level_info.get("rejected_finish_reason", ""),
+                token_level=token_level_info,
+            )
+            correcting_msg = {}
+            correcting_sft = token_level_v1[:-1] + [
+                correcting_rejected_msg,
+                sys_prompt_message,
+                correcting_msg,
+            ]
+            correcting_sfts.append(correcting_sft)
+
+        g() / 0
+        return correcting_sfts
+
 
 if __name__ == "__main__":
     from boxx import *  # pip install boxx
@@ -429,24 +491,30 @@ if __name__ == "__main__":
     tokenizer = __import__("transformers").AutoTokenizer.from_pretrained(
         "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4"
     )
+    # %%
 
     test_json = "../../asset/on-panda-example/how-many-1s.panda.json"
     # test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
     test_json = "../../asset/on-panda-example/parse_example.panda.json"
-    test_json = "../../asset/on-panda-example/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
-
+    # test_json = "../../asset/on-panda-example/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
     panda_json = json.load(open(test_json))
 
     panda_tree = PandaTree(panda_json)
+    print(panda_tree)
+    tree(panda_tree.trees)
+
     legacy_data = panda_tree.build_legacy_data_v1()
     sfts = legacy_data["sfts"]
-    print(panda_tree)
-    tree(legacy_data)
+    # tree(legacy_data)
 
-    token_levels_v1 = panda_tree.build_token_level_supervision_data_v1(
+    token_level_v1s = panda_tree.build_token_level_supervision_data_v1(
         tokenizer=tokenizer
     )
 
-    token_levels = panda_tree.build_token_level_supervision_data_v2(tokenizer=tokenizer)
+    token_level_v2s = panda_tree.build_token_level_supervision_data_v2(
+        tokenizer=tokenizer
+    )
 
-    tree(token_levels)
+    correcting_sfts = panda_tree.build_correcting_sft_data_v1(tokenizer=tokenizer)
+
+    tree(correcting_sfts)
