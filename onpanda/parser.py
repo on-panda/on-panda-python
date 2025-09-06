@@ -9,7 +9,10 @@ with mximport.inpkg():
         unicode_tokenizer,
         apply_ignore_unicode_loss_mask_to_content,
     )
-    from .correcting_sft_utils import correcting_sft_system_prompt_default
+    from .correcting_sft_utils import (
+        correcting_sft_system_prompt_default,
+        convert_rejected_content_to_sft_location,
+    )
 
 HASH_TEMPLATE_PREFIX = "<|hash|>"
 HASH_TEMPLATE_REGEX = r"^<\|hash\|>([A-Za-z0-9+\/=]+)$"
@@ -441,8 +444,11 @@ class PandaTree:
                 "<SPLIT_TOKEN>", SPLIT_TOKEN
             ).replace("<STOP_TOKEN>", STOP_TOKEN),
         )
+        scope_slice = (-1, None)  # slice of which messages can be correcting
         is_good_correcting_msg = dict(
-            role="assistant", content=SPLIT_TOKEN, correcting=dict(is_good=True)
+            role="assistant",
+            content=SPLIT_TOKEN,
+            correcting=dict(is_good=True, scope_slice=scope_slice),
         )
         sfts = self.build_legacy_data_v1()["sfts"]
         [sft[-1].update(ignore_loss=True) for sft in sfts]
@@ -456,26 +462,34 @@ class PandaTree:
         for token_level_v1 in token_level_v1s:
             token_level_msg = token_level_v1[-1]
             token_level_info = token_level_msg["token_level"]
-            rejected_content = token_level_info.pop("rejected_content")
-            # convert_rejected_content_to_sft_location
+            rejected_content_chunks = token_level_info.pop("rejected_content")
 
-            correcting_rejected_content = "".join([c["text"] for c in rejected_content])
-            correcting_rejected_msg = dict(
+            rejected_content_str = "".join([c["text"] for c in rejected_content_chunks])
+            rejected_msg = dict(
                 role="assistant",
                 ignore_loss=True,
-                content=correcting_rejected_content,
+                content=rejected_content_str,
                 finish_reason=token_level_info.get("rejected_finish_reason", ""),
                 token_level=token_level_info,
             )
-            correcting_msg = {}
-            correcting_sft = token_level_v1[:-1] + [
-                correcting_rejected_msg,
+            rejected_msgs = token_level_v1[:-1] + [rejected_msg]
+
+            sft_location = convert_rejected_content_to_sft_location(
+                rejected_msgs, tokenizer=tokenizer, max_location_tokens=20
+            )
+            correcting_content = f"{sft_location['location_string']}{SPLIT_TOKEN}{sft_location['location_index']}{SPLIT_TOKEN}{token_level_info['chosen_text']}"
+            correcting_msg = dict(
+                role="assistant",
+                content=correcting_content,
+                correcting=dict(is_good=False, scope_slice=scope_slice),
+            )
+            correcting_sft += [
                 sys_prompt_message,
                 correcting_msg,
             ]
             correcting_sfts.append(correcting_sft)
 
-        g() / 0
+        # g() / 0
         return correcting_sfts
 
 

@@ -66,51 +66,28 @@ correcting_sft_system_prompt_default = correcting_sft_system_prompt_cn
 
 if __name__ == "__main__":
 
-    token_levels_v1 = [
-        {"role": "user", "content": "写藏头诗：\n人工智能，大有可为"},
+    rejected_msgs_cts = [
+        {
+            "role": "user",
+            "content": "写藏头诗：\n人工智能，大有可为",
+        },
         {
             "role": "assistant",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "人智交融创新篇，  \n工巧技艺谱华年。  \n",
-                    "ignore_loss": True,
-                },
-                {"type": "text", "text": "智", "ignore_loss": False, "tokens": [99473]},
-                {
-                    "type": "text",
-                    "text": "启未来无限景，  \n能展宏图大有天。  \n大势所趋迎挑战，  \n有志之士共登攀。  \n可期盛世同描绘，  \n为国为民谱新篇。",
-                    "ignore_loss": True,
-                },
-            ],
+            "ignore_loss": True,
+            "content": "人智交融创新篇，  \n工巧技艺谱华年。  \n大展宏图前景阔，  \n有志竟成梦终圆。  \n可期未来科技盛，  \n为民造福永绵延。",
             "finish_reason": "stop",
             "token_level": {
                 "fork_token_idx": 15,
                 "chosen_token_id": 99473,
                 "rejected_token_id": 26288,
                 "chosen_text": "智",
-                "rejected_content": [
-                    {
-                        "type": "text",
-                        "text": "人智交融创新篇，  \n工巧技艺谱华年。  \n",
-                        "ignore_loss": True,
-                    },
-                    {
-                        "type": "text",
-                        "text": "大",
-                        "ignore_loss": False,
-                        "tokens": [26288],
-                        "rejected_loss": True,
-                    },
-                    {
-                        "type": "text",
-                        "text": "展宏图前景阔，  \n有志竟成梦终圆。  \n可期未来科技盛，  \n为民造福永绵延。",
-                        "ignore_loss": True,
-                    },
-                ],
+                "rejected_text": "大",
+                "chosen_text_unicode_location": [22, 1],
+                "rejected_text_unicode_location": [22, 1],
                 "version": "1.0",
                 "chosen_dialog_key": 3,
                 "rejected_dialog_key": 2,
+                "rejected_finish_reason": "stop",
             },
         },
     ]
