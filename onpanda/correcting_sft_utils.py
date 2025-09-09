@@ -71,34 +71,6 @@ ASSISTANT:
 correcting_sft_system_prompt_default = correcting_sft_system_prompt_cn
 
 
-def convert_token_level_to_unicode_location(rejected_msgs):
-    """
-    根据 rejected_msgs 中的 token_level 信息返回 unicode_location
-
-    Args:
-        rejected_msgs: 消息列表
-
-    Returns:
-        dict: {"message_index": int, "unicode_location": int}
-    """
-    # 查找首个有 token_level 的 assistant 消息
-    for i, msg in enumerate(rejected_msgs):
-        if msg["role"] == "assistant" and "token_level" in msg:
-            token_level = msg["token_level"]
-            unicode_location = token_level["rejected_text_unicode_location"][0]
-            return {"message_index": i, "unicode_location": unicode_location}
-
-    raise ValueError("找不到包含 token_level 的 assistant 消息")
-
-
-def get_unicode_location(msgs, ntp_as_location):
-    """
-    Compute unicode_location by ntp_as_location in messages without token_level_info
-    if Not found:
-        return dict(not_found=True)
-    """
-
-
 class NextTokenPredictionAsLocationBuilder:
     def __init__(
         self,
@@ -121,181 +93,210 @@ class NextTokenPredictionAsLocationBuilder:
             "<STOP_TOKEN>", self.STOP_TOKEN
         )
 
+    def convert_token_level_to_unicode_location(self, rejected_msgs):
+        """
+        根据 rejected_msgs 中的 token_level 信息返回 unicode_location
 
-def set_location_index(rejected_msgs, ntp_as_location, unicode_location):
-    """
-    在所有模型输出的 tokens 中查找 ntp_as_location.location_string 的所有匹配位置，
-    返回对应的索引位置 ntp_as_location.location_index
+        Args:
+            rejected_msgs: 消息列表
 
-    Args:
-        rejected_msgs: 消息列表
-        ntp_as_location: dict(location_string=...) or 要查找的字符串
-        unicode_location: dict, 包含 message_index 和 unicode_location
+        Returns:
+            dict: {"message_index": int, "unicode_location": int}
+        """
+        # 查找首个有 token_level 的 assistant 消息
+        for i, msg in enumerate(rejected_msgs):
+            if msg["role"] == "assistant" and "token_level" in msg:
+                token_level = msg["token_level"]
+                unicode_location = token_level["rejected_text_unicode_location"][0]
+                return {"message_index": i, "unicode_location": unicode_location}
 
-    Returns ntp_as_location:
-        int: location_index，从0开始计数，负数表示从末尾倒数
-    """
-    if isinstance(ntp_as_location, str):
-        ntp_as_location = dict(location_string=ntp_as_location)
-    ntp_as_location = deepcopy(ntp_as_location)
-    location_string = ntp_as_location["location_string"]
+        raise ValueError("找不到包含 token_level 的 assistant 消息")
 
-    message_index = unicode_location["message_index"]
-    target_unicode_pos = unicode_location["unicode_location"]
+    def get_unicode_location(self, msgs, ntp_as_location):
+        """
+        Compute unicode_location by ntp_as_location in messages without token_level_info
+        if Not found:
+            return dict(not_found=True)
+        """
+        pass
 
-    # 收集所有assistant消息的内容，并记录其在原始消息中的索引
-    assistant_contents = []
-    assistant_indices = []
-    for i, msg in enumerate(rejected_msgs):
-        if msg["role"] == "assistant":
-            content = mxlm.get_text_content(msg["content"])
-            # 添加隐藏的 STOP_TOKEN
-            content += "<STOP_TOKEN>"
-            assistant_contents.append(content)
-            assistant_indices.append(i)
+    def set_location_index(self, rejected_msgs, ntp_as_location, unicode_location):
+        """
+        在所有模型输出的 tokens 中查找 ntp_as_location.location_string 的所有匹配位置，
+        返回对应的索引位置 ntp_as_location.location_index
 
-    # 在所有assistant内容中查找location_string的所有匹配位置
-    all_content = "".join(assistant_contents)
-    matches = []
-    start = 0
-    while True:
-        pos = all_content.find(location_string, start)
-        if pos == -1:
-            break
-        matches.append(pos)
-        start = pos + 1
+        Args:
+            rejected_msgs: 消息列表
+            ntp_as_location: dict(location_string=...) or 要查找的字符串
+            unicode_location: dict, 包含 message_index 和 unicode_location
 
-    # 计算目标位置的unicode位置
-    # 找到目标消息在assistant消息列表中的索引
-    try:
-        assistant_msg_idx = assistant_indices.index(message_index)
-    except ValueError:
-        raise ValueError(f"消息索引 {message_index} 不是 assistant 消息")
+        Returns ntp_as_location:
+            int: location_index，从0开始计数，负数表示从末尾倒数
+        """
+        if isinstance(ntp_as_location, str):
+            ntp_as_location = dict(location_string=ntp_as_location)
+        ntp_as_location = deepcopy(ntp_as_location)
+        location_string = ntp_as_location["location_string"]
 
-    current_pos = 0
-    for i in range(assistant_msg_idx):
-        current_pos += len(assistant_contents[i])
-    target_global_pos = current_pos + target_unicode_pos
+        message_index = unicode_location["message_index"]
+        target_unicode_pos = unicode_location["unicode_location"]
 
-    location_index = None
-    # 找到目标位置对应的匹配索引
-    for idx, match_pos in enumerate(matches):
-        if match_pos == target_global_pos:
-            # 如果负数的绝对值更小，使用负数表示
-            negative_idx = idx - len(matches)
-            if abs(negative_idx) < idx:
-                location_index = negative_idx
-            else:
-                location_index = idx
+        # 收集所有assistant消息的内容，并记录其在原始消息中的索引
+        assistant_contents = []
+        assistant_indices = []
+        for i, msg in enumerate(rejected_msgs):
+            if msg["role"] == "assistant":
+                content = mxlm.get_text_content(msg["content"])
+                # 添加隐藏的 STOP_TOKEN
+                content += self.STOP_TOKEN
+                assistant_contents.append(content)
+                assistant_indices.append(i)
 
-    ntp_as_location.update(unicode_location=unicode_location, matche_num=len(matches))
-    ntp_as_location["location_index"] = location_index
-    if not len(matches):
-        ntp_as_location["not_found"] = True
-    return ntp_as_location
-
-
-def convert_rejected_content_to_ntp_as_location(
-    rejected_msgs, tokenizer, max_location_tokens=20
-):
-    """
-    将 rejected_msgs 和 token_level_info 转换为 Next Token Prediction as location 格式
-
-    Args:
-        rejected_msgs: 消息列表
-        tokenizer: tokenizer 对象
-        max_location_tokens: 最大 location tokens 长度
-
-    Returns:
-        dict: {"location_string": str, "location_index": int}
-    """
-    # 获取 unicode_location
-    unicode_location = convert_token_level_to_unicode_location(rejected_msgs)
-    message_index = unicode_location["message_index"]
-    unicode_pos = unicode_location["unicode_location"]
-
-    # 获取包含 token_level 的消息
-
-    # 构建完整的 assistant 内容序列用于 tokenize
-    assistant_contents = []
-    assistant_indices = []
-    for i, message in enumerate(rejected_msgs):
-        if message["role"] == "assistant":
-            content = mxlm.get_text_content(message["content"])
-            # 添加隐藏的 STOP_TOKEN
-            content += "<STOP_TOKEN>"
-            assistant_contents.append(content)
-            assistant_indices.append(i)
-
-    full_content = "".join(assistant_contents)
-
-    # tokenize 整个内容
-    tokens = tokenizer.encode(full_content, add_special_tokens=False)
-
-    # 计算目标位置在全部内容中的位置
-    # 找到目标消息在assistant消息列表中的索引
-    try:
-        assistant_msg_idx = assistant_indices.index(message_index)
-    except ValueError:
-        raise ValueError(f"消息索引 {message_index} 不是 assistant 消息")
-
-    current_pos = 0
-    for i in range(assistant_msg_idx):
-        current_pos += len(assistant_contents[i])
-    target_global_pos = current_pos + unicode_pos
-
-    # 找到对应的 token 位置
-    # 通过逐步 decode 找到 unicode 位置对应的 token index
-    token_idx = 0
-    for i, token_id in enumerate(tokens):
-        # decode 到当前位置的文本长度
-        decoded_text = tokenizer.decode(tokens[: i + 1], skip_special_tokens=True)
-        if len(decoded_text) > target_global_pos:
-            token_idx = i
-            break
-        token_idx = i + 1
-
-    # 使用 _minimal_reversible_patch 来获取合适的 token 范围
-    start_idx, end_idx = _minimal_reversible_patch(tokens, token_idx, tokenizer)
-
-    # 生成 location_tokens，限制在 max_location_tokens 内
-    location_tokens_count = min(end_idx - start_idx, max_location_tokens)
-
-    # 从 token_idx 开始生成 location_tokens，但要保证 tokenizer decode 的完整性
-    location_start = token_idx
-    location_end = token_idx + location_tokens_count
-
-    # 确保 location_tokens 可以完整 decode
-    while location_end <= len(tokens):
-        try:
-            test_tokens = tokens[location_start:location_end]
-            test_text = tokenizer.decode(test_tokens, skip_special_tokens=True)
-            # 重新 encode 检查是否一致
-            reencoded = tokenizer.encode(test_text, add_special_tokens=False)
-            if reencoded == test_tokens:
+        # 在所有assistant内容中查找location_string的所有匹配位置
+        all_content = "".join(assistant_contents)
+        matches = []
+        start = 0
+        while True:
+            pos = all_content.find(location_string, start)
+            if pos == -1:
                 break
-        except Exception:
-            pass
-        location_end += 1
-        if location_end - location_start > max_location_tokens + 10:  # 避免无限循环
-            break
+            matches.append(pos)
+            start = pos + 1
 
-    # 生成最终的 location_string
-    location_tokens = tokens[location_start:location_end]
-    location_string = tokenizer.decode(location_tokens, skip_special_tokens=True)
+        # 计算目标位置的unicode位置
+        # 找到目标消息在assistant消息列表中的索引
+        try:
+            assistant_msg_idx = assistant_indices.index(message_index)
+        except ValueError:
+            raise ValueError(f"消息索引 {message_index} 不是 assistant 消息")
 
-    # 如果 location_string 没有精确定位到目标位置，需要使用 location_index
-    location_index = set_location_index(
-        rejected_msgs, location_string, unicode_location
-    )["location_index"]
+        current_pos = 0
+        for i in range(assistant_msg_idx):
+            current_pos += len(assistant_contents[i])
+        target_global_pos = current_pos + target_unicode_pos
 
-    return {"location_string": location_string, "location_index": location_index}
+        location_index = None
+        # 找到目标位置对应的匹配索引
+        for idx, match_pos in enumerate(matches):
+            if match_pos == target_global_pos:
+                # 如果负数的绝对值更小，使用负数表示
+                negative_idx = idx - len(matches)
+                if abs(negative_idx) < idx:
+                    location_index = negative_idx
+                else:
+                    location_index = idx
+
+        ntp_as_location.update(
+            unicode_location=unicode_location, matche_num=len(matches)
+        )
+        ntp_as_location["location_index"] = location_index
+        if not len(matches):
+            ntp_as_location["not_found"] = True
+        return ntp_as_location
+
+    def convert_rejected_content_to_ntp_as_location(self, rejected_msgs):
+        """
+        将 rejected_msgs 和 token_level_info 转换为 Next Token Prediction as location 格式
+
+        Args:
+            rejected_msgs: 消息列表
+
+        Returns:
+            dict: {"location_string": str, "location_index": int}
+        """
+        # 获取 unicode_location
+        unicode_location = self.convert_token_level_to_unicode_location(rejected_msgs)
+        message_index = unicode_location["message_index"]
+        unicode_pos = unicode_location["unicode_location"]
+
+        # 获取包含 token_level 的消息
+
+        # 构建完整的 assistant 内容序列用于 tokenize
+        assistant_contents = []
+        assistant_indices = []
+        for i, message in enumerate(rejected_msgs):
+            if message["role"] == "assistant":
+                content = mxlm.get_text_content(message["content"])
+                # 添加隐藏的 STOP_TOKEN
+                content += self.STOP_TOKEN
+                assistant_contents.append(content)
+                assistant_indices.append(i)
+
+        full_content = "".join(assistant_contents)
+
+        # tokenize 整个内容
+        tokens = self.tokenizer.encode(full_content, add_special_tokens=False)
+
+        # 计算目标位置在全部内容中的位置
+        # 找到目标消息在assistant消息列表中的索引
+        try:
+            assistant_msg_idx = assistant_indices.index(message_index)
+        except ValueError:
+            raise ValueError(f"消息索引 {message_index} 不是 assistant 消息")
+
+        current_pos = 0
+        for i in range(assistant_msg_idx):
+            current_pos += len(assistant_contents[i])
+        target_global_pos = current_pos + unicode_pos
+
+        # 找到对应的 token 位置
+        # 通过逐步 decode 找到 unicode 位置对应的 token index
+        token_idx = 0
+        for i, token_id in enumerate(tokens):
+            # decode 到当前位置的文本长度
+            decoded_text = self.tokenizer.decode(
+                tokens[: i + 1], skip_special_tokens=True
+            )
+            if len(decoded_text) > target_global_pos:
+                token_idx = i
+                break
+            token_idx = i + 1
+
+        # 使用 _minimal_reversible_patch 来获取合适的 token 范围
+        start_idx, end_idx = _minimal_reversible_patch(
+            tokens, token_idx, self.tokenizer
+        )
+
+        # 生成 location_tokens，限制在 max_location_tokens 内
+        location_tokens_count = min(end_idx - start_idx, self.max_location_tokens)
+
+        # 从 token_idx 开始生成 location_tokens，但要保证 tokenizer decode 的完整性
+        location_start = token_idx
+        location_end = token_idx + location_tokens_count
+
+        # 确保 location_tokens 可以完整 decode
+        while location_end <= len(tokens):
+            try:
+                test_tokens = tokens[location_start:location_end]
+                test_text = self.tokenizer.decode(test_tokens, skip_special_tokens=True)
+                # 重新 encode 检查是否一致
+                reencoded = self.tokenizer.encode(test_text, add_special_tokens=False)
+                if reencoded == test_tokens:
+                    break
+            except Exception:
+                pass
+            location_end += 1
+            if (
+                location_end - location_start > self.max_location_tokens + 10
+            ):  # 避免无限循环
+                break
+
+        # 生成最终的 location_string
+        location_tokens = tokens[location_start:location_end]
+        location_string = self.tokenizer.decode(
+            location_tokens, skip_special_tokens=True
+        )
+
+        # 如果 location_string 没有精确定位到目标位置，需要使用 location_index
+        location_index = self.set_location_index(
+            rejected_msgs, location_string, unicode_location
+        )["location_index"]
+
+        return {"location_string": location_string, "location_index": location_index}
 
 
 if __name__ == "__main__":
-    print(
-        "测试 convert_token_level_to_unicode_location, set_location_index 和 convert_rejected_content_to_ntp_as_location 函数"
-    )
+    print("测试 NextTokenPredictionAsLocationBuilder 类的方法")
 
     # Example 1: 列举 3 种水果
     # USER: 列举 3 种水果：
@@ -354,41 +355,43 @@ if __name__ == "__main__":
         },
     ]
 
-    # 测试基础函数
+    # 创建 NextTokenPredictionAsLocationBuilder 实例
+    builder = NextTokenPredictionAsLocationBuilder(tokenizer=unicode_tokenizer)
+
+    # 测试基础方法
     print("\n=== 测试 Example 1 ===")
-    unicode_location1 = convert_token_level_to_unicode_location(example1_msgs)
+    unicode_location1 = builder.convert_token_level_to_unicode_location(example1_msgs)
     print(f"unicode_location: {unicode_location1}")
 
-    location_index1 = set_location_index(example1_msgs, "土豆", unicode_location1)
+    location_index1 = builder.set_location_index(
+        example1_msgs, "土豆", unicode_location1
+    )
     print(f"location_index for '土豆': {location_index1}")
 
     print("\n=== 测试 Example 2 ===")
-    unicode_location2 = convert_token_level_to_unicode_location(example2_msgs)
+    unicode_location2 = builder.convert_token_level_to_unicode_location(example2_msgs)
     print(f"unicode_location: {unicode_location2}")
 
-    location_index2 = set_location_index(
+    location_index2 = builder.set_location_index(
         example2_msgs, "|1;2;3;4;5;6;7;8;9;8;", unicode_location2
     )
     print(f"location_index for '|1;2;3;4;5;6;7;8;9;8;': {location_index2}")
 
-    print("\n基础函数测试完成")
+    print("\n基础方法测试完成")
 
-    # 测试 convert_rejected_content_to_ntp_as_location 函数需要 tokenizer
+    # 测试完整的转换方法
     try:
-        # 尝试使用 unicode_tokenizer
-        tokenizer = unicode_tokenizer
-
         print("\n=== 测试 convert_rejected_content_to_ntp_as_location ===")
 
         print("--- Example 1 ---")
-        result1 = convert_rejected_content_to_ntp_as_location(example1_msgs, tokenizer)
+        result1 = builder.convert_rejected_content_to_ntp_as_location(example1_msgs)
         print(
             f"Result: location_string='{result1['location_string']}', location_index={result1['location_index']}"
         )
         print("Expected format: '土豆<SPLIT_TOKEN>0<SPLIT_TOKEN>西瓜'")
 
         print("--- Example 2 ---")
-        result2 = convert_rejected_content_to_ntp_as_location(example2_msgs, tokenizer)
+        result2 = builder.convert_rejected_content_to_ntp_as_location(example2_msgs)
         print(
             f"Result: location_string='{result2['location_string']}', location_index={result2['location_index']}"
         )
@@ -396,13 +399,8 @@ if __name__ == "__main__":
             "Expected format: '|1;2;3;4;5;6;7;8;9;8<SPLIT_TOKEN>-1<SPLIT_TOKEN><STOP_TOKEN>'"
         )
 
-        print("\n完整函数测试完成")
+        print("\n完整方法测试完成")
 
-    except ImportError as e:
-        print(
-            f"\n无法导入 tokenizer，跳过 convert_rejected_content_to_ntp_as_location 测试: {e}"
-        )
-        print("可以通过 pip install transformers 安装后使用真实 tokenizer 测试")
     except Exception as e:
         print(f"\n测试过程中出现错误: {e}")
         import traceback
