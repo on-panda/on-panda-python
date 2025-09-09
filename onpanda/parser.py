@@ -9,10 +9,7 @@ with mximport.inpkg():
         unicode_tokenizer,
         apply_ignore_unicode_loss_mask_to_content,
     )
-    from .correcting_sft_utils import (
-        correcting_sft_system_prompt_default,
-        convert_rejected_content_to_ntp_as_location,
-    )
+    from .correcting_sft_utils import NextTokenPredictionAsLocationBuilder
 
 HASH_TEMPLATE_PREFIX = "<|hash|>"
 HASH_TEMPLATE_REGEX = r"^<\|hash\|>([A-Za-z0-9+\/=]+)$"
@@ -438,11 +435,15 @@ class PandaTree:
     ):
         tokenizer = tokenizer or self.tokenizer
 
+        location_builder = NextTokenPredictionAsLocationBuilder(
+            tokenizer=tokenizer,
+            SPLIT_TOKEN=SPLIT_TOKEN,
+            STOP_TOKEN=STOP_TOKEN,
+            max_location_tokens=20,
+        )
         sys_prompt_message = dict(
             role="system",
-            content=correcting_sft_system_prompt_default.replace(
-                "<SPLIT_TOKEN>", SPLIT_TOKEN
-            ).replace("<STOP_TOKEN>", STOP_TOKEN),
+            content=location_builder.get_correcting_sft_system_prompt(),
         )
         scope_slice = (-1, None)  # slice of which messages can be correcting
         is_good_correcting_msg = dict(
@@ -474,8 +475,10 @@ class PandaTree:
             )
             rejected_msgs = token_level_v1[:-1] + [rejected_msg]
 
-            ntp_as_location = convert_rejected_content_to_ntp_as_location(
-                rejected_msgs, tokenizer=tokenizer, max_location_tokens=20
+            ntp_as_location = (
+                location_builder.convert_rejected_content_to_ntp_as_location(
+                    rejected_msgs,
+                )
             )
             correcting_content = f"{ntp_as_location['location_string']}{SPLIT_TOKEN}{ntp_as_location['location_index']}{SPLIT_TOKEN}{token_level_info['chosen_text']}"
             correcting_msg = dict(
@@ -483,7 +486,7 @@ class PandaTree:
                 content=correcting_content,
                 correcting=dict(is_good=False, scope_slice=scope_slice),
             )
-            correcting_sft += [
+            correcting_sft = rejected_msgs + [
                 sys_prompt_message,
                 correcting_msg,
             ]
@@ -510,7 +513,7 @@ if __name__ == "__main__":
     test_json = "../../asset/on-panda-example/how-many-1s.panda.json"
     # test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
     test_json = "../../asset/on-panda-example/parse_example.panda.json"
-    # test_json = "../../asset/on-panda-example/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
+    test_json = "../../asset/on-panda-example/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
     panda_json = json.load(open(test_json))
 
     panda_tree = PandaTree(panda_json)
@@ -531,4 +534,4 @@ if __name__ == "__main__":
 
     correcting_sfts = panda_tree.build_correcting_sft_data_v1(tokenizer=tokenizer)
 
-    tree(correcting_sfts)
+    tree(correcting_sfts[-1])
