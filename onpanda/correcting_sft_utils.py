@@ -120,6 +120,50 @@ class NextTokenPredictionAsLocationBuilder:
         """
         pass
 
+    def messages_to_unicode_sequence(self, msgs, unicode_location=None):
+        """
+        Convert messages to a single text sequence, if unicode_location is given,
+        also compute the sequence_location in the combined text sequence.
+
+        Returns:
+            update to unicode_location dict: {"assistant_sequence": str, "sequence_location": int (if unicode_location is given)}
+        """
+
+        # 收集所有assistant消息的内容，并记录其在原始消息中的索引
+        assistant_contents = []
+        assistant_indices = []
+        for i, msg in enumerate(msgs):
+            if msg["role"] == "assistant":
+                content = mxlm.get_text_content(msg["content"])
+                # 添加隐藏的 STOP_TOKEN
+                content += self.STOP_TOKEN
+                content += "\n\n-----\n\n"
+                assistant_contents.append(content)
+                assistant_indices.append(i)
+
+        assistant_sequence = "".join(assistant_contents)
+        if unicode_location is None:
+            unicode_location = {}
+        else:
+            message_index = unicode_location["message_index"]
+            target_unicode_pos = unicode_location["unicode_location"]
+            # 计算目标位置的unicode位置
+            # 找到目标消息在assistant消息列表中的索引
+            try:
+                assistant_msg_idx = assistant_indices.index(message_index)
+            except ValueError:
+                raise ValueError(f"消息索引 {message_index} 不是 assistant 消息")
+
+            current_pos = 0
+            for i in range(assistant_msg_idx):
+                current_pos += len(assistant_contents[i])
+            sequence_location = current_pos + target_unicode_pos
+            # unicode_location = deepcopy(unicode_location)
+            unicode_location["sequence_location"] = sequence_location
+        unicode_location["assistant_sequence"] = assistant_sequence
+        # print(unicode_location)
+        return unicode_location
+
     def set_location_index(self, rejected_msgs, ntp_as_location, unicode_location):
         """
         在所有模型输出的 tokens 中查找 ntp_as_location.location_string 的所有匹配位置，
@@ -128,7 +172,7 @@ class NextTokenPredictionAsLocationBuilder:
         Args:
             rejected_msgs: 消息列表
             ntp_as_location: dict(location_string=...) or 要查找的字符串
-            unicode_location: dict, 包含 message_index 和 unicode_location
+            unicode_location: dict, 包含 message_index 和 unicode_location, 也可以包含 assistant_sequence 和 sequence_location
 
         Returns ntp_as_location:
             int: location_index，从0开始计数，负数表示从末尾倒数
@@ -137,48 +181,27 @@ class NextTokenPredictionAsLocationBuilder:
             ntp_as_location = dict(location_string=ntp_as_location)
         ntp_as_location = deepcopy(ntp_as_location)
         location_string = ntp_as_location["location_string"]
-
-        message_index = unicode_location["message_index"]
-        target_unicode_pos = unicode_location["unicode_location"]
-
-        # 收集所有assistant消息的内容，并记录其在原始消息中的索引
-        assistant_contents = []
-        assistant_indices = []
-        for i, msg in enumerate(rejected_msgs):
-            if msg["role"] == "assistant":
-                content = mxlm.get_text_content(msg["content"])
-                # 添加隐藏的 STOP_TOKEN
-                content += self.STOP_TOKEN
-                assistant_contents.append(content)
-                assistant_indices.append(i)
+        if "assistant_sequence" not in unicode_location:
+            unicode_location = self.messages_to_unicode_sequence(
+                rejected_msgs, unicode_location
+            )
+        assistant_sequence = unicode_location["assistant_sequence"]
+        sequence_location = unicode_location["sequence_location"]
 
         # 在所有assistant内容中查找location_string的所有匹配位置
-        all_content = "".join(assistant_contents)
         matches = []
         start = 0
         while True:
-            pos = all_content.find(location_string, start)
+            pos = assistant_sequence.find(location_string, start)
             if pos == -1:
                 break
             matches.append(pos)
             start = pos + 1
 
-        # 计算目标位置的unicode位置
-        # 找到目标消息在assistant消息列表中的索引
-        try:
-            assistant_msg_idx = assistant_indices.index(message_index)
-        except ValueError:
-            raise ValueError(f"消息索引 {message_index} 不是 assistant 消息")
-
-        current_pos = 0
-        for i in range(assistant_msg_idx):
-            current_pos += len(assistant_contents[i])
-        target_global_pos = current_pos + target_unicode_pos
-
         location_index = None
         # 找到目标位置对应的匹配索引
         for idx, match_pos in enumerate(matches):
-            if match_pos == target_global_pos:
+            if match_pos == sequence_location:
                 # 如果负数的绝对值更小，使用负数表示
                 negative_idx = idx - len(matches)
                 if abs(negative_idx) < idx:
@@ -296,6 +319,8 @@ class NextTokenPredictionAsLocationBuilder:
 
 
 if __name__ == "__main__":
+    from boxx import *
+
     print("测试 NextTokenPredictionAsLocationBuilder 类的方法")
 
     # Example 1: 列举 3 种水果
