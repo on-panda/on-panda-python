@@ -219,22 +219,6 @@ unicode_tokenizer = UnicodeTokenizer()
 # ----------------------------------------------------------------------
 
 
-def tok():
-    from transformers import AutoTokenizer
-
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(
-            "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
-            use_fast=True,
-            local_files_only=True,
-        )
-    except (OSError, ValueError):
-        # Smaller model that ships with Transformers – guarantees the
-        # example runs even without the Llama‑3 files.
-        tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    return tokenizer
-
-
 def _patch_len(result: Dict, which: str, tokenizer) -> int:
     """Utility to grab the token length of the second chunk (the patch)."""
     return len(
@@ -323,8 +307,9 @@ def test_fork_token_is_last_token(tok):
 
 if __name__ == "__main__":
     from boxx import *
+    from test_utils import build_test_tokenizer
 
-    tokenizer = tok = tok()
+    tokenizer = tok = build_test_tokenizer()
     # tokenizer = UnicodeTokenizer()
     test_one_token_align_one_patch(tokenizer)
     # test_many_token_align_one_patch(tokenizer)

@@ -320,6 +320,7 @@ class NextTokenPredictionAsLocationBuilder:
 
 if __name__ == "__main__":
     from boxx import *
+    from test_utils import build_test_tokenizer
 
     print("测试 NextTokenPredictionAsLocationBuilder 类的方法")
 
@@ -380,10 +381,10 @@ if __name__ == "__main__":
         },
     ]
 
-    # 创建 NextTokenPredictionAsLocationBuilder 实例
-    builder = NextTokenPredictionAsLocationBuilder(tokenizer=unicode_tokenizer)
+    tokenizer = unicode_tokenizer
+    tokenizer = build_test_tokenizer()
+    builder = NextTokenPredictionAsLocationBuilder(tokenizer=tokenizer)
 
-    # 测试基础方法
     print("\n=== 测试 Example 1 ===")
     unicode_location1 = builder.convert_token_level_to_unicode_location(example1_msgs)
     print(f"unicode_location: {unicode_location1}")
@@ -404,7 +405,6 @@ if __name__ == "__main__":
 
     print("\n基础方法测试完成")
 
-    # 测试完整的转换方法
     try:
         print("\n=== 测试 convert_rejected_content_to_ntp_as_location ===")
 
