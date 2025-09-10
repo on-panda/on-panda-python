@@ -71,6 +71,27 @@ ASSISTANT:
 correcting_sft_system_prompt_default = correcting_sft_system_prompt_cn
 
 
+def next_decodable_num(tokens, current_num, tokenizer):
+    """
+    从 tokens 的 current_num 位置开始，找到下一个能被 tokenizer decode 出完整字符的 idx
+    """
+    for num in range(current_num + 1, len(tokens)):
+        try:
+            decoded_text = tokenizer.decode(tokens[0:num])
+            if (
+                tokenizer.encode(decoded_text, add_special_tokens=False)
+                == tokens[0:num]
+            ):
+                return dict(next_num=num, decoded_text=decoded_text)
+        except Exception:
+            continue
+    raise ValueError(
+        "无法找到下一个可解码的位置",
+        getattr(tokenizer, "name_or_path", "unknow_tokenizer"),
+        tokens,
+    )
+
+
 class NextTokenPredictionAsLocationBuilder:
     def __init__(
         self,
@@ -117,6 +138,10 @@ class NextTokenPredictionAsLocationBuilder:
         Compute unicode_location by ntp_as_location in messages without token_level_info
         if Not found:
             return dict(not_found=True)
+
+        用 for loop 遍历所有 assistant 消息，找到所有能匹配上 location_string 的位置
+        如果能找到， 返回 location_index 对应的位置的 unicode_location
+        否则返回 not_found=True
         """
         pass
 
@@ -161,7 +186,7 @@ class NextTokenPredictionAsLocationBuilder:
             # unicode_location = deepcopy(unicode_location)
             unicode_location["sequence_location"] = sequence_location
         unicode_location["assistant_sequence"] = assistant_sequence
-        # print(unicode_location)
+        print(unicode_location)
         return unicode_location
 
     def set_location_index(self, rejected_msgs, ntp_as_location, unicode_location):
@@ -221,6 +246,11 @@ class NextTokenPredictionAsLocationBuilder:
         """
         将 rejected_msgs 和 token_level_info 转换为 Next Token Prediction as location 格式
 
+        - 获得 correcting 位置的 unicode_location
+        - 从 unicode_location 处取 suffix 再 decode
+        - 循环 next valid decodable 直到 location_index 为 0，或者 token 超长
+        - 生成并返回 location_string 和 location_index
+
         Args:
             rejected_msgs: 消息列表
 
@@ -232,90 +262,35 @@ class NextTokenPredictionAsLocationBuilder:
         message_index = unicode_location["message_index"]
         unicode_pos = unicode_location["unicode_location"]
 
-        # 获取包含 token_level 的消息
+        content = mxlm.get_text_content(rejected_msgs[message_index]["content"])
+        content_suffix = content[unicode_pos:] + self.STOP_TOKEN
+        suffix_tokens = self.tokenizer.encode(content_suffix, add_special_tokens=False)
+        decodable_num = 0
 
-        # 构建完整的 assistant 内容序列用于 tokenize
-        assistant_contents = []
-        assistant_indices = []
-        for i, message in enumerate(rejected_msgs):
-            if message["role"] == "assistant":
-                content = mxlm.get_text_content(message["content"])
-                # 添加隐藏的 STOP_TOKEN
-                content += self.STOP_TOKEN
-                assistant_contents.append(content)
-                assistant_indices.append(i)
-
-        full_content = "".join(assistant_contents)
-
-        # tokenize 整个内容
-        tokens = self.tokenizer.encode(full_content, add_special_tokens=False)
-
-        # 计算目标位置在全部内容中的位置
-        # 找到目标消息在assistant消息列表中的索引
-        try:
-            assistant_msg_idx = assistant_indices.index(message_index)
-        except ValueError:
-            raise ValueError(f"消息索引 {message_index} 不是 assistant 消息")
-
-        current_pos = 0
-        for i in range(assistant_msg_idx):
-            current_pos += len(assistant_contents[i])
-        target_global_pos = current_pos + unicode_pos
-
-        # 找到对应的 token 位置
-        # 通过逐步 decode 找到 unicode 位置对应的 token index
-        token_idx = 0
-        for i, token_id in enumerate(tokens):
-            # decode 到当前位置的文本长度
-            decoded_text = self.tokenizer.decode(
-                tokens[: i + 1], skip_special_tokens=True
+        while True:
+            decodable_res = next_decodable_num(
+                suffix_tokens, decodable_num, self.tokenizer
             )
-            if len(decoded_text) > target_global_pos:
-                token_idx = i
+            decodable_num = decodable_res["next_num"]
+            location_string = decodable_res["decoded_text"]
+            if decodable_num >= len(suffix_tokens):
                 break
-            token_idx = i + 1
-
-        # 使用 _minimal_reversible_patch 来获取合适的 token 范围
-        start_idx, end_idx = _minimal_reversible_patch(
-            tokens, token_idx, self.tokenizer
-        )
-
-        # 生成 location_tokens，限制在 max_location_tokens 内
-        location_tokens_count = min(end_idx - start_idx, self.max_location_tokens)
-
-        # 从 token_idx 开始生成 location_tokens，但要保证 tokenizer decode 的完整性
-        location_start = token_idx
-        location_end = token_idx + location_tokens_count
-
-        # 确保 location_tokens 可以完整 decode
-        while location_end <= len(tokens):
-            try:
-                test_tokens = tokens[location_start:location_end]
-                test_text = self.tokenizer.decode(test_tokens, skip_special_tokens=True)
-                # 重新 encode 检查是否一致
-                reencoded = self.tokenizer.encode(test_text, add_special_tokens=False)
-                if reencoded == test_tokens:
-                    break
-            except Exception:
-                pass
-            location_end += 1
-            if (
-                location_end - location_start > self.max_location_tokens + 10
-            ):  # 避免无限循环
+            if decodable_num >= self.max_location_tokens:
+                break
+            ntp_as_location = self.set_location_index(
+                rejected_msgs,
+                location_string,
+                unicode_location,
+            )
+            if ntp_as_location.get("not_found"):
+                raise ValueError("无法定位到 location_string", ntp_as_location)
+            location_index = ntp_as_location.get("location_index", None)
+            if location_index == 0:
                 break
 
         # 生成最终的 location_string
-        location_tokens = tokens[location_start:location_end]
-        location_string = self.tokenizer.decode(
-            location_tokens, skip_special_tokens=True
-        )
-
-        # 如果 location_string 没有精确定位到目标位置，需要使用 location_index
-        location_index = self.set_location_index(
-            rejected_msgs, location_string, unicode_location
-        )["location_index"]
-
-        return {"location_string": location_string, "location_index": location_index}
+        ntp_as_location["location_tokens"] = suffix_tokens[:decodable_num]
+        return ntp_as_location
 
 
 if __name__ == "__main__":
@@ -381,9 +356,13 @@ if __name__ == "__main__":
         },
     ]
 
-    tokenizer = unicode_tokenizer
-    tokenizer = build_test_tokenizer()
-    builder = NextTokenPredictionAsLocationBuilder(tokenizer=tokenizer)
+    build_argkws = dict(tokenizer=unicode_tokenizer)
+    build_argkws = dict(
+        tokenizer=build_test_tokenizer(),
+        SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
+        STOP_TOKEN="<|fim_suffix|>",
+    )
+    builder = NextTokenPredictionAsLocationBuilder(**build_argkws)
 
     print("\n=== 测试 Example 1 ===")
     unicode_location1 = builder.convert_token_level_to_unicode_location(example1_msgs)

@@ -197,6 +197,9 @@ def apply_ignore_unicode_loss_mask_to_content(mask, content_str):
 
 
 class UnicodeTokenizer:
+    def __init__(self):
+        self.name_or_path = "UnicodeTokenizer"
+
     def encode(self, string, **kwargs):
         return [ord(c) for c in list(string)]
 

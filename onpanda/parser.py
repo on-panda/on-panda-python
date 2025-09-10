@@ -480,6 +480,9 @@ class PandaTree:
                     rejected_msgs,
                 )
             )
+            ntp_as_correcting = deepcopy(ntp_as_location)
+            ntp_as_correcting.pop("unicode_location")
+
             correcting_content = f"{ntp_as_location['location_string']}{SPLIT_TOKEN}{ntp_as_location['location_index']}{SPLIT_TOKEN}{token_level_info['chosen_text']}"
             correcting_msg = dict(
                 role="assistant",
@@ -492,7 +495,7 @@ class PandaTree:
             ]
             correcting_sfts.append(correcting_sft)
 
-        # g() / 0
+        # g()
         return correcting_sfts
 
 
