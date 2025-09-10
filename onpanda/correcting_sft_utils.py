@@ -10,7 +10,6 @@ import mximport
 from copy import deepcopy
 
 with mximport.inpkg():
-    from .token_level_supervision_utils import _minimal_reversible_patch
     from .token_level_supervision_utils import unicode_tokenizer
 
 correcting_sft_system_prompt_cn = """
@@ -92,7 +91,7 @@ def next_decodable_num(tokens, current_num, tokenizer):
     )
 
 
-class NextTokenPredictionAsLocationBuilder:
+class NextTokenPredictionAsCorrectingBuilder:
     def __init__(
         self,
         tokenizer=None,
@@ -288,16 +287,32 @@ class NextTokenPredictionAsLocationBuilder:
             if location_index == 0:
                 break
 
-        # 生成最终的 location_text
         ntp_as_location["location_tokens"] = suffix_tokens[:decodable_num]
         return ntp_as_location
+
+    def build_correcting_sft(self, msgs):
+        msgs
 
 
 if __name__ == "__main__":
     from boxx import *
     from test_utils import build_test_tokenizer
 
-    print("测试 NextTokenPredictionAsLocationBuilder 类的方法")
+    tokenizer = build_test_tokenizer()
+    # build_argkws = dict(tokenizer=unicode_tokenizer)
+    build_argkws = dict(
+        tokenizer=tokenizer,
+        SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
+        STOP_TOKEN="<|fim_suffix|>",
+    )
+    builder = NextTokenPredictionAsCorrectingBuilder(**build_argkws)
+
+    # test next_decodable_num
+    complex_emoji_text = "🧎🏿‍♂️‍➡️"
+    decodable = next_decodable_num(tokenizer.encode(complex_emoji_text), 0, tokenizer)
+    assert decodable["next_num"] != 1, decodable
+
+    print("测试 NextTokenPredictionAsCorrectingBuilder 类的方法")
 
     # Example 1: 列举 3 种水果
     # USER: 列举 3 种水果：
@@ -355,14 +370,6 @@ if __name__ == "__main__":
             },
         },
     ]
-
-    build_argkws = dict(tokenizer=unicode_tokenizer)
-    build_argkws = dict(
-        tokenizer=build_test_tokenizer(),
-        SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
-        STOP_TOKEN="<|fim_suffix|>",
-    )
-    builder = NextTokenPredictionAsLocationBuilder(**build_argkws)
 
     print("\n=== 测试 Example 1 ===")
     unicode_location1 = builder.convert_token_level_to_unicode_location(example1_msgs)

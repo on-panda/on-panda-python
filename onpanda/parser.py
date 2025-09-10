@@ -9,7 +9,7 @@ with mximport.inpkg():
         unicode_tokenizer,
         apply_ignore_unicode_loss_mask_to_content,
     )
-    from .correcting_sft_utils import NextTokenPredictionAsLocationBuilder
+    from .correcting_sft_utils import NextTokenPredictionAsCorrectingBuilder
 
 HASH_TEMPLATE_PREFIX = "<|hash|>"
 HASH_TEMPLATE_REGEX = r"^<\|hash\|>([A-Za-z0-9+\/=]+)$"
@@ -435,7 +435,7 @@ class PandaTree:
     ):
         tokenizer = tokenizer or self.tokenizer
 
-        location_builder = NextTokenPredictionAsLocationBuilder(
+        location_builder = NextTokenPredictionAsCorrectingBuilder(
             tokenizer=tokenizer,
             SPLIT_TOKEN=SPLIT_TOKEN,
             STOP_TOKEN=STOP_TOKEN,
