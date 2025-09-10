@@ -427,80 +427,16 @@ class PandaTree:
         # g() / 0
         return token_level_v2s
 
-    def build_correcting_sft_data_v1(
-        self,
-        tokenizer=None,
-        SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
-        STOP_TOKEN="<|fim_suffix|>",
-    ):
-        tokenizer = tokenizer or self.tokenizer
-
-        location_builder = NextTokenPredictionAsCorrectingBuilder(
-            tokenizer=tokenizer,
-            SPLIT_TOKEN=SPLIT_TOKEN,
-            STOP_TOKEN=STOP_TOKEN,
-            max_location_tokens=20,
-        )
-        sys_prompt_message = dict(
-            role="system",
-            content=location_builder.get_correcting_sft_system_prompt(),
-        )
-        scope_slice = (-1, None)  # slice of which messages can be correcting
-        is_good_correcting_msg = dict(
-            role="assistant",
-            content=SPLIT_TOKEN,
-            correcting=dict(is_good=True, scope_slice=scope_slice),
-        )
+    def build_correcting_sft_data_v1(self, ntp_as_correcting_builder):
         sfts = self.build_legacy_data_v1()["sfts"]
-        [sft[-1].update(ignore_loss=True) for sft in sfts]
-        correcting_sfts = is_good_correcting_sfts = [
-            sft + [sys_prompt_message, is_good_correcting_msg] for sft in sfts
+        token_level_v1s = self.build_token_level_supervision_data_v1(
+            tokenizer=ntp_as_correcting_builder.tokenizer
+        )
+        correcting_sfts = [
+            ntp_as_correcting_builder.build_correcting_sft(sft)
+            for sft in sfts + token_level_v1s
         ]
 
-        token_level_v1s = self.build_token_level_supervision_data_v1(
-            tokenizer=tokenizer
-        )
-        for token_level_v1 in token_level_v1s:
-            token_level_msg = token_level_v1[-1]
-            token_level_info = token_level_msg["token_level"]
-            rejected_content_chunks = token_level_info.pop("rejected_content")
-
-            rejected_content_str = "".join([c["text"] for c in rejected_content_chunks])
-            rejected_msg = dict(
-                role="assistant",
-                ignore_loss=True,
-                content=rejected_content_str,
-                finish_reason=token_level_info.get("rejected_finish_reason", ""),
-                token_level=token_level_info,
-            )
-            rejected_msgs = token_level_v1[:-1] + [rejected_msg]
-
-            ntp_as_location = (
-                location_builder.convert_rejected_content_to_ntp_as_location(
-                    rejected_msgs,
-                )
-            )
-            ntp_as_correcting = deepcopy(ntp_as_location)
-            ntp_as_correcting.pop("unicode_location")
-            ntp_as_correcting.update(
-                replacement_text=token_level_info["chosen_text"],
-                is_good=False,
-                scope_slice=scope_slice,
-            )
-
-            correcting_content = f"{ntp_as_correcting['location_text']}{SPLIT_TOKEN}{ntp_as_correcting['location_index']}{SPLIT_TOKEN}{ntp_as_correcting['replacement_text']}"
-            correcting_msg = dict(
-                role="assistant",
-                content=correcting_content,
-                correcting=ntp_as_correcting,
-            )
-            correcting_sft = rejected_msgs + [
-                sys_prompt_message,
-                correcting_msg,
-            ]
-            correcting_sfts.append(correcting_sft)
-
-        # g()
         return correcting_sfts
 
 
@@ -539,7 +475,14 @@ if __name__ == "__main__":
     token_level_v2s = panda_tree.build_token_level_supervision_data_v2(
         tokenizer=tokenizer
     )
+    sft_correcting_builder = NextTokenPredictionAsCorrectingBuilder(
+        tokenizer=tokenizer,
+        SPLIT_TOKEN="<SPLIT_TOKEN>",  # for qwen 2.5
+        STOP_TOKEN="<STOP_TOKEN>",
+        max_location_tokens=20,
+    )
 
-    correcting_sfts = panda_tree.build_correcting_sft_data_v1(tokenizer=tokenizer)
+    correcting_sfts = panda_tree.build_correcting_sft_data_v1(sft_correcting_builder)
 
     tree(correcting_sfts[-1])
+    # tree(correcting_sfts[3])

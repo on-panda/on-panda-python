@@ -12,8 +12,7 @@ from copy import deepcopy
 with mximport.inpkg():
     from .token_level_supervision_utils import unicode_tokenizer
 
-correcting_sft_system_prompt_cn = """
-- 先前的 system prompt 只做评估用，不必再遵守
+correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用，不必再遵守
 - 你本体是一个 GPT 架构的 LLM, 你现在的角色切换为了 token-level correcting model
 - 目标是通过修改不恰当的 token 来优化已有的回答
 - 你的任务是：
@@ -64,8 +63,7 @@ ASSISTANT:
 期望的输出: “|1;2;3;4;5;6;7;8;9;8<SPLIT_TOKEN>-1<SPLIT_TOKEN><STOP_TOKEN>”
 - “第一个不恰当 token”处和其他 ASSISTANT 的回答有重复，所以会生成完整个 20 个 `{location_tokens}`
 - `{location_index}` 用正数表示时为 2， 用负数为 -1，其中， -1 绝对值更加小，所以应该用 -1
-- 此处 `{replacement_token}` 为 stop token
-"""
+- 此处 `{replacement_token}` 为 stop token"""
 
 correcting_sft_system_prompt_default = correcting_sft_system_prompt_cn
 
@@ -98,11 +96,13 @@ class NextTokenPredictionAsCorrectingBuilder:
         SPLIT_TOKEN="<SPLIT_TOKEN>",  # for qwen 2.5
         STOP_TOKEN="<STOP_TOKEN>",
         max_location_tokens=20,
+        scope_slice=(-1, None),  # slice of which messages can be correcting
     ):
         self.tokenizer = tokenizer or unicode_tokenizer
         self.SPLIT_TOKEN = SPLIT_TOKEN
         self.STOP_TOKEN = STOP_TOKEN
         self.max_location_tokens = max_location_tokens
+        self.scope_slice = scope_slice
 
     def get_correcting_sft_system_prompt(self, language="cn"):
         if language == "cn":
@@ -130,7 +130,7 @@ class NextTokenPredictionAsCorrectingBuilder:
                 unicode_location = token_level["rejected_text_unicode_location"][0]
                 return {"message_index": i, "unicode_location": unicode_location}
 
-        raise ValueError("找不到包含 token_level 的 assistant 消息")
+        return {"not_found": True}
 
     def get_unicode_location(self, msgs, ntp_as_location):
         """
@@ -185,7 +185,7 @@ class NextTokenPredictionAsCorrectingBuilder:
             # unicode_location = deepcopy(unicode_location)
             unicode_location["sequence_location"] = sequence_location
         unicode_location["assistant_sequence"] = assistant_sequence
-        print(unicode_location)
+        # print(unicode_location)
         return unicode_location
 
     def set_location_index(self, rejected_msgs, ntp_as_location, unicode_location):
@@ -291,7 +291,62 @@ class NextTokenPredictionAsCorrectingBuilder:
         return ntp_as_location
 
     def build_correcting_sft(self, msgs):
-        msgs
+        unicode_location = self.convert_token_level_to_unicode_location(msgs)
+
+        sys_prompt_message = dict(
+            role="system",
+            content=self.get_correcting_sft_system_prompt(),
+        )
+
+        if unicode_location.get(
+            "not_found"
+        ):  # 没有 token_level 信息, 属于 is_good 的 SFT
+            is_good_correcting_msg = dict(
+                role="assistant",
+                content=self.SPLIT_TOKEN,
+                correcting=dict(is_good=True, scope_slice=self.scope_slice),
+            )
+            msgs[-1].update(ignore_loss=True)
+            correcting_sft = msgs + [sys_prompt_message, is_good_correcting_msg]
+
+            return correcting_sft
+        else:  # 有 token_level 信息, 属于 not is_good 的 token-level SFT
+            token_level_msg = msgs[-1]
+            token_level_info = token_level_msg["token_level"]
+            rejected_content_chunks = token_level_info.pop("rejected_content")
+
+            rejected_content_str = mxlm.get_text_content(rejected_content_chunks)
+            rejected_msg = dict(
+                role="assistant",
+                ignore_loss=True,
+                content=rejected_content_str,
+                finish_reason=token_level_info.get("rejected_finish_reason", ""),
+                token_level=token_level_info,
+            )
+            rejected_msgs = msgs[:-1] + [rejected_msg]
+
+            ntp_as_location = self.convert_rejected_content_to_ntp_as_location(
+                rejected_msgs,
+            )
+            ntp_as_correcting = deepcopy(ntp_as_location)
+            ntp_as_correcting.pop("unicode_location")
+            ntp_as_correcting.update(
+                replacement_text=token_level_info["chosen_text"],
+                is_good=False,
+                scope_slice=self.scope_slice,
+            )
+
+            correcting_content = f"{ntp_as_correcting['location_text']}{self.SPLIT_TOKEN}{ntp_as_correcting['location_index']}{self.SPLIT_TOKEN}{ntp_as_correcting['replacement_text']}"
+            correcting_msg = dict(
+                role="assistant",
+                content=correcting_content,
+                correcting=ntp_as_correcting,
+            )
+            correcting_sft = rejected_msgs + [
+                sys_prompt_message,
+                correcting_msg,
+            ]
+        return correcting_sft
 
 
 if __name__ == "__main__":
