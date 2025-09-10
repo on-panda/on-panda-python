@@ -22,7 +22,7 @@ correcting_sft_system_prompt_cn = """
     2. 将“不恰当 token”修改为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
 - Correcting 范围：多轮的情况下，只定位和修改上一轮（即最新轮）的答复中首个“不恰当 token”
 - 由于你作为 LLM 只会输出文本，我们按照这个文本格式来输出你的 correcting 答复:
-    - `{location_tokens}<SPLIT_TOKEN>{location_index}<SPLIT_TOKEN>{correcting_token}`
+    - `{location_tokens}<SPLIT_TOKEN>{location_index}<SPLIT_TOKEN>{replacement_token}`
     - `{location_tokens}`: 用来定位 “修改位置” 的一串 tokens
         - 其内容为从不恰当的 token 开始，持续生成，直到触发以下任意情况：
             1. 在所有模型输出的 tokens 中 (包括模型的历史输出) 被 `{location_tokens}` 匹配上的第一处位置正好就是 “修改位置” 
@@ -36,8 +36,8 @@ correcting_sft_system_prompt_cn = """
     - `{location_index}` 表示在所有模型输出的 tokens 中, 能被 `{location_tokens}` 匹配上的所有位置中的第几个位置
         - 是一个 int 数值，和 Python list 的 index 相似，从 0 开始计数。当用负数表示 index 时的绝对值比正数 index 更加小的时候，`{location_index}` 就用负数表示。
         - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置
-    - `{correcting_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。这里只需要一个 token 即可。
-    -  stop token：上面的每一轮答复最后都有 stop token，需要的话，在 `{location_tokens}`,`{correcting_token}` 中使用 special token `<STOP_TOKEN>` 来表示 stop token
+    - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。这里只需要一个 token 即可。
+    -  stop token：上面的每一轮答复最后都有 stop token，需要的话，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<STOP_TOKEN>` 来表示 stop token
         - 比如, 要续写最后一轮的答复 `<STOP_TOKEN><SPLIT_TOKEN>-1<SPLIT_TOKEN>{continue token}`
     - tokenizer 问题：
         - 你需要通过多输出 token 或提前输出 token 来避免潜在的 tokenizer decode 出不合规文本的问题。
@@ -65,7 +65,7 @@ ASSISTANT:
 期望的输出: “|1;2;3;4;5;6;7;8;9;8<SPLIT_TOKEN>-1<SPLIT_TOKEN><STOP_TOKEN>”
 - “第一个不恰当 token”处和其他 ASSISTANT 的回答有重复，所以会生成完整个 20 个 `{location_tokens}`
 - `{location_index}` 用正数表示时为 2， 用负数为 -1，其中， -1 绝对值更加小，所以应该用 -1
-- 此处 `{correcting_token}` 为 stop token
+- 此处 `{replacement_token}` 为 stop token
 """
 
 correcting_sft_system_prompt_default = correcting_sft_system_prompt_cn
@@ -139,7 +139,7 @@ class NextTokenPredictionAsLocationBuilder:
         if Not found:
             return dict(not_found=True)
 
-        用 for loop 遍历所有 assistant 消息，找到所有能匹配上 location_string 的位置
+        用 for loop 遍历所有 assistant 消息，找到所有能匹配上 location_text 的位置
         如果能找到， 返回 location_index 对应的位置的 unicode_location
         否则返回 not_found=True
         """
@@ -191,21 +191,21 @@ class NextTokenPredictionAsLocationBuilder:
 
     def set_location_index(self, rejected_msgs, ntp_as_location, unicode_location):
         """
-        在所有模型输出的 tokens 中查找 ntp_as_location.location_string 的所有匹配位置，
+        在所有模型输出的 tokens 中查找 ntp_as_location.location_text 的所有匹配位置，
         返回对应的索引位置 ntp_as_location.location_index
 
         Args:
             rejected_msgs: 消息列表
-            ntp_as_location: dict(location_string=...) or 要查找的字符串
+            ntp_as_location: dict(location_text=...) or 要查找的字符串
             unicode_location: dict, 包含 message_index 和 unicode_location, 也可以包含 assistant_sequence 和 sequence_location
 
         Returns ntp_as_location:
             int: location_index，从0开始计数，负数表示从末尾倒数
         """
         if isinstance(ntp_as_location, str):
-            ntp_as_location = dict(location_string=ntp_as_location)
+            ntp_as_location = dict(location_text=ntp_as_location)
         ntp_as_location = deepcopy(ntp_as_location)
-        location_string = ntp_as_location["location_string"]
+        location_text = ntp_as_location["location_text"]
         if "assistant_sequence" not in unicode_location:
             unicode_location = self.messages_to_unicode_sequence(
                 rejected_msgs, unicode_location
@@ -213,11 +213,11 @@ class NextTokenPredictionAsLocationBuilder:
         assistant_sequence = unicode_location["assistant_sequence"]
         sequence_location = unicode_location["sequence_location"]
 
-        # 在所有assistant内容中查找location_string的所有匹配位置
+        # 在所有assistant内容中查找location_text的所有匹配位置
         matches = []
         start = 0
         while True:
-            pos = assistant_sequence.find(location_string, start)
+            pos = assistant_sequence.find(location_text, start)
             if pos == -1:
                 break
             matches.append(pos)
@@ -249,13 +249,13 @@ class NextTokenPredictionAsLocationBuilder:
         - 获得 correcting 位置的 unicode_location
         - 从 unicode_location 处取 suffix 再 decode
         - 循环 next valid decodable 直到 location_index 为 0，或者 token 超长
-        - 生成并返回 location_string 和 location_index
+        - 生成并返回 location_text 和 location_index
 
         Args:
             rejected_msgs: 消息列表
 
         Returns:
-            dict: {"location_string": str, "location_index": int}
+            dict: {"location_text": str, "location_index": int}
         """
         # 获取 unicode_location
         unicode_location = self.convert_token_level_to_unicode_location(rejected_msgs)
@@ -272,23 +272,23 @@ class NextTokenPredictionAsLocationBuilder:
                 suffix_tokens, decodable_num, self.tokenizer
             )
             decodable_num = decodable_res["next_num"]
-            location_string = decodable_res["decoded_text"]
+            location_text = decodable_res["decoded_text"]
             if decodable_num >= len(suffix_tokens):
                 break
             if decodable_num >= self.max_location_tokens:
                 break
             ntp_as_location = self.set_location_index(
                 rejected_msgs,
-                location_string,
+                location_text,
                 unicode_location,
             )
             if ntp_as_location.get("not_found"):
-                raise ValueError("无法定位到 location_string", ntp_as_location)
+                raise ValueError("无法定位到 location_text", ntp_as_location)
             location_index = ntp_as_location.get("location_index", None)
             if location_index == 0:
                 break
 
-        # 生成最终的 location_string
+        # 生成最终的 location_text
         ntp_as_location["location_tokens"] = suffix_tokens[:decodable_num]
         return ntp_as_location
 
@@ -390,14 +390,14 @@ if __name__ == "__main__":
         print("--- Example 1 ---")
         result1 = builder.convert_rejected_content_to_ntp_as_location(example1_msgs)
         print(
-            f"Result: location_string='{result1['location_string']}', location_index={result1['location_index']}"
+            f"Result: location_text='{result1['location_text']}', location_index={result1['location_index']}"
         )
         print("Expected format: '土豆<SPLIT_TOKEN>0<SPLIT_TOKEN>西瓜'")
 
         print("--- Example 2 ---")
         result2 = builder.convert_rejected_content_to_ntp_as_location(example2_msgs)
         print(
-            f"Result: location_string='{result2['location_string']}', location_index={result2['location_index']}"
+            f"Result: location_text='{result2['location_text']}', location_index={result2['location_index']}"
         )
         print(
             "Expected format: '|1;2;3;4;5;6;7;8;9;8<SPLIT_TOKEN>-1<SPLIT_TOKEN><STOP_TOKEN>'"

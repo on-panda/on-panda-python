@@ -482,12 +482,17 @@ class PandaTree:
             )
             ntp_as_correcting = deepcopy(ntp_as_location)
             ntp_as_correcting.pop("unicode_location")
+            ntp_as_correcting.update(
+                replacement_text=token_level_info["chosen_text"],
+                is_good=False,
+                scope_slice=scope_slice,
+            )
 
-            correcting_content = f"{ntp_as_location['location_string']}{SPLIT_TOKEN}{ntp_as_location['location_index']}{SPLIT_TOKEN}{token_level_info['chosen_text']}"
+            correcting_content = f"{ntp_as_correcting['location_text']}{SPLIT_TOKEN}{ntp_as_correcting['location_index']}{SPLIT_TOKEN}{ntp_as_correcting['replacement_text']}"
             correcting_msg = dict(
                 role="assistant",
                 content=correcting_content,
-                correcting=dict(is_good=False, scope_slice=scope_slice),
+                correcting=ntp_as_correcting,
             )
             correcting_sft = rejected_msgs + [
                 sys_prompt_message,
@@ -515,8 +520,8 @@ if __name__ == "__main__":
 
     test_json = "../../asset/on-panda-example/how-many-1s.panda.json"
     # test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
-    test_json = "../../asset/on-panda-example/parse_example.panda.json"
-    test_json = "../../asset/on-panda-example/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
+    test_json = "../../on-panda-example-data/panda_json/2025-04-12_Chinese_poe_藏头诗_tokenizer-step2.panda.json"
+    test_json = "../../on-panda-example-data/panda_json/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
     panda_json = json.load(open(test_json))
 
     panda_tree = PandaTree(panda_json)
