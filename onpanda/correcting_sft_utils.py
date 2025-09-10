@@ -20,7 +20,7 @@ correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用�
     2. 将“不恰当 token”修改为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
 - Correcting 范围：多轮的情况下，只定位和修改上一轮（即最新轮）的答复中首个“不恰当 token”
 - 由于你作为 LLM 只会输出文本，我们按照这个文本格式来输出你的 correcting 答复:
-    - `{location_tokens}<SPLIT_TOKEN>{location_index}<SPLIT_TOKEN>{replacement_token}`
+    - `{location_tokens}<|split|>{location_index}<|split|>{replacement_token}`
     - `{location_tokens}`: 用来定位 “修改位置” 的一串 tokens
         - 其内容为从不恰当的 token 开始，持续生成，直到触发以下任意情况：
             1. 在所有模型输出的 tokens 中 (包括模型的历史输出) 被 `{location_tokens}` 匹配上的第一处位置正好就是 “修改位置” 
@@ -29,29 +29,29 @@ correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用�
             2. `{location_tokens}` 长度达到 20 个 token 了，就该截止了。
                 - 但是，若最后的几个 token 不能被你自己 (correcting model) 的 tokenizer decode 为完整字符，需要突破 20 tokens 限制生成到能 decode 出完整字符为止。
                 - 若 20 个 token 都没法把 “修改位置” 准确定位，那就需要配合 `{location_index}` 来一起定位了。
-            3. 一轮结束了，即已经生成了 stop token: <STOP_TOKEN>，也应该截止
-    - <SPLIT_TOKEN> 是分隔内容的 special token
+            3. 一轮结束了，即已经生成了 stop token: `<|stop|>`，也应该截止
+    - `<|split|>` 是分隔内容的 special token
     - `{location_index}` 表示在所有模型输出的 tokens 中, 能被 `{location_tokens}` 匹配上的所有位置中的第几个位置
         - 是一个 int 数值，和 Python list 的 index 相似，从 0 开始计数。当用负数表示 index 时的绝对值比正数 index 更加小的时候，`{location_index}` 就用负数表示。
         - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置
     - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。这里只需要一个 token 即可。
-    -  stop token：上面的每一轮答复最后都有 stop token，需要的话，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<STOP_TOKEN>` 来表示 stop token
-        - 比如, 要续写最后一轮的答复 `<STOP_TOKEN><SPLIT_TOKEN>-1<SPLIT_TOKEN>{continue token}`
+    -  stop token：上面的每一轮答复最后都有 stop token，需要的话，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
+        - 比如, 要续写最后一轮的答复 `<|stop|><|split|>-1<|split|>{continue token}`
     - tokenizer 问题：
         - 你需要通过多输出 token 或提前输出 token 来避免潜在的 tokenizer decode 出不合规文本的问题。
         - 即多个 tokens 对应一个文本字符的情况下，要把多个 token 视为一个整体，使所有输出的 tokens 能和文本互相转换，而不要截断中间 token
-    - 如果 Correcting 范围内的回答都没有问题，输出一个 `<SPLIT_TOKEN>`
+    - 如果 Correcting 范围内的回答都没有问题，输出一个 `<|split|>`
 
 ## example 1:
 USER:
 列举 3 种水果：
 ASSISTANT:
 苹果、土豆、香蕉
-期望的输出: “土豆<SPLIT_TOKEN>0<SPLIT_TOKEN>西瓜”
+期望的输出: “土豆<|split|>0<|split|>西瓜”
 
 ## example 2:
 USER:
-Just reply 2 times, Using "|" as a separator：
+Just reply 2 times, Using "|" as a separator:
 1;2;3;4;5;6;7;8;9;8;
 ASSISTANT:
 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
@@ -60,7 +60,7 @@ Reply again
 ASSISTANT:
 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
 
-期望的输出: “|1;2;3;4;5;6;7;8;9;8<SPLIT_TOKEN>-1<SPLIT_TOKEN><STOP_TOKEN>”
+期望的输出: “|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|>”
 - “第一个不恰当 token”处和其他 ASSISTANT 的回答有重复，所以会生成完整个 20 个 `{location_tokens}`
 - `{location_index}` 用正数表示时为 2， 用负数为 -1，其中， -1 绝对值更加小，所以应该用 -1
 - 此处 `{replacement_token}` 为 stop token"""
@@ -93,8 +93,8 @@ class NextTokenPredictionAsCorrectingBuilder:
     def __init__(
         self,
         tokenizer=None,
-        SPLIT_TOKEN="<SPLIT_TOKEN>",  # for qwen 2.5
-        STOP_TOKEN="<STOP_TOKEN>",
+        SPLIT_TOKEN="<|split|>",  # for qwen 2.5
+        STOP_TOKEN="<|stop|>",
         max_location_tokens=20,
         scope_slice=(-1, None),  # slice of which messages can be correcting
     ):
@@ -109,8 +109,8 @@ class NextTokenPredictionAsCorrectingBuilder:
             prompt = correcting_sft_system_prompt_cn
         else:
             prompt = correcting_sft_system_prompt_default
-        return prompt.replace("<SPLIT_TOKEN>", self.SPLIT_TOKEN).replace(
-            "<STOP_TOKEN>", self.STOP_TOKEN
+        return prompt.replace("<|split|>", self.SPLIT_TOKEN).replace(
+            "<|stop|>", self.STOP_TOKEN
         )
 
     def convert_token_level_to_unicode_location(self, rejected_msgs):
@@ -346,6 +346,7 @@ class NextTokenPredictionAsCorrectingBuilder:
                 sys_prompt_message,
                 correcting_msg,
             ]
+        # import boxx.g
         return correcting_sft
 
 
@@ -372,7 +373,7 @@ if __name__ == "__main__":
     # Example 1: 列举 3 种水果
     # USER: 列举 3 种水果：
     # ASSISTANT: 苹果、土豆、香蕉
-    # 期望的输出: "土豆<SPLIT_TOKEN>0<SPLIT_TOKEN>西瓜"
+    # 期望的输出: "土豆<|split|>0<|split|>西瓜"
     example1_msgs = [
         {"role": "user", "content": "列举 3 种水果："},
         {
@@ -397,11 +398,11 @@ if __name__ == "__main__":
     # ASSISTANT: 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
     # USER: Reply again
     # ASSISTANT: 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
-    # 期望的输出: "|1;2;3;4;5;6;7;8;9;8<SPLIT_TOKEN>-1<SPLIT_TOKEN><STOP_TOKEN>"
+    # 期望的输出: "|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|>"
     example2_msgs = [
         {
             "role": "user",
-            "content": 'Just reply 2 times, Using "|" as a separator：\n1;2;3;4;5;6;7;8;9;8;',
+            "content": 'Just reply 2 times, Using "|" as a separator:\n1;2;3;4;5;6;7;8;9;8;',
         },
         {
             "role": "assistant",
@@ -414,7 +415,7 @@ if __name__ == "__main__":
             "content": "1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;",
             "finish_reason": "stop",
             "token_level": {
-                "chosen_text": "<STOP_TOKEN>",
+                "chosen_text": "<|stop|>",
                 "rejected_text": "|1;2;3;4;5;6;7;8;9;8;",
                 "chosen_text_unicode_location": [41, 1],
                 "rejected_text_unicode_location": [41, 1],
@@ -454,16 +455,14 @@ if __name__ == "__main__":
         print(
             f"Result: location_text='{result1['location_text']}', location_index={result1['location_index']}"
         )
-        print("Expected format: '土豆<SPLIT_TOKEN>0<SPLIT_TOKEN>西瓜'")
+        print("Expected format: '土豆<|split|>0<|split|>西瓜'")
 
         print("--- Example 2 ---")
         result2 = builder.convert_rejected_content_to_ntp_as_location(example2_msgs)
         print(
             f"Result: location_text='{result2['location_text']}', location_index={result2['location_index']}"
         )
-        print(
-            "Expected format: '|1;2;3;4;5;6;7;8;9;8<SPLIT_TOKEN>-1<SPLIT_TOKEN><STOP_TOKEN>'"
-        )
+        print("Expected format: '|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|>'")
 
         print("\n完整方法测试完成")
 

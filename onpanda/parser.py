@@ -458,6 +458,7 @@ if __name__ == "__main__":
     # test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
     test_json = "../../on-panda-example-data/panda_json/2025-04-12_Chinese_poe_藏头诗_tokenizer-step2.panda.json"
     test_json = "../../on-panda-example-data/panda_json/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
+    test_json = "../../on-panda-example-data/panda_json/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
     panda_json = json.load(open(test_json))
 
     panda_tree = PandaTree(panda_json)
@@ -477,8 +478,8 @@ if __name__ == "__main__":
     )
     sft_correcting_builder = NextTokenPredictionAsCorrectingBuilder(
         tokenizer=tokenizer,
-        SPLIT_TOKEN="<SPLIT_TOKEN>",  # for qwen 2.5
-        STOP_TOKEN="<STOP_TOKEN>",
+        SPLIT_TOKEN="<|split|>",  # for qwen 2.5
+        STOP_TOKEN="<|stop|>",
         max_location_tokens=20,
     )
 
