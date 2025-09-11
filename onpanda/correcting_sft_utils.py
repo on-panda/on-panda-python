@@ -20,7 +20,8 @@ correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用�
     2. 将“不恰当 token”修改为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
 - Correcting 范围：多轮的情况下，只定位和修改上一轮（即最新轮）的答复中首个“不恰当 token”
 - 由于你作为 LLM 只会输出文本，我们按照这个文本格式来输出你的 correcting 答复:
-    - `{location_tokens}<|split|>{location_index}<|split|>{replacement_token}`
+    - `<|split|>{location_tokens}<|split|>{location_index}<|split|>{replacement_token}<|split|>`
+    - `<|split|>` 是分隔内容的 special token，且回答必须以 `<|split|>` 作为开头和结尾
     - `{location_tokens}`: 用来定位 “修改位置” 的一串 tokens
         - 其内容为从不恰当的 token 开始，持续生成，直到触发以下任意情况：
             1. 在所有模型输出的 tokens 中 (包括模型的历史输出) 被 `{location_tokens}` 匹配上的第一处位置正好就是 “修改位置” 
@@ -30,24 +31,23 @@ correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用�
                 - 但是，若最后的几个 token 不能被你自己 (correcting model) 的 tokenizer decode 为完整字符，需要突破 20 tokens 限制生成到能 decode 出完整字符为止。
                 - 若 20 个 token 都没法把 “修改位置” 准确定位，那就需要配合 `{location_index}` 来一起定位了。
             3. 一轮结束了，即已经生成了 stop token: `<|stop|>`，也应该截止
-    - `<|split|>` 是分隔内容的 special token
     - `{location_index}` 表示在所有模型输出的 tokens 中, 能被 `{location_tokens}` 匹配上的所有位置中的第几个位置
         - 是一个 int 数值，和 Python list 的 index 相似，从 0 开始计数。当用负数表示 index 时的绝对值比正数 index 更加小的时候，`{location_index}` 就用负数表示。
         - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置
     - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。这里只需要一个 token 即可。
-    -  stop token：上面的每一轮答复最后都有 stop token，需要的话，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
-        - 比如, 要续写最后一轮的答复 `<|stop|><|split|>-1<|split|>{continue token}`
+    -  stop token: 上面的每一轮答复最后都有 stop token，需要的话，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
+        - 比如, 要续写最后一轮的答复 `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - tokenizer 问题：
         - 你需要通过多输出 token 或提前输出 token 来避免潜在的 tokenizer decode 出不合规文本的问题。
         - 即多个 tokens 对应一个文本字符的情况下，要把多个 token 视为一个整体，使所有输出的 tokens 能和文本互相转换，而不要截断中间 token
-    - 如果 Correcting 范围内的回答都没有问题，输出一个 `<|split|>`
+    - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|split|>`
 
 ## example 1:
 USER:
 列举 3 种水果：
 ASSISTANT:
 苹果、土豆、香蕉
-期望的输出: “土豆<|split|>0<|split|>西瓜”
+期望的输出: “<|split|>土豆<|split|>0<|split|>西瓜<|split|>”
 
 ## example 2:
 USER:
@@ -60,7 +60,7 @@ Reply again
 ASSISTANT:
 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
 
-期望的输出: “|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|>”
+期望的输出: “<|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>”
 - “第一个不恰当 token”处和其他 ASSISTANT 的回答有重复，所以会生成完整个 20 个 `{location_tokens}`
 - `{location_index}` 用正数表示时为 2， 用负数为 -1，其中， -1 绝对值更加小，所以应该用 -1
 - 此处 `{replacement_token}` 为 stop token"""
@@ -142,7 +142,7 @@ class NextTokenPredictionAsCorrectingBuilder:
         如果能找到， 返回 location_index 对应的位置的 unicode_location
         否则返回 not_found=True
         """
-        pass
+        unicode_location = self.messages_to_unicode_sequence(msgs)["unicode_location"]
 
     def messages_to_unicode_sequence(self, msgs, unicode_location=None):
         """
@@ -310,7 +310,7 @@ class NextTokenPredictionAsCorrectingBuilder:
         ):  # 没有 token_level 信息, 属于 is_good 的 SFT
             is_good_correcting_msg = dict(
                 role="assistant",
-                content=self.SPLIT_TOKEN,
+                content=self.SPLIT_TOKEN * 2,
                 correcting=dict(is_good=True, scope_slice=self.scope_slice),
             )
             msgs[-1].update(ignore_loss=True)
@@ -346,7 +346,7 @@ class NextTokenPredictionAsCorrectingBuilder:
                 scope_slice=self.scope_slice,
             )
 
-            correcting_content = f"{ntp_as_correcting['location_text']}{self.SPLIT_TOKEN}{ntp_as_correcting['location_index']}{self.SPLIT_TOKEN}{ntp_as_correcting['replacement_text']}"
+            correcting_content = f"{self.SPLIT_TOKEN}{ntp_as_correcting['location_text']}{self.SPLIT_TOKEN}{ntp_as_correcting['location_index']}{self.SPLIT_TOKEN}{ntp_as_correcting['replacement_text']}{self.SPLIT_TOKEN}"
             correcting_msg = dict(
                 role="assistant",
                 content=correcting_content,
@@ -404,7 +404,7 @@ if __name__ == "__main__":
     )
     assert result1["location_text"] == "土豆", result1
     assert result1["location_index"] == 0, result1
-    # Expected format: '土豆<|split|>0<|split|>西瓜'
+    # Expected format: <|fim_pad|>土豆<|fim_pad|>0<|fim_pad|>西瓜<|fim_pad|>
 
     # test correcting_sft extreme cases: chosen stop
     test_json = "../../on-panda-example-data/panda_json/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
@@ -413,7 +413,7 @@ if __name__ == "__main__":
     correcting_content = correcting_sft[-1]["content"]
     assert (
         correcting_content
-        == "|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|>"
+        == "<|fim_pad|>|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|><|fim_pad|>"
     ), correcting_content
 
     # test correcting_sft extreme cases: chosen continue
@@ -422,5 +422,6 @@ if __name__ == "__main__":
     correcting_sft2 = panda_tree2.build_correcting_sft_data_v1(builder)[-1]
     correcting_content2 = correcting_sft2[-1]["content"]
     assert (
-        correcting_content2 == "<|fim_suffix|><|fim_pad|>1<|fim_pad|>|"
+        correcting_content2
+        == "<|fim_pad|><|fim_suffix|><|fim_pad|>1<|fim_pad|>|<|fim_pad|>"
     ), correcting_content2

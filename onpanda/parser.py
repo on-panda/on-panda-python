@@ -493,8 +493,8 @@ if __name__ == "__main__":
     )
     sft_correcting_builder = NextTokenPredictionAsCorrectingBuilder(
         tokenizer=tokenizer,
-        SPLIT_TOKEN="<|split|>",  # for qwen 2.5
-        STOP_TOKEN="<|stop|>",
+        SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
+        STOP_TOKEN="<|fim_suffix|>",
         max_location_tokens=20,
     )
 
