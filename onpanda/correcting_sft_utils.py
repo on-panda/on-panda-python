@@ -72,7 +72,7 @@ def next_decodable_num(tokens, current_num, tokenizer):
     """
     从 tokens 的 current_num 位置开始，找到下一个能被 tokenizer decode 出完整字符的 idx
     """
-    for num in range(current_num + 1, len(tokens)):
+    for num in range(current_num + 1, len(tokens) + 1):  # number of tokens
         try:
             decoded_text = tokenizer.decode(tokens[0:num])
             if (
@@ -272,10 +272,6 @@ class NextTokenPredictionAsCorrectingBuilder:
             )
             decodable_num = decodable_res["next_num"]
             location_text = decodable_res["decoded_text"]
-            if decodable_num >= len(suffix_tokens):
-                break
-            if decodable_num >= self.max_location_tokens:
-                break
             ntp_as_location = self.set_location_index(
                 rejected_msgs,
                 location_text,
@@ -286,17 +282,28 @@ class NextTokenPredictionAsCorrectingBuilder:
             location_index = ntp_as_location.get("location_index", None)
             if location_index == 0:
                 break
+            if decodable_num >= len(suffix_tokens):
+                break
+            if decodable_num >= self.max_location_tokens:
+                break
 
         ntp_as_location["location_tokens"] = suffix_tokens[:decodable_num]
         return ntp_as_location
 
-    def build_correcting_sft(self, msgs):
+    def build_correcting_sft_by_token_level_SFT(
+        self, msgs, is_good=None
+    ):  # must be is_good SFT msgs or token_level_SFT msgs
         unicode_location = self.convert_token_level_to_unicode_location(msgs)
 
         sys_prompt_message = dict(
             role="system",
             content=self.get_correcting_sft_system_prompt(),
         )
+        # double check
+        if is_good is not None:
+            assert bool(is_good) == bool(
+                unicode_location.get("not_found")
+            ), "is_good must not"
 
         if unicode_location.get(
             "not_found"
@@ -330,8 +337,11 @@ class NextTokenPredictionAsCorrectingBuilder:
             )
             ntp_as_correcting = deepcopy(ntp_as_location)
             ntp_as_correcting.pop("unicode_location")
+            replacement_text = (
+                token_level_info["chosen_text"] or self.STOP_TOKEN
+            )  # if chosen_text is empty mean chosen stop token
             ntp_as_correcting.update(
-                replacement_text=token_level_info["chosen_text"],
+                replacement_text=replacement_text,
                 is_good=False,
                 scope_slice=self.scope_slice,
             )
@@ -353,6 +363,7 @@ class NextTokenPredictionAsCorrectingBuilder:
 if __name__ == "__main__":
     from boxx import *
     from test_utils import build_test_tokenizer
+    from parser import build_test_panda_tree
 
     tokenizer = build_test_tokenizer()
     # build_argkws = dict(tokenizer=unicode_tokenizer)
@@ -368,13 +379,8 @@ if __name__ == "__main__":
     decodable = next_decodable_num(tokenizer.encode(complex_emoji_text), 0, tokenizer)
     assert decodable["next_num"] != 1, decodable
 
-    print("测试 NextTokenPredictionAsCorrectingBuilder 类的方法")
-
-    # Example 1: 列举 3 种水果
-    # USER: 列举 3 种水果：
-    # ASSISTANT: 苹果、土豆、香蕉
-    # 期望的输出: "土豆<|split|>0<|split|>西瓜"
-    example1_msgs = [
+    # test sample case
+    rejected_msgs_example1 = [
         {"role": "user", "content": "列举 3 种水果："},
         {
             "role": "assistant",
@@ -393,81 +399,28 @@ if __name__ == "__main__":
         },
     ]
 
-    # Example 2: 多轮对话
-    # USER: Just reply 2 times, Using "|" as a separator：1;2;3;4;5;6;7;8;9;8;
-    # ASSISTANT: 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
-    # USER: Reply again
-    # ASSISTANT: 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
-    # 期望的输出: "|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|>"
-    example2_msgs = [
-        {
-            "role": "user",
-            "content": 'Just reply 2 times, Using "|" as a separator:\n1;2;3;4;5;6;7;8;9;8;',
-        },
-        {
-            "role": "assistant",
-            "content": "1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;",
-            "finish_reason": "stop",
-        },
-        {"role": "user", "content": "Reply again"},
-        {
-            "role": "assistant",
-            "content": "1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;",
-            "finish_reason": "stop",
-            "token_level": {
-                "chosen_text": "<|stop|>",
-                "rejected_text": "|1;2;3;4;5;6;7;8;9;8;",
-                "chosen_text_unicode_location": [41, 1],
-                "rejected_text_unicode_location": [41, 1],
-                "version": "1.0",
-                "chosen_dialog_key": 4,
-                "rejected_dialog_key": 3,
-                "rejected_finish_reason": "stop",
-            },
-        },
-    ]
-
-    print("\n=== 测试 Example 1 ===")
-    unicode_location1 = builder.convert_token_level_to_unicode_location(example1_msgs)
-    print(f"unicode_location: {unicode_location1}")
-
-    location_index1 = builder.set_location_index(
-        example1_msgs, "土豆", unicode_location1
+    result1 = builder.convert_rejected_content_to_ntp_as_location(
+        rejected_msgs_example1
     )
-    print(f"location_index for '土豆': {location_index1}")
+    assert result1["location_text"] == "土豆", result1
+    assert result1["location_index"] == 0, result1
+    # Expected format: '土豆<|split|>0<|split|>西瓜'
 
-    print("\n=== 测试 Example 2 ===")
-    unicode_location2 = builder.convert_token_level_to_unicode_location(example2_msgs)
-    print(f"unicode_location: {unicode_location2}")
+    # test correcting_sft extreme cases: chosen stop
+    test_json = "../../on-panda-example-data/panda_json/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
+    panda_tree = build_test_panda_tree(test_json)
+    correcting_sft = panda_tree.build_correcting_sft_data_v1(builder)[-1]
+    correcting_content = correcting_sft[-1]["content"]
+    assert (
+        correcting_content
+        == "|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|>"
+    ), correcting_content
 
-    location_index2 = builder.set_location_index(
-        example2_msgs, "|1;2;3;4;5;6;7;8;9;8;", unicode_location2
-    )
-    print(f"location_index for '|1;2;3;4;5;6;7;8;9;8;': {location_index2}")
-
-    print("\n基础方法测试完成")
-
-    try:
-        print("\n=== 测试 convert_rejected_content_to_ntp_as_location ===")
-
-        print("--- Example 1 ---")
-        result1 = builder.convert_rejected_content_to_ntp_as_location(example1_msgs)
-        print(
-            f"Result: location_text='{result1['location_text']}', location_index={result1['location_index']}"
-        )
-        print("Expected format: '土豆<|split|>0<|split|>西瓜'")
-
-        print("--- Example 2 ---")
-        result2 = builder.convert_rejected_content_to_ntp_as_location(example2_msgs)
-        print(
-            f"Result: location_text='{result2['location_text']}', location_index={result2['location_index']}"
-        )
-        print("Expected format: '|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|>'")
-
-        print("\n完整方法测试完成")
-
-    except Exception as e:
-        print(f"\n测试过程中出现错误: {e}")
-        import traceback
-
-        traceback.print_exc()
+    # test correcting_sft extreme cases: chosen continue
+    test_json = "../../on-panda-example-data/panda_json/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"
+    panda_tree2 = build_test_panda_tree(test_json)
+    correcting_sft2 = panda_tree2.build_correcting_sft_data_v1(builder)[-1]
+    correcting_content2 = correcting_sft2[-1]["content"]
+    assert (
+        correcting_content2 == "<|fim_suffix|><|fim_pad|>1<|fim_pad|>|"
+    ), correcting_content2

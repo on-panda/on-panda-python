@@ -1,6 +1,6 @@
 from typing import List, Dict, Tuple
 
-STOP_TOKEN = "<|stop|>"  # placement for stop token
+STOP_TOKEN_DEFAULT = "<|stop|>"  # placement for stop token
 
 
 def _minimal_reversible_patch(
@@ -50,7 +50,7 @@ def compute_token_level_supervision(
     rejected_content: str,
     chosen_content: str,
     tokenizer=None,
-    stop_token_id=STOP_TOKEN,
+    STOP_TOKEN=STOP_TOKEN_DEFAULT,
 ) -> Dict:
     """
     Compute token‑level supervision signals.
@@ -99,8 +99,8 @@ def compute_token_level_supervision(
             f"Warning: Chosen and rejected are the same! \n  chosen:...{chosen_content[-35:]}\nrejected:...{rejected_content[-35:]}"
         )
 
-    chosen_token_id = tok_ch[fork_idx] if fork_idx < len(tok_ch) else stop_token_id
-    rejected_token_id = tok_rj[fork_idx] if fork_idx < len(tok_rj) else stop_token_id
+    chosen_token_id = tok_ch[fork_idx] if fork_idx < len(tok_ch) else STOP_TOKEN
+    rejected_token_id = tok_rj[fork_idx] if fork_idx < len(tok_rj) else STOP_TOKEN
 
     # 2️⃣ Locate minimal reversible patches around the diverging tokens.
     ch_s, ch_e = _minimal_reversible_patch(tok_ch, fork_idx, tokenizer)
@@ -142,7 +142,7 @@ def compute_token_level_supervision(
         return [pre, patch, post]
 
     chosen_chunks = build_chunks(
-        tok_ch, ch_s, ch_e, is_fork_on_stop=chosen_token_id == stop_token_id
+        tok_ch, ch_s, ch_e, is_fork_on_stop=chosen_token_id == STOP_TOKEN
     )
     # Only apply negative loss when the rejected patch is exactly one token.
     rejected_chunks = build_chunks(
@@ -151,7 +151,7 @@ def compute_token_level_supervision(
         rj_e,
         ignore_patch_loss=(rj_e - rj_s != 1),
         rejected_loss=True,
-        is_fork_on_stop=rejected_token_id == stop_token_id,
+        is_fork_on_stop=rejected_token_id == STOP_TOKEN,
     )
     # set chosen_text and rejected_text
     chosen_text = next(

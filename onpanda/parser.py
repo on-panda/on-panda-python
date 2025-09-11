@@ -2,6 +2,8 @@ import re
 import mxlm
 from copy import deepcopy
 import mximport
+import os
+import json
 
 with mximport.inpkg():
     from .token_level_supervision_utils import (
@@ -429,21 +431,35 @@ class PandaTree:
 
     def build_correcting_sft_data_v1(self, ntp_as_correcting_builder):
         sfts = self.build_legacy_data_v1()["sfts"]
+        correcting_sfts = [
+            ntp_as_correcting_builder.build_correcting_sft_by_token_level_SFT(
+                sft, is_good=True
+            )
+            for sft in sfts
+        ]
         token_level_v1s = self.build_token_level_supervision_data_v1(
             tokenizer=ntp_as_correcting_builder.tokenizer
         )
-        correcting_sfts = [
-            ntp_as_correcting_builder.build_correcting_sft(sft)
-            for sft in sfts + token_level_v1s
+        correcting_sfts += [
+            ntp_as_correcting_builder.build_correcting_sft_by_token_level_SFT(
+                sft, is_good=False
+            )
+            for sft in token_level_v1s
         ]
-
         return correcting_sfts
+
+
+def build_test_panda_tree(panda_json=None, tokenizer=None):
+    if panda_json is None:
+        panda_json = "../../on-panda-example-data/panda_json/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
+    if isinstance(panda_json, str):
+        panda_json = json.load(open(panda_json))
+    panda_tree = PandaTree(panda_json, tokenizer=tokenizer)
+    return panda_tree
 
 
 if __name__ == "__main__":
     from boxx import *  # pip install boxx
-    import os
-    import json
 
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -456,12 +472,11 @@ if __name__ == "__main__":
 
     test_json = "../../asset/on-panda-example/how-many-1s.panda.json"
     # test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
-    test_json = "../../on-panda-example-data/panda_json/2025-04-12_Chinese_poe_藏头诗_tokenizer-step2.panda.json"
+    test_json = "../../on-panda-example-data/panda_json/2025-04-12_Chinese_acrostic_poem_藏头诗_tokenizer-step2.panda.json"
     test_json = "../../on-panda-example-data/panda_json/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
-    test_json = "../../on-panda-example-data/panda_json/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
-    panda_json = json.load(open(test_json))
+    # test_json = "../../on-panda-example-data/panda_json/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
 
-    panda_tree = PandaTree(panda_json)
+    panda_tree = build_test_panda_tree(test_json, tokenizer)
     print(panda_tree)
     tree(panda_tree.trees)
 
