@@ -464,15 +464,15 @@ if __name__ == "__main__":
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     # tokenizer = None
-    tokenizer = unicode_tokenizer
     tokenizer = __import__("transformers").AutoTokenizer.from_pretrained(
         "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4"
     )
     # %%
 
-    test_json = "../../asset/on-panda-example/how-many-1s.panda.json"
+    # tokenizer = unicode_tokenizer
     # test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
-    test_json = "../../on-panda-example-data/panda_json/2025-04-12_Chinese_acrostic_poem_藏头诗_tokenizer-step2.panda.json"
+    # test_json = "../../asset/on-panda-example/how-many-1s.panda.json"
+    # test_json = "../../on-panda-example-data/panda_json/2025-04-12_Chinese_acrostic_poem_藏头诗_tokenizer-step2.panda.json"
     test_json = "../../on-panda-example-data/panda_json/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
     # test_json = "../../on-panda-example-data/panda_json/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
 

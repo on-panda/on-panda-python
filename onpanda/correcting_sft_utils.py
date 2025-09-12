@@ -132,7 +132,37 @@ class NextTokenPredictionAsCorrectingBuilder:
 
         return {"not_found": True}
 
-    def get_unicode_location(self, msgs, ntp_as_location):
+    def parser_ntp_as_correcting_text(self, ntp_as_correcting_text):
+        mid_text = ntp_as_correcting_text.lstrip(self.SPLIT_TOKEN).rstrip(
+            self.SPLIT_TOKEN
+        )
+        if mid_text:  # correcting
+            splits = mid_text.split(self.SPLIT_TOKEN)
+            assert len(splits) == 3, splits
+            ntp_as_correcting = dict(
+                zip(["location_text", "location_index", "replacement_token"], splits)
+            )
+        else:  # is_good
+            ntp_as_correcting = dict(is_good=True, location_text="")
+        return ntp_as_correcting
+
+    def get_unicode_location(self, msgs, ntp_as_location=None):
+        """
+        根据 ntp_as_location 定位 unicode_location
+        如果 ntp_as_location is None, 则从 msgs 必须是 correcting_sft, 会从最后一条消息中解析出 ntp_as_location
+        """
+        if ntp_as_location is None:
+            sys_msg, correcting_msg = msgs[-2:]
+            msgs = msgs[:-2]
+            # ntp_as_correcting_gt = correcting_msg.get('correcting')
+            ntp_as_correcting_text = mxlm.get_text_content(correcting_msg)
+            ntp_as_location = self.parser_ntp_as_correcting_text(ntp_as_correcting_text)
+            if ntp_as_location.get("is_good"):
+                return dict(not_found=True, is_good=True)
+        unicode_location = self._get_unicode_location(msgs, ntp_as_location)
+        return unicode_location
+
+    def _get_unicode_location(self, msgs, ntp_as_location):
         """
         Compute unicode_location by ntp_as_location in messages without token_level_info
         if Not found:
@@ -142,8 +172,9 @@ class NextTokenPredictionAsCorrectingBuilder:
         如果能找到， 返回 location_index 对应的位置的 unicode_location
         否则返回 not_found=True
         """
-        unicode_sequence_dic = self.messages_to_unicode_sequence(msgs)
+        unicode_sequence_dic = self.messages_to_assistant_unicode_sequence(msgs)
         assistant_sequence = unicode_sequence_dic["assistant_sequence"]
+        location_index = ntp_as_location["location_index"]
         location_text = ntp_as_location.get("location_text", "")
         assert location_text, ntp_as_location
         unicode_locations = []
@@ -158,9 +189,16 @@ class NextTokenPredictionAsCorrectingBuilder:
                     message_index=message_index, unicode_location=unicode_index
                 )
                 unicode_locations.append(unicode_location)
-        return unicode_locations[ntp_as_location["location_index"]]
+        matches = len(unicode_locations)
 
-    def messages_to_unicode_sequence(self, msgs, unicode_location=None):
+        if matches and -matches <= location_index and location_index < matches:
+            unicode_location = unicode_locations[location_index]
+            unicode_location["matches"] = matches
+            return unicode_location
+        else:
+            return dict(not_found=True, matches=matches)
+
+    def messages_to_assistant_unicode_sequence(self, msgs, unicode_location=None):
         """
         Convert messages to a single text sequence, if unicode_location is given,
         also compute the sequence_location in the combined text sequence.
@@ -223,7 +261,7 @@ class NextTokenPredictionAsCorrectingBuilder:
         ntp_as_location = deepcopy(ntp_as_location)
         location_text = ntp_as_location["location_text"]
         if "assistant_sequence" not in unicode_location:
-            unicode_location = self.messages_to_unicode_sequence(
+            unicode_location = self.messages_to_assistant_unicode_sequence(
                 rejected_msgs, unicode_location
             )
         assistant_sequence = unicode_location["assistant_sequence"]
@@ -305,6 +343,21 @@ class NextTokenPredictionAsCorrectingBuilder:
                 break
 
         ntp_as_location["location_tokens"] = suffix_tokens[:decodable_num]
+
+        if "asset_location_consistency":
+            unicode_location2 = self.get_unicode_location(
+                rejected_msgs, ntp_as_location
+            )
+            assert (
+                unicode_location["message_index"] == unicode_location2["message_index"]
+                and unicode_location["unicode_location"]
+                == unicode_location2["unicode_location"]
+            ), (
+                "asset_location_consistency:"
+                + str(unicode_location)
+                + str(unicode_location2)
+                + str(ntp_as_location)
+            )
         return ntp_as_location
 
     def build_correcting_sft_by_token_level_SFT(
@@ -432,19 +485,6 @@ if __name__ == "__main__":
         correcting_content
         == "<|fim_pad|>|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|><|fim_pad|>"
     ), correcting_content
-    # test get_unicode_location
-    ntp_as_correcting = correcting_sft[-1]["correcting"]
-    unicode_location_re = builder.get_unicode_location(
-        correcting_sft[:-2], ntp_as_correcting
-    )
-    unicode_location_gt = builder.convert_token_level_to_unicode_location(
-        correcting_sft[:-2]
-    )
-    assert (
-        unicode_location_re["message_index"] == unicode_location_gt["message_index"]
-        and unicode_location_re["unicode_location"]
-        == unicode_location_gt["unicode_location"]
-    ), str(unicode_location_re) + str(unicode_location_gt)
 
     # test correcting_sft extreme cases: chosen continue
     test_json = "../../on-panda-example-data/panda_json/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"
@@ -455,16 +495,3 @@ if __name__ == "__main__":
         correcting_content2
         == "<|fim_pad|><|fim_suffix|><|fim_pad|>1<|fim_pad|>|<|fim_pad|>"
     ), correcting_content2
-    # test get_unicode_location
-    ntp_as_correcting2 = correcting_sft2[-1]["correcting"]
-    unicode_location_re2 = builder.get_unicode_location(
-        correcting_sft2[:-2], ntp_as_correcting2
-    )
-    unicode_location_gt2 = builder.convert_token_level_to_unicode_location(
-        correcting_sft2[:-2]
-    )
-    assert (
-        unicode_location_re2["message_index"] == unicode_location_gt2["message_index"]
-        and unicode_location_re2["unicode_location"]
-        == unicode_location_gt2["unicode_location"]
-    ), str(unicode_location_re2) + str(unicode_location_gt2)
