@@ -184,13 +184,18 @@ class NextTokenPredictionAsCorrectingBuilder:
             unicode_sequence_dic["assistant_indices"],
             assistant_sequence.split(self.STOP_TOKEN),
         ):
-            splits = (assistant_content + self.STOP_TOKEN).split(location_text)
-            for split_i in range(1, len(splits)):
-                unicode_index = len(location_text.join(splits[:split_i]))
+
+            assistant_content += self.STOP_TOKEN
+            start = 0
+            while True:
+                index = assistant_content.find(location_text, start)
+                if index == -1:
+                    break
                 unicode_location = dict(
-                    message_index=message_index, unicode_index=unicode_index
+                    message_index=message_index, unicode_index=index
                 )
                 unicode_locations.append(unicode_location)
+                start = index + 1
         matche_num = len(unicode_locations)
 
         if matche_num and -matche_num <= location_index and location_index < matche_num:
@@ -273,11 +278,11 @@ class NextTokenPredictionAsCorrectingBuilder:
         matches = []
         start = 0
         while True:
-            pos = assistant_sequence.find(location_text, start)
-            if pos == -1:
+            index = assistant_sequence.find(location_text, start)
+            if index == -1:
                 break
-            matches.append(pos)
-            start = pos + 1
+            matches.append(index)
+            start = index + 1
 
         location_index = None
         # 找到目标位置对应的匹配索引
@@ -393,6 +398,7 @@ class NextTokenPredictionAsCorrectingBuilder:
             token_level_msg = msgs[-1]
             token_level_info = token_level_msg["token_level"]
             rejected_content_chunks = token_level_info.pop("rejected_content")
+            token_level_info["chosen_content"] = token_level_msg["content"]
 
             rejected_content_str = mxlm.get_text_content(rejected_content_chunks)
             rejected_msg = dict(
@@ -489,11 +495,16 @@ if __name__ == "__main__":
     ), correcting_content
 
     # test correcting_sft extreme cases: chosen continue
-    test_json = "../../on-panda-example-data/panda_json/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"
-    panda_tree2 = build_test_panda_tree(test_json)
+    test_json2 = "../../on-panda-example-data/panda_json/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"
+    panda_tree2 = build_test_panda_tree(test_json2)
     correcting_sft2 = panda_tree2.build_correcting_sft_data_v1(builder)[-1]
     correcting_content2 = correcting_sft2[-1]["content"]
     assert (
         correcting_content2
         == "<|fim_pad|><|fim_suffix|><|fim_pad|>1<|fim_pad|>|<|fim_pad|>"
     ), correcting_content2
+
+    # test single_char_repeat case: chosen stop
+    test_json3 = "../../on-panda-example-data/panda_json/2025-09-12_single_char_repeat_tokenizer-Qwen2.5.panda.json"
+    panda_tree3 = build_test_panda_tree(test_json3)
+    correcting_sft3 = panda_tree3.build_correcting_sft_data_v1(builder)[-1]

@@ -1,3 +1,3 @@
-mxlm
+mxlm>=0.2.1
 fastapi
 mximport
