@@ -142,7 +142,23 @@ class NextTokenPredictionAsCorrectingBuilder:
         如果能找到， 返回 location_index 对应的位置的 unicode_location
         否则返回 not_found=True
         """
-        unicode_location = self.messages_to_unicode_sequence(msgs)["unicode_location"]
+        unicode_sequence_dic = self.messages_to_unicode_sequence(msgs)
+        assistant_sequence = unicode_sequence_dic["assistant_sequence"]
+        location_text = ntp_as_location.get("location_text", "")
+        assert location_text, ntp_as_location
+        unicode_locations = []
+        for message_index, assistant_content in zip(
+            unicode_sequence_dic["assistant_indices"],
+            assistant_sequence.split(self.STOP_TOKEN),
+        ):
+            splits = (assistant_content + self.STOP_TOKEN).split(location_text)
+            for split_i in range(1, len(splits)):
+                unicode_index = len(location_text.join(splits[:split_i]))
+                unicode_location = dict(
+                    message_index=message_index, unicode_location=unicode_index
+                )
+                unicode_locations.append(unicode_location)
+        return unicode_locations[ntp_as_location["location_index"]]
 
     def messages_to_unicode_sequence(self, msgs, unicode_location=None):
         """
@@ -161,7 +177,7 @@ class NextTokenPredictionAsCorrectingBuilder:
                 content = mxlm.get_text_content(msg["content"])
                 # 添加隐藏的 STOP_TOKEN
                 content += self.STOP_TOKEN
-                content += "\n\n-----\n\n"
+                # content += "\n\n-----\n\n" 会导致潜在的 tokenizer 粘连问题
                 assistant_contents.append(content)
                 assistant_indices.append(i)
 
@@ -185,6 +201,7 @@ class NextTokenPredictionAsCorrectingBuilder:
             # unicode_location = deepcopy(unicode_location)
             unicode_location["sequence_location"] = sequence_location
         unicode_location["assistant_sequence"] = assistant_sequence
+        unicode_location["assistant_indices"] = assistant_indices
         # print(unicode_location)
         return unicode_location
 
@@ -415,6 +432,19 @@ if __name__ == "__main__":
         correcting_content
         == "<|fim_pad|>|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|><|fim_pad|>"
     ), correcting_content
+    # test get_unicode_location
+    ntp_as_correcting = correcting_sft[-1]["correcting"]
+    unicode_location_re = builder.get_unicode_location(
+        correcting_sft[:-2], ntp_as_correcting
+    )
+    unicode_location_gt = builder.convert_token_level_to_unicode_location(
+        correcting_sft[:-2]
+    )
+    assert (
+        unicode_location_re["message_index"] == unicode_location_gt["message_index"]
+        and unicode_location_re["unicode_location"]
+        == unicode_location_gt["unicode_location"]
+    ), str(unicode_location_re) + str(unicode_location_gt)
 
     # test correcting_sft extreme cases: chosen continue
     test_json = "../../on-panda-example-data/panda_json/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"
@@ -425,3 +455,16 @@ if __name__ == "__main__":
         correcting_content2
         == "<|fim_pad|><|fim_suffix|><|fim_pad|>1<|fim_pad|>|<|fim_pad|>"
     ), correcting_content2
+    # test get_unicode_location
+    ntp_as_correcting2 = correcting_sft2[-1]["correcting"]
+    unicode_location_re2 = builder.get_unicode_location(
+        correcting_sft2[:-2], ntp_as_correcting2
+    )
+    unicode_location_gt2 = builder.convert_token_level_to_unicode_location(
+        correcting_sft2[:-2]
+    )
+    assert (
+        unicode_location_re2["message_index"] == unicode_location_gt2["message_index"]
+        and unicode_location_re2["unicode_location"]
+        == unicode_location_gt2["unicode_location"]
+    ), str(unicode_location_re2) + str(unicode_location_gt2)
