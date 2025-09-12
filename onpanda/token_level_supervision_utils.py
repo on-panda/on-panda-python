@@ -166,11 +166,11 @@ def compute_token_level_supervision(
         "rejected_token_id": rejected_token_id,
         "chosen_text": chosen_text,
         "rejected_text": rejected_text,
-        "chosen_text_unicode_location": [
+        "chosen_text_unicode_range": [
             len(chosen_chunks[0]["text"]),
             len(chosen_chunks[1]["text"]),
         ],
-        "rejected_text_unicode_location": [
+        "rejected_text_unicode_range": [
             len(rejected_chunks[0]["text"]),
             len(rejected_chunks[1]["text"]),
         ],

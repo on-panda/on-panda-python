@@ -127,7 +127,7 @@ class NextTokenPredictionAsCorrectingBuilder:
         for i, msg in enumerate(rejected_msgs):
             if msg["role"] == "assistant" and "token_level" in msg:
                 token_level = msg["token_level"]
-                unicode_location = token_level["rejected_text_unicode_location"][0]
+                unicode_location = token_level["rejected_text_unicode_range"][0]
                 return {"message_index": i, "unicode_location": unicode_location}
 
         return {"not_found": True}
@@ -459,8 +459,8 @@ if __name__ == "__main__":
             "token_level": {
                 "chosen_text": "西瓜",
                 "rejected_text": "土豆",
-                "chosen_text_unicode_location": [3, 2],  # "土豆" 位于位置 3
-                "rejected_text_unicode_location": [3, 2],
+                "chosen_text_unicode_range": [3, 2],  # "土豆" 位于位置 3
+                "rejected_text_unicode_range": [3, 2],
                 "version": "1.0",
                 "chosen_dialog_key": 2,
                 "rejected_dialog_key": 1,
