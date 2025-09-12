@@ -25,16 +25,17 @@ correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用�
     - `{location_tokens}`: 用来定位 “修改位置” 的一串 tokens
         - 其内容为从不恰当的 token 开始，持续生成，直到触发以下任意情况：
             1. 在所有模型输出的 tokens 中 (包括模型的历史输出) 被 `{location_tokens}` 匹配上的第一处位置正好就是 “修改位置” 
-                - 此时的 `{location_index}` 应该为 0。
+                - 此时的 `{location_index}` 应该为 0，并停止生成
                 - 若第一匹配处不是 “修改位置”，则继续生成下一个 token 来做更加精准的定位
-            2. `{location_tokens}` 长度达到 20 个 token 了，就该截止了。
-                - 但是，若最后的几个 token 不能被你自己 (correcting model) 的 tokenizer decode 为完整字符，需要突破 20 tokens 限制生成到能 decode 出完整字符为止。
-                - 若 20 个 token 都没法把 “修改位置” 准确定位，那就需要配合 `{location_index}` 来一起定位了。
-            3. 一轮结束了，即已经生成了 stop token: `<|stop|>`，也应该截止
+            2. `{location_tokens}` 长度达到 20 个 token，就该停止生成了
+                - 但是，若最后的几个 token 不能被你自己 (correcting model) 的 tokenizer decode 为完整字符，需要突破 20 tokens 限制生成到能 decode 出完整字符为止
+                - 若 20 个 token 都没法把 “修改位置” 准确定位，那就需要配合 `{location_index}` 来一起定位了
+            3. 一轮结束了，即已经生成了 stop token: `<|stop|>`，也应该停止生成
     - `{location_index}` 表示在所有模型输出的 tokens 中, 能被 `{location_tokens}` 匹配上的所有位置中的第几个位置
-        - 是一个 int 数值，和 Python list 的 index 相似，从 0 开始计数。当用负数表示 index 时的绝对值比正数 index 更加小的时候，`{location_index}` 就用负数表示。
+        - 是一个 int 数值，从 0 开始计数，支持负数，和 Python list 的 index 一致
+        - 当用负数表示 index 时的绝对值比正数 index 更加小的时候，`{location_index}` 就用负数表示
         - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置
-    - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。这里只需要一个 token 即可。
+    - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。只需要一个 token 即可
     -  stop token: 上面的每一轮答复最后都有 stop token，需要的话，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
         - 比如, 要续写最后一轮的答复 `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - tokenizer 问题：
@@ -96,7 +97,7 @@ class NextTokenPredictionAsCorrectingBuilder:
         SPLIT_TOKEN="<|split|>",  # for qwen 2.5
         STOP_TOKEN="<|stop|>",
         max_location_tokens=20,
-        scope_slice=(-1, None),  # slice of which messages can be correcting
+        scope_slice=(-1, None),  # TODO: slice of which messages can be correcting
     ):
         self.tokenizer = tokenizer or unicode_tokenizer
         self.SPLIT_TOKEN = SPLIT_TOKEN
@@ -109,8 +110,10 @@ class NextTokenPredictionAsCorrectingBuilder:
             prompt = correcting_sft_system_prompt_cn
         else:
             prompt = correcting_sft_system_prompt_default
-        return prompt.replace("<|split|>", self.SPLIT_TOKEN).replace(
-            "<|stop|>", self.STOP_TOKEN
+        return (
+            prompt.replace("<|split|>", self.SPLIT_TOKEN)
+            .replace("<|stop|>", self.STOP_TOKEN)
+            .replace(" 20 ", f" {self.max_location_tokens} ")
         )
 
     def convert_token_level_to_unicode_location(self, rejected_msgs):
@@ -121,15 +124,14 @@ class NextTokenPredictionAsCorrectingBuilder:
             rejected_msgs: 消息列表
 
         Returns:
-            dict: {"message_index": int, "unicode_location": int}
+            dict: {"message_index": int, "unicode_index": int}
         """
         # 查找首个有 token_level 的 assistant 消息
         for i, msg in enumerate(rejected_msgs):
             if msg["role"] == "assistant" and "token_level" in msg:
                 token_level = msg["token_level"]
                 unicode_location = token_level["rejected_text_unicode_range"][0]
-                return {"message_index": i, "unicode_location": unicode_location}
-
+                return {"message_index": i, "unicode_index": unicode_location}
         return {"not_found": True}
 
     def parser_ntp_as_correcting_text(self, ntp_as_correcting_text):
@@ -186,25 +188,25 @@ class NextTokenPredictionAsCorrectingBuilder:
             for split_i in range(1, len(splits)):
                 unicode_index = len(location_text.join(splits[:split_i]))
                 unicode_location = dict(
-                    message_index=message_index, unicode_location=unicode_index
+                    message_index=message_index, unicode_index=unicode_index
                 )
                 unicode_locations.append(unicode_location)
-        matches = len(unicode_locations)
+        matche_num = len(unicode_locations)
 
-        if matches and -matches <= location_index and location_index < matches:
+        if matche_num and -matche_num <= location_index and location_index < matche_num:
             unicode_location = unicode_locations[location_index]
-            unicode_location["matches"] = matches
+            unicode_location["matche_num"] = matche_num
             return unicode_location
         else:
-            return dict(not_found=True, matches=matches)
+            return dict(not_found=True, matche_num=matche_num)
 
     def messages_to_assistant_unicode_sequence(self, msgs, unicode_location=None):
         """
         Convert messages to a single text sequence, if unicode_location is given,
-        also compute the sequence_location in the combined text sequence.
+        also compute the sequence_index in the combined text sequence.
 
         Returns:
-            update to unicode_location dict: {"assistant_sequence": str, "sequence_location": int (if unicode_location is given)}
+            update to unicode_location dict: {"assistant_sequence": str, "sequence_index": int (if unicode_location is given)}
         """
 
         # 收集所有assistant消息的内容，并记录其在原始消息中的索引
@@ -224,7 +226,7 @@ class NextTokenPredictionAsCorrectingBuilder:
             unicode_location = {}
         else:
             message_index = unicode_location["message_index"]
-            target_unicode_pos = unicode_location["unicode_location"]
+            target_unicode_index = unicode_location["unicode_index"]
             # 计算目标位置的unicode位置
             # 找到目标消息在assistant消息列表中的索引
             try:
@@ -232,12 +234,12 @@ class NextTokenPredictionAsCorrectingBuilder:
             except ValueError:
                 raise ValueError(f"消息索引 {message_index} 不是 assistant 消息")
 
-            current_pos = 0
+            current_index = 0
             for i in range(assistant_msg_idx):
-                current_pos += len(assistant_contents[i])
-            sequence_location = current_pos + target_unicode_pos
+                current_index += len(assistant_contents[i])
+            sequence_index = current_index + target_unicode_index
             # unicode_location = deepcopy(unicode_location)
-            unicode_location["sequence_location"] = sequence_location
+            unicode_location["sequence_index"] = sequence_index
         unicode_location["assistant_sequence"] = assistant_sequence
         unicode_location["assistant_indices"] = assistant_indices
         # print(unicode_location)
@@ -251,7 +253,7 @@ class NextTokenPredictionAsCorrectingBuilder:
         Args:
             rejected_msgs: 消息列表
             ntp_as_location: dict(location_text=...) or 要查找的字符串
-            unicode_location: dict, 包含 message_index 和 unicode_location, 也可以包含 assistant_sequence 和 sequence_location
+            unicode_location: dict, 包含 message_index 和 unicode_index, 也可以包含 assistant_sequence 和 sequence_index
 
         Returns ntp_as_location:
             int: location_index，从0开始计数，负数表示从末尾倒数
@@ -265,7 +267,7 @@ class NextTokenPredictionAsCorrectingBuilder:
                 rejected_msgs, unicode_location
             )
         assistant_sequence = unicode_location["assistant_sequence"]
-        sequence_location = unicode_location["sequence_location"]
+        sequence_index = unicode_location["sequence_index"]
 
         # 在所有assistant内容中查找location_text的所有匹配位置
         matches = []
@@ -279,8 +281,8 @@ class NextTokenPredictionAsCorrectingBuilder:
 
         location_index = None
         # 找到目标位置对应的匹配索引
-        for idx, match_pos in enumerate(matches):
-            if match_pos == sequence_location:
+        for idx, match_index in enumerate(matches):
+            if match_index == sequence_index:
                 # 如果负数的绝对值更小，使用负数表示
                 negative_idx = idx - len(matches)
                 if abs(negative_idx) < idx:
@@ -314,10 +316,10 @@ class NextTokenPredictionAsCorrectingBuilder:
         # 获取 unicode_location
         unicode_location = self.convert_token_level_to_unicode_location(rejected_msgs)
         message_index = unicode_location["message_index"]
-        unicode_pos = unicode_location["unicode_location"]
+        unicode_index = unicode_location["unicode_index"]
 
         content = mxlm.get_text_content(rejected_msgs[message_index]["content"])
-        content_suffix = content[unicode_pos:] + self.STOP_TOKEN
+        content_suffix = content[unicode_index:] + self.STOP_TOKEN
         suffix_tokens = self.tokenizer.encode(content_suffix, add_special_tokens=False)
         decodable_num = 0
 
@@ -350,10 +352,10 @@ class NextTokenPredictionAsCorrectingBuilder:
             )
             assert (
                 unicode_location["message_index"] == unicode_location2["message_index"]
-                and unicode_location["unicode_location"]
-                == unicode_location2["unicode_location"]
+                and unicode_location["unicode_index"]
+                == unicode_location2["unicode_index"]
             ), (
-                "asset_location_consistency:"
+                "asset_location_consistency: "
                 + str(unicode_location)
                 + str(unicode_location2)
                 + str(ntp_as_location)
@@ -373,8 +375,9 @@ class NextTokenPredictionAsCorrectingBuilder:
         if is_good is not None:
             assert bool(is_good) == bool(
                 unicode_location.get("not_found")
-            ), "is_good must not"
+            ), "is_good must consistent with token_level_info"
 
+        [msg.update(ignore_loss=True) for msg in msgs if msg["role"] == "assistant"]
         if unicode_location.get(
             "not_found"
         ):  # 没有 token_level 信息, 属于 is_good 的 SFT
@@ -383,7 +386,6 @@ class NextTokenPredictionAsCorrectingBuilder:
                 content=self.SPLIT_TOKEN * 2,
                 correcting=dict(is_good=True, scope_slice=self.scope_slice),
             )
-            msgs[-1].update(ignore_loss=True)
             correcting_sft = msgs + [sys_prompt_message, is_good_correcting_msg]
 
             return correcting_sft
@@ -406,7 +408,7 @@ class NextTokenPredictionAsCorrectingBuilder:
                 rejected_msgs,
             )
             ntp_as_correcting = deepcopy(ntp_as_location)
-            ntp_as_correcting.pop("unicode_location")
+            ntp_as_correcting.pop("unicode_location", None)
             replacement_text = (
                 token_level_info["chosen_text"] or self.STOP_TOKEN
             )  # if chosen_text is empty mean chosen stop token

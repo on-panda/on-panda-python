@@ -430,6 +430,37 @@ class PandaTree:
         return token_level_v2s
 
     def build_correcting_sft_data_v1(self, ntp_as_correcting_builder):
+        """
+        tree(correcting_sfts[-1])
+        ├── 1: dict  3
+        │   ├── role: user
+        │   ├── content: How many 1 in 01011010101111011011?
+        │   └── description: Answer is 13
+        ├── 2: dict  5
+        │   ├── role: assistant
+        │   ├── ignore_loss: True
+        │   ├── content: To determine how many times the digit 1 ap...
+        │   ├── finish_reason: stop
+        │   └── token_level: dict  11
+        ├── 3: dict  2
+        │   ├── role: system
+        │   └── content: {correcting SFT system prompt}...
+        └── 4: dict  3
+            ├── role: assistant
+            ├── content: <|fim_pad|> **0<|fim_pad|>0<|fim_pad|> <|f...
+            └── correcting: dict  7
+                ├── location_text:  **0
+                ├── matche_num: 1
+                ├── location_index: 0
+                ├── location_tokens: list  2
+                │   ├── 0: 3070
+                │   └── 1: 15
+                ├── replacement_text:
+                ├── is_good: False
+                └── scope_slice: tuple 2
+                    ├── 0: -1
+                    └── 1: None
+        """
         sfts = self.build_legacy_data_v1()["sfts"]
         correcting_sfts = [
             ntp_as_correcting_builder.build_correcting_sft_by_token_level_SFT(
@@ -473,8 +504,8 @@ if __name__ == "__main__":
     # test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
     # test_json = "../../asset/on-panda-example/how-many-1s.panda.json"
     # test_json = "../../on-panda-example-data/panda_json/2025-04-12_Chinese_acrostic_poem_藏头诗_tokenizer-step2.panda.json"
-    test_json = "../../on-panda-example-data/panda_json/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
     # test_json = "../../on-panda-example-data/panda_json/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
+    test_json = "../../on-panda-example-data/panda_json/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
 
     panda_tree = build_test_panda_tree(test_json, tokenizer)
     print(panda_tree)
@@ -501,4 +532,5 @@ if __name__ == "__main__":
     correcting_sfts = panda_tree.build_correcting_sft_data_v1(sft_correcting_builder)
 
     tree(correcting_sfts[-1])
+    # savejson(correcting_sfts[-1], "/home/yl/onPanda/asset/correcting_sft/correcting_sft_example1.sft.json")
     # tree(correcting_sfts[3])
