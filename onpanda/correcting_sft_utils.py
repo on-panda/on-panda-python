@@ -144,7 +144,9 @@ class NextTokenPredictionAsCorrectingBuilder:
             ntp_as_correcting = dict(
                 zip(["location_text", "location_index", "replacement_token"], splits)
             )
-            ntp_as_correcting["location_index"] = int(ntp_as_correcting["location_index"])
+            ntp_as_correcting["location_index"] = int(
+                ntp_as_correcting["location_index"]
+            )
         else:  # is_good
             ntp_as_correcting = dict(is_good=True, location_text="")
         return ntp_as_correcting
