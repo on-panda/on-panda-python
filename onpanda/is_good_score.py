@@ -54,8 +54,9 @@ class CorrectingSftModel:
         assert (
             second_split_token["decoded_token"] == self.builder.SPLIT_TOKEN
         ), f"second_split_tokens: {dic['prompt_logprobs'][-1]}, self.builder.SPLIT_TOKEN: {self.builder.SPLIT_TOKEN}"
-        prob_is_good = e ** second_split_token["logprob"]
-        is_good_score = dict(prob_is_good=prob_is_good)
+        is_good_logprob = second_split_token["logprob"]
+        is_good_prob = e**is_good_logprob
+        is_good_score = dict(is_good_prob=is_good_prob, is_good_logprob=is_good_logprob)
         return is_good_score
 
 
