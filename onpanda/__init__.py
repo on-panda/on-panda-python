@@ -13,3 +13,4 @@ from .correcting_sft_utils import (
     correcting_sft_system_prompt_cn,
     correcting_sft_system_prompt_default,
 )
+from .is_good_score import CorrectingSftModel

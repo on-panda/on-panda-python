@@ -57,6 +57,14 @@ class CorrectingSftModel:
         is_good_logprob = second_split_token["logprob"]
         is_good_prob = e**is_good_logprob
         is_good_score = dict(is_good_prob=is_good_prob, is_good_logprob=is_good_logprob)
+        
+        if "method2 for double check" and 0:
+            prefill_logprobs = self.chat.prefill_logprobs(is_good_msgs)[-1]["prefill_logprobs"]
+            tree-prefill_logprobs
+            print(is_good_prob)
+            is_good_prob = e**sum([d["logprob"] for d in prefill_logprobs])
+            print(is_good_prob)
+            g()
         return is_good_score
 
 
@@ -80,10 +88,11 @@ if __name__ == "__main__":
     chat = mxlm.ChatAPI(model="step1f-correct-sft-it1200")
 
     msgs = [
-        {"role": "user", "content": "5+6="},
-        {"role": "assistant", "content": "21"},
-        # {"role": "assistant", "content": "11"},
+        {"role": "user", "content": "5+7="},
+        {"role": "assistant", "content": "32"},
+        # {"role": "assistant", "content": "12"},
     ]
 
     correct_model = CorrectingSftModel(chat, builder)
     is_good_score = correct_model.compute_is_good_score(msgs)
+    print(f'{is_good_score["is_good_prob"]*100:04.1f}%')
