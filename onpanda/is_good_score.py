@@ -58,7 +58,7 @@ class CorrectingSftModel:
         is_good_prob = e**is_good_logprob
         is_good_score = dict(is_good_prob=is_good_prob, is_good_logprob=is_good_logprob)
         
-        if "method2 for double check" and 0:
+        if "using chat.prefill_logprobs for double check" and 0:
             prefill_logprobs = self.chat.prefill_logprobs(is_good_msgs)[-1]["prefill_logprobs"]
             tree-prefill_logprobs
             print(is_good_prob)
