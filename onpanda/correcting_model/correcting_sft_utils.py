@@ -10,7 +10,7 @@ import mximport
 from copy import deepcopy
 
 with mximport.inpkg():
-    from .token_level_supervision_utils import unicode_tokenizer
+    from ..token_level_supervision_utils import unicode_tokenizer
 
 correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用，不必再遵守
 - 你本体是一个 GPT 架构的 LLM, 你现在的角色切换为了 token-level correcting model
@@ -443,9 +443,12 @@ class NextTokenPredictionAsCorrectingBuilder:
 
 if __name__ == "__main__":
     from boxx import *
-    from test_utils import build_test_tokenizer
-    from parser import build_test_panda_tree
 
+    with mximport.inpkg():
+        from ..test_utils import build_test_tokenizer
+        from ..parser import build_test_panda_tree
+
+    panda_json_dir = "../../../on-panda-example-data/panda_json"
     tokenizer = build_test_tokenizer()
     # build_argkws = dict(tokenizer=unicode_tokenizer)
     build_argkws = dict(
@@ -488,7 +491,9 @@ if __name__ == "__main__":
     # Expected format: <|fim_pad|>土豆<|fim_pad|>0<|fim_pad|>西瓜<|fim_pad|>
 
     # test correcting_sft extreme cases: chosen stop
-    test_json = "../../on-panda-example-data/panda_json/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
+    test_json = (
+        f"{panda_json_dir}/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
+    )
     panda_tree = build_test_panda_tree(test_json)
     correcting_sft = panda_tree.build_correcting_sft_data_v1(builder)[-1]
     correcting_content = correcting_sft[-1]["content"]
@@ -498,7 +503,7 @@ if __name__ == "__main__":
     ), correcting_content
 
     # test correcting_sft extreme cases: chosen continue
-    test_json2 = "../../on-panda-example-data/panda_json/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"
+    test_json2 = f"{panda_json_dir}/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"
     panda_tree2 = build_test_panda_tree(test_json2)
     correcting_sft2 = panda_tree2.build_correcting_sft_data_v1(builder)[-1]
     correcting_content2 = correcting_sft2[-1]["content"]
@@ -508,6 +513,8 @@ if __name__ == "__main__":
     ), correcting_content2
 
     # test single_char_repeat case: chosen stop
-    test_json3 = "../../on-panda-example-data/panda_json/2025-09-12_single_char_repeat_tokenizer-Qwen2.5.panda.json"
+    test_json3 = (
+        f"{panda_json_dir}/2025-09-12_single_char_repeat_tokenizer-Qwen2.5.panda.json"
+    )
     panda_tree3 = build_test_panda_tree(test_json3)
     correcting_sft3 = panda_tree3.build_correcting_sft_data_v1(builder)[-1]

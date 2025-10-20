@@ -11,7 +11,9 @@ with mximport.inpkg():
         unicode_tokenizer,
         apply_ignore_unicode_loss_mask_to_content,
     )
-    from .correcting_sft_utils import NextTokenPredictionAsCorrectingBuilder
+    from .correcting_model.correcting_sft_utils import (
+        NextTokenPredictionAsCorrectingBuilder,
+    )
 
 HASH_TEMPLATE_PREFIX = "<|hash|>"
 HASH_TEMPLATE_REGEX = r"^<\|hash\|>([A-Za-z0-9+\/=]+)$"

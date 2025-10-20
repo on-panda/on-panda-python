@@ -57,12 +57,14 @@ class CorrectingSftModel:
         is_good_logprob = second_split_token["logprob"]
         is_good_prob = e**is_good_logprob
         is_good_score = dict(is_good_prob=is_good_prob, is_good_logprob=is_good_logprob)
-        
+
         if "using chat.prefill_logprobs for double check" and 0:
-            prefill_logprobs = self.chat.prefill_logprobs(is_good_msgs)[-1]["prefill_logprobs"]
-            tree-prefill_logprobs
+            prefill_logprobs = self.chat.prefill_logprobs(is_good_msgs)[-1][
+                "prefill_logprobs"
+            ]
+            tree - prefill_logprobs
             print(is_good_prob)
-            is_good_prob = e**sum([d["logprob"] for d in prefill_logprobs])
+            is_good_prob = e ** sum([d["logprob"] for d in prefill_logprobs])
             print(is_good_prob)
             g()
         return is_good_score
