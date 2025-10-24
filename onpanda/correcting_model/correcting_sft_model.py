@@ -13,6 +13,7 @@ with mximport.inpkg():
 
 class TokenLevelCorrectingModelMeta:
     """
+    TODO: using this or delete
     Meta class of different token-level correcting models. e.g.:
     - CorrectingCopyResponseModel: Using Copy response to get whole context for each generated token, and better computation for each token
     - CorrectingSftModel: Next Token Prediction as correcting location
@@ -37,6 +38,28 @@ class CorrectingSftModel(TokenLevelCorrectingModelMeta, IsGoodScoreMixin):
         self.chat = chat
         self.builder = sft_correcting_builder
 
+    def build_correcting_prompt(self, msgs):
+
+        sys_prompt_message = dict(
+            role="system",
+            content=self.builder.get_correcting_sft_system_prompt(),
+        )
+        return msgs + [sys_prompt_message]
+
+    def correct(self, msgs):
+        """
+        Input QA msgs, return unicode_location
+        """
+        correcting_prompt = self.build_correcting_prompt(msgs)
+        response_dic = self.chat(
+            correcting_prompt,
+            return_dict=True,
+            max_tokens=self.builder.max_location_tokens + 20,
+        )
+        ntp_as_correcting_text = response_dic["choices"][0]["message"]["content"]
+        corrected = self.builder.apply_ntp_as_correcting(msgs, ntp_as_correcting_text)
+        return corrected
+
 
 def build_test_correcting_sft_model(chat=None, builder=None):
     import mxlm
@@ -44,7 +67,13 @@ def build_test_correcting_sft_model(chat=None, builder=None):
     import transformers
 
     if chat is None:
-        chat = mxlm.ChatAPI(model="step1f-correct-sft-it1200")
+        chat = mxlm.ChatAPI(
+            model="step1f-correct-sft-it1200",
+            temperature=0,
+            logprobs=True,
+            return_dict=True,
+            max_tokens=40,
+        )
     if builder is None:
         tokenizer = transformers.AutoTokenizer.from_pretrained(
             "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
@@ -60,4 +89,17 @@ def build_test_correcting_sft_model(chat=None, builder=None):
 
 
 if __name__ == "__main__":
-    pass
+    from boxx import *
+    from onpanda.test_utils import get_test_rejected_msgs1
+
+    correct_model = build_test_correcting_sft_model()
+
+    msgs = [
+        {"role": "user", "content": "5+7="},
+        {"role": "assistant", "content": "32"},
+        # {"role": "assistant", "content": "12"},
+    ]
+    msgs = get_test_rejected_msgs1()[0]
+
+    corrected = correct_model.correct_sample(msgs)
+    tree(corrected)

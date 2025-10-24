@@ -135,11 +135,12 @@ class NextTokenPredictionAsCorrectingBuilder:
         return {"not_found": True}
 
     def parser_ntp_as_correcting_text(self, ntp_as_correcting_text):
-        mid_text = ntp_as_correcting_text.lstrip(self.SPLIT_TOKEN).rstrip(
+        mid_text = ntp_as_correcting_text.removeprefix(self.SPLIT_TOKEN).removesuffix(
             self.SPLIT_TOKEN
         )
         if mid_text:  # correcting
             splits = mid_text.split(self.SPLIT_TOKEN)
+            # TODO: How to handle exception?
             assert len(splits) == 3, splits
             ntp_as_correcting = dict(
                 zip(["location_text", "location_index", "replacement_token"], splits)
@@ -383,7 +384,7 @@ class NextTokenPredictionAsCorrectingBuilder:
         if is_good is not None:
             assert bool(is_good) == bool(
                 unicode_location.get("not_found")
-            ), "is_good must consistent with token_level_info"
+            ), f"is_good must consistent with token_level_info, is_good: {is_good} != unicode_location: {unicode_location}"
 
         [msg.update(ignore_loss=True) for msg in msgs if msg["role"] == "assistant"]
         if unicode_location.get(
@@ -440,12 +441,47 @@ class NextTokenPredictionAsCorrectingBuilder:
         # import boxx.g
         return correcting_sft
 
+    def apply_ntp_as_correcting(self, msgs, ntp_as_correcting: str | dict):
+        """ """
+        if isinstance(ntp_as_correcting, str):
+            ntp_as_correcting = self.parser_ntp_as_correcting_text(ntp_as_correcting)
+        if ntp_as_correcting.get("is_good"):
+            return dict(
+                ntp_as_correcting=ntp_as_correcting,
+            )
+        unicode_location = self.get_unicode_location(msgs, ntp_as_correcting)
+        if unicode_location.get("not_found"):
+            return dict(
+                ntp_as_correcting=ntp_as_correcting, unicode_location=unicode_location
+            )
+        else:
+            msg_idx = unicode_location["message_index"]
+            partial_msg = deepcopy(msgs[msg_idx])
+            good_prefix = partial_msg["content"][: unicode_location["unicode_index"]]
+            if self.STOP_TOKEN == ntp_as_correcting["replacement_token"]:
+                # no need continue final message
+                partial_msg["content"] = good_prefix
+                partial_msg["finish_reason"] = "stop"
+            else:
+                partial_msg["content"] = (
+                    good_prefix + ntp_as_correcting["replacement_token"]
+                )
+                if "finish_reason" in partial_msg:
+                    del partial_msg["finish_reason"]
+            partial_messages = msgs[:msg_idx] + [partial_msg]
+            corrected = dict(
+                ntp_as_correcting=ntp_as_correcting,
+                unicode_location=unicode_location,
+                partial_messages=partial_messages,
+            )
+            return corrected
+
 
 if __name__ == "__main__":
     from boxx import *
 
     with mximport.inpkg():
-        from ..test_utils import build_test_tokenizer
+        from ..test_utils import build_test_tokenizer, get_test_rejected_msgs1
         from ..parser import build_test_panda_tree
 
     panda_json_dir = "../../../on-panda-example-data/panda_json"
@@ -464,57 +500,47 @@ if __name__ == "__main__":
     assert decodable["next_num"] != 1, decodable
 
     # test sample case
-    rejected_msgs_example1 = [
-        {"role": "user", "content": "列举 3 种水果："},
-        {
-            "role": "assistant",
-            "content": "苹果、土豆、香蕉",
-            "finish_reason": "stop",
-            "token_level": {
-                "chosen_text": "西瓜",
-                "rejected_text": "土豆",
-                "chosen_text_unicode_range": [3, 2],  # "土豆" 位于位置 3
-                "rejected_text_unicode_range": [3, 2],
-                "version": "1.0",
-                "chosen_dialog_key": 2,
-                "rejected_dialog_key": 1,
-                "rejected_finish_reason": "stop",
-            },
-        },
-    ]
+    rejected_msgs1, ntp_as_correcting_text_gt1 = get_test_rejected_msgs1()[:2]
 
-    result1 = builder.convert_rejected_content_to_ntp_as_location(
-        rejected_msgs_example1
-    )
-    assert result1["location_text"] == "土豆", result1
+    result1 = builder.convert_rejected_content_to_ntp_as_location(rejected_msgs1)
+    assert result1["location_text"] == " potato", result1
     assert result1["location_index"] == 0, result1
-    # Expected format: <|fim_pad|>土豆<|fim_pad|>0<|fim_pad|>西瓜<|fim_pad|>
+
+    corrected1 = builder.apply_ntp_as_correcting(
+        rejected_msgs1, ntp_as_correcting_text_gt1
+    )
+    assert corrected1["partial_messages"][-1]["content"] == "Apple, orange"
+    assert (
+        "finish_reason" not in corrected1["partial_messages"][-1]
+    ), "Should continue_final_message (no finish_reason)"
 
     # test correcting_sft extreme cases: chosen stop
     test_json = (
         f"{panda_json_dir}/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
     )
     panda_tree = build_test_panda_tree(test_json)
-    correcting_sft = panda_tree.build_correcting_sft_data_v1(builder)[-1]
-    correcting_content = correcting_sft[-1]["content"]
-    assert (
-        correcting_content
-        == "<|fim_pad|>|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|><|fim_pad|>"
-    ), correcting_content
+    correcting_sft2 = panda_tree.build_correcting_sft_data_v1(builder)[-1]
+    correcting_content2 = correcting_sft2[-1]["content"]
+    ntp_as_correcting_text_gt2 = "<|fim_pad|>|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|><|fim_pad|>"
+    assert correcting_content2 == ntp_as_correcting_text_gt2, correcting_content2
+    corrected2 = builder.apply_ntp_as_correcting(
+        correcting_sft2[:-2], ntp_as_correcting_text_gt2
+    )
+    assert corrected2["partial_messages"][-1]["finish_reason"] == "stop"
 
     # test correcting_sft extreme cases: chosen continue
-    test_json2 = f"{panda_json_dir}/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"
-    panda_tree2 = build_test_panda_tree(test_json2)
-    correcting_sft2 = panda_tree2.build_correcting_sft_data_v1(builder)[-1]
-    correcting_content2 = correcting_sft2[-1]["content"]
-    assert (
-        correcting_content2
-        == "<|fim_pad|><|fim_suffix|><|fim_pad|>1<|fim_pad|>|<|fim_pad|>"
-    ), correcting_content2
-
-    # test single_char_repeat case: chosen stop
-    test_json3 = (
-        f"{panda_json_dir}/2025-09-12_single_char_repeat_tokenizer-Qwen2.5.panda.json"
-    )
+    test_json3 = f"{panda_json_dir}/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"
     panda_tree3 = build_test_panda_tree(test_json3)
     correcting_sft3 = panda_tree3.build_correcting_sft_data_v1(builder)[-1]
+    correcting_content3 = correcting_sft3[-1]["content"]
+    assert (
+        correcting_content3
+        == "<|fim_pad|><|fim_suffix|><|fim_pad|>1<|fim_pad|>|<|fim_pad|>"
+    ), correcting_content3
+
+    # test single_char_repeat case: chosen stop
+    test_json4 = (
+        f"{panda_json_dir}/2025-09-12_single_char_repeat_tokenizer-Qwen2.5.panda.json"
+    )
+    panda_tree4 = build_test_panda_tree(test_json4)
+    correcting_sft4 = panda_tree4.build_correcting_sft_data_v1(builder)[-1]

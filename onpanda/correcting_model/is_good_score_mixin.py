@@ -77,6 +77,14 @@ if __name__ == "__main__":
         {"role": "assistant", "content": "32"},
         # {"role": "assistant", "content": "12"},
     ]
+    msgs = [
+        {"role": "user", "content": "Name three kinds of fruit:"},
+        {
+            "role": "assistant",
+            "content": "Apple, potato, banana.",
+            # "content": "Apple, orange, banana.",
+        },
+    ]
 
     is_good_score = correct_model.compute_is_good_score(msgs)
     print(f'{is_good_score["is_good_prob"]*100:04.1f}%')
