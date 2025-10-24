@@ -7,15 +7,7 @@ Created on Tue Sep 23 16:56:53 2025
 """
 
 
-class CorrectingSftModel:
-    def __init__(
-        self,
-        chat,
-        sft_correcting_builder,
-    ):
-        self.chat = chat
-        self.builder = sft_correcting_builder
-
+class IsGoodScoreMixin:
     def compute_is_good_score(
         self,
         messages,
@@ -72,22 +64,13 @@ class CorrectingSftModel:
 
 if __name__ == "__main__":
     from boxx import *
-    import mxlm
-    import onpanda
     import transformers
+    import mximport
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
-        use_fast=True,
-        local_files_only=True,
-    )
-    builder = onpanda.NextTokenPredictionAsCorrectingBuilder(
-        tokenizer=tokenizer,
-        SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
-        STOP_TOKEN="<|fim_suffix|>",
-    )
+    with mximport.inpkg():
+        from .correcting_sft_model import build_test_correcting_sft_model
 
-    chat = mxlm.ChatAPI(model="step1f-correct-sft-it1200")
+    correct_model = build_test_correcting_sft_model()
 
     msgs = [
         {"role": "user", "content": "5+7="},
@@ -95,6 +78,5 @@ if __name__ == "__main__":
         # {"role": "assistant", "content": "12"},
     ]
 
-    correct_model = CorrectingSftModel(chat, builder)
     is_good_score = correct_model.compute_is_good_score(msgs)
     print(f'{is_good_score["is_good_prob"]*100:04.1f}%')
