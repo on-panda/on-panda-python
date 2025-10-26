@@ -469,12 +469,12 @@ class NextTokenPredictionAsCorrectingBuilder:
                 if "finish_reason" in partial_msg:
                     del partial_msg["finish_reason"]
             partial_messages = msgs[:msg_idx] + [partial_msg]
-            corrected = dict(
+            correction = dict(
                 ntp_as_correcting=ntp_as_correcting,
                 unicode_location=unicode_location,
                 partial_messages=partial_messages,
             )
-            return corrected
+            return correction
 
 
 if __name__ == "__main__":
@@ -506,12 +506,12 @@ if __name__ == "__main__":
     assert result1["location_text"] == " potato", result1
     assert result1["location_index"] == 0, result1
 
-    corrected1 = builder.apply_ntp_as_correcting(
+    correction1 = builder.apply_ntp_as_correcting(
         rejected_msgs1, ntp_as_correcting_text_gt1
     )
-    assert corrected1["partial_messages"][-1]["content"] == "Apple, orange"
+    assert correction1["partial_messages"][-1]["content"] == "Apple, orange"
     assert (
-        "finish_reason" not in corrected1["partial_messages"][-1]
+        "finish_reason" not in correction1["partial_messages"][-1]
     ), "Should continue_final_message (no finish_reason)"
 
     # test correcting_sft extreme cases: chosen stop
@@ -523,10 +523,10 @@ if __name__ == "__main__":
     correcting_content2 = correcting_sft2[-1]["content"]
     ntp_as_correcting_text_gt2 = "<|fim_pad|>|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|><|fim_pad|>"
     assert correcting_content2 == ntp_as_correcting_text_gt2, correcting_content2
-    corrected2 = builder.apply_ntp_as_correcting(
+    correction2 = builder.apply_ntp_as_correcting(
         correcting_sft2[:-2], ntp_as_correcting_text_gt2
     )
-    assert corrected2["partial_messages"][-1]["finish_reason"] == "stop"
+    assert correction2["partial_messages"][-1]["finish_reason"] == "stop"
 
     # test correcting_sft extreme cases: chosen continue
     test_json3 = f"{panda_json_dir}/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"

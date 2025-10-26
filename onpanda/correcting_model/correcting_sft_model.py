@@ -46,7 +46,7 @@ class CorrectingSftModel(TokenLevelCorrectingModelMeta, IsGoodScoreMixin):
         )
         return msgs + [sys_prompt_message]
 
-    def correct(self, msgs):
+    def generate_correction(self, msgs):
         """
         Input QA msgs, return unicode_location
         """
@@ -57,8 +57,14 @@ class CorrectingSftModel(TokenLevelCorrectingModelMeta, IsGoodScoreMixin):
             max_tokens=self.builder.max_location_tokens + 20,
         )
         ntp_as_correcting_text = response_dic["choices"][0]["message"]["content"]
-        corrected = self.builder.apply_ntp_as_correcting(msgs, ntp_as_correcting_text)
-        return corrected
+        correction = self.builder.apply_ntp_as_correcting(msgs, ntp_as_correcting_text)
+        return correction
+
+    def generate_and_apply_correction(self, msgs, chat_policy):
+        pass
+
+    def correcting_sampling(self, msgs, chat_policy):
+        pass
 
 
 def build_test_correcting_sft_model(chat_correcting=None, builder=None):
@@ -78,7 +84,7 @@ def build_test_correcting_sft_model(chat_correcting=None, builder=None):
         tokenizer = transformers.AutoTokenizer.from_pretrained(
             "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
             use_fast=True,
-            local_files_only=True,
+            # local_files_only=True,
         )
         builder = onpanda.NextTokenPredictionAsCorrectingBuilder(
             tokenizer=tokenizer,
@@ -91,6 +97,7 @@ def build_test_correcting_sft_model(chat_correcting=None, builder=None):
 if __name__ == "__main__":
     from boxx import *
     from onpanda.test_utils import get_test_rejected_msgs1
+    from copy import deepcopy
 
     correct_model = build_test_correcting_sft_model()
 
@@ -101,5 +108,8 @@ if __name__ == "__main__":
     ]
     msgs = get_test_rejected_msgs1()[0]
 
-    corrected = correct_model.correct(msgs)
-    tree(corrected)
+    correction = correct_model.generate_correction(msgs)
+    tree(correction)
+
+    chat_policy = deepcopy(correct_model.chat_correcting)
+    chat_policy.default_kwargs["max_tokens"] = 1536
