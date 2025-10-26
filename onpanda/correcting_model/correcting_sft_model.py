@@ -61,10 +61,47 @@ class CorrectingSftModel(TokenLevelCorrectingModelMeta, IsGoodScoreMixin):
         return correction
 
     def generate_and_apply_correction(self, msgs, chat_policy):
-        pass
+        corrected = dict(
+            model_correcting=self.chat_correcting.model, model_policy=chat_policy.model
+        )
+        if msgs[-1]["role"] in ["assistant"]:
+            correction = self.generate_correction(msgs)
+            corrected["correction"] = correction
+            if correction["ntp_as_correcting"].get("is_good"):
+                corrected_msgs = msgs
+            else:
+                partial_messages = correction["partial_messages"]
+                if partial_messages[-1].get("finish_reason") == "stop":
+                    corrected_msgs = partial_messages
+                else:
+                    corrected_content = chat_policy(
+                        partial_messages,
+                        continue_final_message=True,
+                        add_generation_prompt=False,
+                        echo=True,
+                    )
+                    corrected_msgs = msgs[:-1] + [
+                        dict(role="assistant", content=corrected_content)
+                    ]
+        else:  # make new message
+            corrected_msgs = msgs + [dict(role="assistant", content=chat_policy(msgs))]
 
-    def correcting_sampling(self, msgs, chat_policy):
-        pass
+        corrected["corrected_msgs"] = corrected_msgs
+        # g()
+        return corrected
+
+    def correcting_sampling(self, msgs, chat_policy, n=5):
+        correction_count = 0
+        corrected_msgs = msgs
+        for correction_idx in range(n):
+            corrected = self.generate_and_apply_correction(corrected_msgs, chat_policy)
+            corrected_msgs = corrected["corrected_msgs"]
+            if corrected["correction"]["ntp_as_correcting"].get("is_good"):
+                break
+            correction_count += 1
+        corrected["correction_count"] = correction_count
+        corrected["correction_count_max"] = n
+        return corrected
 
 
 def build_test_correcting_sft_model(chat_correcting=None, builder=None):
@@ -108,8 +145,7 @@ if __name__ == "__main__":
     ]
     msgs = get_test_rejected_msgs1()[0]
 
-    correction = correct_model.generate_correction(msgs)
-    tree(correction)
-
     chat_policy = deepcopy(correct_model.chat_correcting)
     chat_policy.default_kwargs["max_tokens"] = 1536
+    corrected = correct_model.correcting_sampling(msgs, chat_policy, n=5)
+    tree(corrected)
