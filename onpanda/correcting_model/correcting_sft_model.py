@@ -32,10 +32,10 @@ class TokenLevelCorrectingModelMeta:
 class CorrectingSftModel(TokenLevelCorrectingModelMeta, IsGoodScoreMixin):
     def __init__(
         self,
-        chat,
+        chat_correcting,
         sft_correcting_builder,
     ):
-        self.chat = chat
+        self.chat_correcting = chat_correcting
         self.builder = sft_correcting_builder
 
     def build_correcting_prompt(self, msgs):
@@ -51,7 +51,7 @@ class CorrectingSftModel(TokenLevelCorrectingModelMeta, IsGoodScoreMixin):
         Input QA msgs, return unicode_location
         """
         correcting_prompt = self.build_correcting_prompt(msgs)
-        response_dic = self.chat(
+        response_dic = self.chat_correcting(
             correcting_prompt,
             return_dict=True,
             max_tokens=self.builder.max_location_tokens + 20,
@@ -61,13 +61,13 @@ class CorrectingSftModel(TokenLevelCorrectingModelMeta, IsGoodScoreMixin):
         return corrected
 
 
-def build_test_correcting_sft_model(chat=None, builder=None):
+def build_test_correcting_sft_model(chat_correcting=None, builder=None):
     import mxlm
     import onpanda
     import transformers
 
-    if chat is None:
-        chat = mxlm.ChatAPI(
+    if chat_correcting is None:
+        chat_correcting = mxlm.ChatAPI(
             model="step1f-correct-sft-it1200",
             temperature=0,
             logprobs=True,
@@ -85,7 +85,7 @@ def build_test_correcting_sft_model(chat=None, builder=None):
             SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
             STOP_TOKEN="<|fim_suffix|>",
         )
-    return CorrectingSftModel(chat, builder)
+    return CorrectingSftModel(chat_correcting, builder)
 
 
 if __name__ == "__main__":
@@ -101,5 +101,5 @@ if __name__ == "__main__":
     ]
     msgs = get_test_rejected_msgs1()[0]
 
-    corrected = correct_model.correct_sample(msgs)
+    corrected = correct_model.correct(msgs)
     tree(corrected)
