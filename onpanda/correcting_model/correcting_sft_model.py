@@ -61,10 +61,9 @@ class CorrectingSftModel(TokenLevelCorrectingModelMeta, IsGoodScoreMixin):
         return correction
 
     def generate_and_apply_correction(self, msgs, chat_policy):
-        corrected = dict(
-            model_correcting=self.chat_correcting.model, model_policy=chat_policy.model
-        )
+        corrected = dict(model_policy=chat_policy.model)
         if msgs[-1]["role"] in ["assistant"]:
+            corrected["model_correcting"] = self.chat_correcting.model
             correction = self.generate_correction(msgs)
             corrected["correction"] = correction
             if correction["ntp_as_correcting"].get("is_good"):
@@ -84,23 +83,29 @@ class CorrectingSftModel(TokenLevelCorrectingModelMeta, IsGoodScoreMixin):
                         dict(role="assistant", content=corrected_content)
                     ]
         else:  # make new message
+            # corrected without model_correcting key means new message
             corrected_msgs = msgs + [dict(role="assistant", content=chat_policy(msgs))]
 
-        corrected["corrected_msgs"] = corrected_msgs
+        corrected["corrected_messages"] = corrected_msgs
         # g()
         return corrected
 
     def correcting_sampling(self, msgs, chat_policy, n=5):
         correction_count = 0
         corrected_msgs = msgs
+        correcteds = []
         for correction_idx in range(n):
             corrected = self.generate_and_apply_correction(corrected_msgs, chat_policy)
-            corrected_msgs = corrected["corrected_msgs"]
-            if corrected["correction"]["ntp_as_correcting"].get("is_good"):
+            correcteds.append(corrected.copy())
+            corrected_msgs = corrected["corrected_messages"]
+            if "correction" in corrected and corrected["correction"][
+                "ntp_as_correcting"
+            ].get("is_good"):
                 break
             correction_count += 1
         corrected["correction_count"] = correction_count
         corrected["correction_count_max"] = n
+        corrected["correcteds"] = correcteds
         return corrected
 
 
@@ -113,9 +118,10 @@ def build_test_correcting_sft_model(chat_correcting=None, builder=None):
         chat_correcting = mxlm.ChatAPI(
             model="step1f-correct-sft-it1200",
             temperature=0,
+            top_p=1.0,
+            max_tokens=40,
             logprobs=True,
             return_dict=True,
-            max_tokens=40,
         )
     if builder is None:
         tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -144,6 +150,8 @@ if __name__ == "__main__":
         # {"role": "assistant", "content": "12"},
     ]
     msgs = get_test_rejected_msgs1()[0]
+
+    # msgs = [{"role": "user", "content": "How many `1` in result of 652*8596"},]
 
     chat_policy = deepcopy(correct_model.chat_correcting)
     chat_policy.default_kwargs["max_tokens"] = 1536
