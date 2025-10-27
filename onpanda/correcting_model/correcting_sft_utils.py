@@ -442,7 +442,6 @@ class NextTokenPredictionAsCorrectingBuilder:
         return correcting_sft
 
     def apply_ntp_as_correcting(self, msgs, ntp_as_correcting: str | dict):
-        """ """
         if isinstance(ntp_as_correcting, str):
             ntp_as_correcting = self.parser_ntp_as_correcting_text(ntp_as_correcting)
         if ntp_as_correcting.get("is_good"):
@@ -457,6 +456,11 @@ class NextTokenPredictionAsCorrectingBuilder:
         else:
             msg_idx = unicode_location["message_index"]
             partial_msg = deepcopy(msgs[msg_idx])
+            if isinstance(partial_msg["content"], list):
+                assert all(
+                    [d["type"] == "text" for d in partial_msg["content"]]
+                ), partial_msg
+                partial_msg["content"] = mxlm.get_text_content(partial_msg["content"])
             good_prefix = partial_msg["content"][: unicode_location["unicode_index"]]
             if self.STOP_TOKEN == ntp_as_correcting["replacement_token"]:
                 # no need continue final message
