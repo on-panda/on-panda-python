@@ -200,14 +200,14 @@ class NextTokenPredictionAsCorrectingBuilder:
                 )
                 unicode_locations.append(unicode_location)
                 start = index + 1
-        matche_num = len(unicode_locations)
+        match_num = len(unicode_locations)
 
-        if matche_num and -matche_num <= location_index and location_index < matche_num:
+        if match_num and -match_num <= location_index and location_index < match_num:
             unicode_location = unicode_locations[location_index]
-            unicode_location["matche_num"] = matche_num
+            unicode_location["match_num"] = match_num
             return unicode_location
         else:
-            return dict(not_found=True, matche_num=matche_num)
+            return dict(not_found=True, match_num=match_num)
 
     def messages_to_assistant_unicode_sequence(self, msgs, unicode_location=None):
         """
@@ -300,7 +300,7 @@ class NextTokenPredictionAsCorrectingBuilder:
                     location_index = idx
 
         ntp_as_location.update(
-            unicode_location=unicode_location, matche_num=len(matches)
+            unicode_location=unicode_location, match_num=len(matches)
         )
         ntp_as_location["location_index"] = location_index
         if not len(matches):

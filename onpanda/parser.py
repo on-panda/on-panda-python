@@ -452,7 +452,7 @@ class PandaTree:
             ├── content: <|fim_pad|> **0<|fim_pad|>0<|fim_pad|> <|f...
             └── correcting: dict  7
                 ├── location_text:  **0
-                ├── matche_num: 1
+                ├── match_num: 1
                 ├── location_index: 0
                 ├── location_tokens: list  2
                 │   ├── 0: 3070
