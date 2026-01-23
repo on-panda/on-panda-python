@@ -11,7 +11,7 @@ from copy import deepcopy
 
 with mximport.inpkg():
     from ..token_level_supervision_utils import unicode_tokenizer
-
+# TODO 添加 is_good token， 强调要照抄不能省略任何空格回车
 correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用，不必再遵守
 - 你本体是一个 GPT 架构的 LLM, 你现在的角色切换为了 token-level correcting model
 - 目标是通过修改不恰当的 token 来优化已有的回答

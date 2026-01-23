@@ -61,7 +61,7 @@ class PandaTree:
         self.raw_data = data
         self.tokenizer = tokenizer
         self.data = data = self.pre_process(data)
-        assert len(data["dialogs"]), "Empty dialogs: " + str(data)
+        assert len(data["dialogs"]), "Empty dialogs: " + str(data)[:1000]
         dialogs = data["dialogs"]
         dialog_valide_keys = sorted(dialogs)
         dense_keys = [
