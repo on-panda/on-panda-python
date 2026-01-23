@@ -14,9 +14,8 @@ with mximport.inpkg():
     from .correcting_model.correcting_sft_utils import (
         NextTokenPredictionAsCorrectingBuilder,
     )
-
-HASH_TEMPLATE_PREFIX = "<|hash|>"
-HASH_TEMPLATE_REGEX = r"^<\|hash\|>([A-Za-z0-9+\/=]+)$"
+    from .utils import HASH_TEMPLATE_PREFIX, HASH_TEMPLATE_REGEX
+    from .dump_utils import dump_panda_json
 
 
 def recover_hash_map(data):
@@ -228,6 +227,8 @@ class PandaTree:
             # default
             return mxlm.messages_to_sequence(messages)
         return self.tokenizer.apply_chat_template(messages, tokenize=False)
+
+    dump = dump_panda_json
 
     def __str__(self):
         tree_str = str(self.trees).replace(": {}", ":''")

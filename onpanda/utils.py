@@ -5,6 +5,10 @@ Created on Sat Dec 21 16:23:49 2024
 
 @author: DIYer22
 """
+HASH_TEMPLATE_PREFIX = "<|hash|>"
+HASH_TEMPLATE_REGEX = r"^<\|hash\|>([A-Za-z0-9+\/=]+)$"
+HASH_MAP_LENGTH = 16000
+
 true = True
 false = False
 null = None
