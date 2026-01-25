@@ -85,15 +85,18 @@ def test_dump_size_compare():
     path = "../../on-panda-example-data/panda_json/2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
     path = "../../on-panda-example-data/panda_json/2025-04-12_Chinese_acrostic_poem_藏头诗_tokenizer-step2.panda.json"
     # need multi dialogs with long contex or base64
-    # path = "/home/yl/Downloads/d04-i0284-能学到查找token重复增加token，有RLHF概率-跨年热闹氛围与庆祝方式.panda.json"
+    # path = "/home/yl/ws/reflection/2601_correcting_model_playground/2601_vlm_data_process/panda_lists_sampled_sado/【多模】onpanda-通用_第一批-3（1.5k）_n1500/2_from_【多模】onpanda-通用_第一批-3（1.5k）-1464063225453830144.panda.json"
     with open(path, "r", encoding="utf-8") as f:
         raw = json.load(f)
 
-    tree = PandaTree(raw)
-    dumped = tree.dump()
+    panda_tree = PandaTree(raw)
+    dumped = panda_tree.dump()
 
     print("raw:", _json_size_bytes(_strip_prompt_and_sequence(raw)))
-    print("data_json_bytes:", _json_size_bytes(_strip_prompt_and_sequence(tree.data)))
+    print(
+        "data_json_bytes:",
+        _json_size_bytes(_strip_prompt_and_sequence(panda_tree.data)),
+    )
     print("dump_bytes:", _json_size_bytes(dumped))
     import boxx.g
 

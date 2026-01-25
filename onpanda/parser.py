@@ -57,6 +57,9 @@ class PandaTree:
     SUPPORT_PANDA_TREE_VERSION = "2.0"
 
     def __init__(self, data, tokenizer=None):
+        if isinstance(data, str):  # path
+            assert os.path.exists(data), data
+            data = json.load(open(data))
         self.raw_data = data
         self.tokenizer = tokenizer
         self.data = data = self.pre_process(data)
