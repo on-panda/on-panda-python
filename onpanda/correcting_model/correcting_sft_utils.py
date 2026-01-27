@@ -30,7 +30,7 @@ correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用�
     1. 定位上述回答中，第一个不恰当的 token，即指出 “修改位置”
     2. 将“不恰当 token”修改为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
 - Correcting 范围：所有 <|correcting_span_description_begin|> 所描述的范围
-    - 只评估这些描述范围内的答复，尽量找出其中的首个“不恰当 token”
+    - 只评估这些描述范围内的 ASSISTANT 答复，尽量找出其中的首个“不恰当 token”
 - 由于你作为 LLM 只会输出文本，我们按照这个文本格式来输出你的 correcting 答复:
     - `<|split|>{location_tokens}<|split|>{location_index}<|split|>{replacement_token}<|split|>`
     - `<|split|>` 是分隔内容的 special token，且回答必须以 `<|split|>` 作为开头和结尾
@@ -43,7 +43,7 @@ correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用�
                 - 但是，若最后的几个 token 不能被你自己 (correcting model) 的 tokenizer decode 为完整字符，需要突破 20 tokens 限制生成到能 decode 出完整字符为止
                 - 若 20 个 token 都没法把 “修改位置” 准确定位，那就需要配合 `{location_index}` 来一起定位了
             3. 一轮结束了，即已经生成了 stop token: `<|stop|>`，也应该停止生成
-    - `{location_index}` 表示在所有模型输出的 tokens 中, 能被 `{location_tokens}` 匹配上的所有位置中的第几个位置
+    - `{location_index}` 表示在所有模型输出的 tokens 中(ASSISTANT 的答复), 能被 `{location_tokens}` 匹配上的所有位置中的第几个位置
         - 是一个 int 数值，从 0 开始计数，支持负数，和 Python list 的 index 一致
         - 当用负数表示 index 时的绝对值比正数 index 更加小的时候，`{location_index}` 就用负数表示
         - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置
@@ -53,10 +53,18 @@ correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用�
     - tokenizer 问题：
         - 你需要通过多输出 token 或提前输出 token 来避免潜在的 tokenizer decode 出不合规文本的问题。
         - 即多个 tokens 必须一起才能正确 decode 的情况下，要把多个 token 视为一个整体，使所有输出的 tokens 能和文本互相转换，而不要截断出现 decode 失败字符 “�”
-    - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|good|><|split|>`，表示不需要修改
+    - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|is_good|><|split|>`，表示不需要修改
     - 输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符
     - 也要注意别忽略了 token 内的不可见字符，比如英语单词 token 前面的空格
 
+## reasoning model 的定制格式
+- 为了避免 message 的 reasoning 字段内容被 chat template 删掉，带 reasoning 字段的 message 会被特殊处理
+- 通过如下模版把 reasoning 放入 content：
+    - `<|reasoning_begin|>{msg.reasoning}<|reasoning_end|>\n\n<|content_begin|>{msg.content}<|stop|>`
+- 其中 <|reasoning_end|> 表示 reasoning model 的 thinking 结束，<|content_begin|> 表示 content 开始，<|stop|> 表示 content 结束
+- 如果没有看到 <|content_begin|> 标记，说明该消息没有 reasoning 字段，则忽略此规则
+
+## 示例
 ### example 1:
 USER:
 列举 3 种水果：
@@ -65,6 +73,15 @@ ASSISTANT:
 期望的输出: “<|split|>土豆<|split|>0<|split|>西瓜<|split|>”
 
 ### example 2:
+USER:
+one + two = ?
+ASSISTANT:
+one + two = two
+期望的输出: “<|split|> two<|stop|><|split|>0<|split|> three<|split|>”，解释：
+- ` two` 会定位到两个位置，所以继续生成 stop token <|stop|> 来精确定位到最后一个 ` two` 的位置
+- 注意：` two` 和 ` three` 都是一个完整的 token，不可以省略空格导致 token 变化成为 `two`, `three`
+
+### example 3:
 USER:
 Just reply 2 times, Using "|" as a separator:
 1;2;3;4;5;6;7;8;9;8;
