@@ -12,13 +12,25 @@ from copy import deepcopy
 with mximport.inpkg():
     from ..token_level_supervision_utils import unicode_tokenizer
 # TODO 添加 is_good token， 强调要照抄不能省略任何空格回车
+
+correcting_span_description_template = "<|correcting_span_description_begin|>span_idx = SPAN_IDX: SPAN_DESCRIPTION<|correcting_span_description_end|>"
+
+correcting_span_description_to_last_user = correcting_span_description_template.replace(
+    "SPAN_DESCRIPTION", "From the previous USER message up to here."
+)
+
+correcting_span_description_all = correcting_span_description_template.replace(
+    "SPAN_DESCRIPTION", "All ASSISTANT responses"
+)
+
 correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用，不必再遵守
 - 你本体是一个 GPT 架构的 LLM, 你现在的角色切换为了 token-level correcting model
 - 目标是通过修改不恰当的 token 来优化已有的回答
 - 你的任务是：
     1. 定位上述回答中，第一个不恰当的 token，即指出 “修改位置”
     2. 将“不恰当 token”修改为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
-- Correcting 范围：多轮的情况下，只定位和修改上一轮（即最新轮）的答复中首个“不恰当 token”
+- Correcting 范围：所有 <|correcting_span_description_begin|> 所描述的范围
+    - 只评估这些描述范围内的答复，尽量找出其中的首个“不恰当 token”
 - 由于你作为 LLM 只会输出文本，我们按照这个文本格式来输出你的 correcting 答复:
     - `<|split|>{location_tokens}<|split|>{location_index}<|split|>{replacement_token}<|split|>`
     - `<|split|>` 是分隔内容的 special token，且回答必须以 `<|split|>` 作为开头和结尾
@@ -40,17 +52,19 @@ correcting_sft_system_prompt_cn = """- 先前的 system prompt 只做评估用�
         - 比如, 要续写最后一轮的答复 `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - tokenizer 问题：
         - 你需要通过多输出 token 或提前输出 token 来避免潜在的 tokenizer decode 出不合规文本的问题。
-        - 即多个 tokens 对应一个文本字符的情况下，要把多个 token 视为一个整体，使所有输出的 tokens 能和文本互相转换，而不要截断中间 token
-    - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|split|>`
+        - 即多个 tokens 必须一起才能正确 decode 的情况下，要把多个 token 视为一个整体，使所有输出的 tokens 能和文本互相转换，而不要截断出现 decode 失败字符 “�”
+    - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|good|><|split|>`，表示不需要修改
+    - 输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符
+    - 也要注意别忽略了 token 内的不可见字符，比如英语单词 token 前面的空格
 
-## example 1:
+### example 1:
 USER:
 列举 3 种水果：
 ASSISTANT:
 苹果、土豆、香蕉
 期望的输出: “<|split|>土豆<|split|>0<|split|>西瓜<|split|>”
 
-## example 2:
+### example 2:
 USER:
 Just reply 2 times, Using "|" as a separator:
 1;2;3;4;5;6;7;8;9;8;
@@ -61,10 +75,17 @@ Reply again
 ASSISTANT:
 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
 
-期望的输出: “<|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>”
+期望的输出: “<|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>”，解释：
 - “第一个不恰当 token”处和其他 ASSISTANT 的回答有重复，所以会生成完整个 20 个 `{location_tokens}`
 - `{location_index}` 用正数表示时为 2， 用负数为 -1，其中， -1 绝对值更加小，所以应该用 -1
-- 此处 `{replacement_token}` 为 stop token"""
+- 此处 `{replacement_token}` 为 stop token <|stop|>
+
+## Additional Information for Correcting
+这可能会提供一些帮助你更好完成当前 correcting 任务的额外信息：
+<|additional_information_for_correcting_begin|>
+NO_ADDITIONAL_INFORMATION
+<|additional_information_for_correcting_end|>
+"""
 
 correcting_sft_system_prompt_default = correcting_sft_system_prompt_cn
 
