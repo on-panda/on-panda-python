@@ -20,25 +20,24 @@ correcting_span_description_to_last_user = correcting_span_description_template.
 )
 
 correcting_span_description_all = correcting_span_description_template.replace(
-    "SPAN_DESCRIPTION", "All ASSISTANT responses"
+    "SPAN_DESCRIPTION", "All model output tokens."
 )
 
 
 additional_information_for_correcting_template = """\
 <|is_correcting_prompt|>
 ## Additional Information for Correcting
-这儿可能会提供一些帮助你更好完成当前 correcting 任务的额外信息：
+Here may be some additional information to help you better complete the current correcting task:
 <|additional_information_for_correcting_begin|>
 NO_ADDITIONAL_INFORMATION
 <|additional_information_for_correcting_end|>\
 """
 
 """Chinese comment:
-LLM 可感知、可定位、token-aware、GPT-aware 的 correcting model system prompt
-- 用 0 based index 来计数，为方便 LLM 自觉，支持负数 index
-- 使用 special token 来表示
-- special token 需要做模型手术，避免 train SFT 初期的巨大 loss
-
+LLM 可感知、可定位、both token and tokenizer aware、GPT-aware 的 correcting model system prompt
+- 用 0 based index 来计数。为方便 LLM 感知，支持负数 index
+- 使用新 special token 来转义 policy 的控制类 special token
+- 新 special token 需要做模型手术，避免 train SFT 初期的巨大 loss
 
 推荐模型手术配置
 - 用正常语义 token 的 embedding 来重新 init special token 的 embedding
@@ -48,6 +47,10 @@ LLM 可感知、可定位、token-aware、GPT-aware 的 correcting model system 
     "<|is_good|>": "good",
     "<|reasoning_end|>": "reason",
 }
+
+- 灵活且可感知的 correcting span 机制
+- 支持 reasoning model 的定制 system prompt
+- 有 additional information for correcting 的机制来补充 feedback
 
 """
 
@@ -143,7 +146,7 @@ ASSISTANT:
 special_correcting_instruction_template = """\
 <|is_correcting_prompt|>
 ## Special System Prompt for Correcting
-这儿可能会有一些对 correcting 任务的指导和要求：
+Here might be some instructions and requirements for the correcting task you need to follow strictly:
 <|special_correcting_instruction_begin|>
 NO_SPECIAL_CORRECTING_INSTRUCTION
 <|special_correcting_instruction_end|>\
