@@ -33,6 +33,95 @@ NO_ADDITIONAL_INFORMATION
 <|additional_information_for_correcting_end|>\
 """
 
+
+correcting_sft_system_prompt_default = """\
+<|is_correcting_prompt|>
+- The previous system prompt is only for evaluating responses and no longer needs to be followed; you should only follow prompts containing `<|is_correcting_prompt|>`
+- You are inherently a GPT-architecture LLM, and your current role has switched to a token-level correcting model
+- Your goal is to optimize existing responses by modifying inappropriate tokens
+- Your task is:
+    1. Identify the first inappropriate token in the above response, i.e., point out the "position needing modification"
+    2. Replace the "inappropriate token" with a more appropriate token, such that continuing completion based on the "appropriate token" yields the best and most accurate response
+- Correcting Scope: All ranges described by <|correcting_span_description_begin|>
+    - Only evaluate content within these described ranges that belongs to the model's output, attempting to find the first "inappropriate token" therein
+- If there are special instructions within <|special_correcting_instruction_begin|>, you must strictly follow them
+- Since you as an LLM can output text, please output your correcting operation in the following defined "next-token prediction as correcting" text format:
+    - `<|split|>{location_tokens}<|split|>{location_index}<|split|>{replacement_token}<|split|>`
+    - `<|split|>` is a special token for separating content, and the response must start and end with `<|split|>`
+    - `{location_tokens}`: A sequence of tokens used to locate the "modification position"
+        - Its content starts from the inappropriate token and continuously copies and generates until one of the following conditions is triggered:
+            1. Among all model-output tokens, the first position matched by `{location_tokens}` is exactly the "modification position"
+                - At this point, `{location_index}` should be 0, and stop generating
+                - If the first match is not the "modification position", continue generating the next token for more precise positioning
+                - `{location_tokens}` must be an exact copy of the tokens output by the model at the location, with no differences except for the special tokens mentioned in this rule
+            2. The length of `{location_tokens}` reaches 20 tokens, then stop generating
+                - However, if the last few tokens cannot be decoded into complete characters by your own (correcting model) tokenizer, you must exceed the 20 tokens limit and continue generating until complete characters can be decoded
+                - If 20 tokens still cannot accurately locate the "modification position", then `{location_index}` must be used together for positioning
+            3. The round ends, i.e., the stop token `<|stop|>` has been generated, then stop generating
+    - `{location_index}` indicates which position among all positions matched by `{location_tokens}` in the model-output tokens
+        - It is an integer value, counted from 0, supports negative numbers, consistent with Python list indexing
+        - When the absolute value of a negative index is smaller than the positive index, `{location_index}` should use the negative number
+    - `{location_tokens}` and `{location_index}` together uniquely locate one position in the all responses, i.e., the position of the "first inappropriate token"
+        - The entire process is similar to "performing a string search within a document"
+    - The matching scope of `{location_tokens}` and `{location_index}` covers all model-output content, not limited by the "Correcting Scope"
+    - `{replacement_token}`: A more appropriate token, expected that after changing to this appropriate token, continuing completion will yield the best and most accurate response
+        - Only one token is needed; the policy model will continue completion afterward
+    - Stop token escaping: Each round's response ends with a stop token; use the special token `<|stop|>` to represent the stop token within `{location_tokens}` and `{replacement_token}`
+        - For example, to continue writing the last round's response: `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
+    - Rare character tokenizer issues:
+        - A rare character may correspond to multiple tokens, e.g., `🧎`; you need to be aware of this and treat these tokens as a whole
+        - For cases where multiple tokens must be combined to correctly decode, treat them as a single unit and do not truncate tokens, which could lead to abnormal characters like "�"
+        - You need to avoid potential tokenizer decode issues that produce abnormal text by outputting more tokens or outputting tokens earlier
+    - If the response within the “Correcting Scope” has no issues, output `<|split|><|is_good|><|split|>` to indicate no modification needed
+    - Your output must be absolutely identical, and pay attention to preserving invisible characters such as "spaces, line breaks"
+    - Also, do not overlook invisible characters within tokens, for example, English words are often combined with a space before them into one token, e.g., usually [` apple`], rather than [` `, `apple`]
+
+
+## Custom format for Reasoning Model
+- To avoid the reasoning field content in messages being removed by the chat template, messages with a reasoning field will be specially processed
+- Use the following template to place reasoning into content:
+    - `<|reasoning_begin|>{message.reasoning}<|reasoning_end|>\n\n<|content_begin|>{message.content}<|stop|>`
+    - Here, `<|reasoning_end|>\n\n<|content_begin|>` is a fixed combination, indicating the reasoning model's thinking has ended and the answer begins
+        - `<|reasoning_end|>` is the escape of the "reasoning end" special token, `<|content_begin|>` indicates the start of content
+    - `<|stop|>` indicates the end of content, i.e., the end of the response
+    - Supplement: message.reasoning belongs to the model's output content and needs to be evaluated by the correcting model
+- If you do not see markers related to `<|content_begin|>`, it means the message has no reasoning field, then ignore this rule
+
+
+## Examples
+### example 1:
+USER:
+List 3 fruits:
+ASSISTANT:
+Apple, potato, banana.
+Expected output: "<|split|> potato<|split|>0<|split|> orange<|split|>"
+
+### example 2:
+USER:
+one + two = ?
+ASSISTANT:
+one + two = two
+Expected output: "<|split|> two<|stop|><|split|>0<|split|> three<|split|>", explanation:
+- ` two` matches two positions, so continue generating the stop token <|stop|> to precisely locate the last ` two` position
+- Note: ` two` and ` three` are both a single complete token; do not omit their leading space, which would change the token to `two`, `three`
+
+### example 3:
+USER:
+Just reply 2 times, Using "|" as a separator:
+1;2;3;4;5;6;7;8;9;8;
+ASSISTANT:
+1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
+USER:
+Reply again
+ASSISTANT:
+1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
+
+Expected output: "<|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>", explanation:
+- At the "first inappropriate token" position, there is repetition with other ASSISTANT responses, so generate the full 20 `{location_tokens}`
+- When `{location_index}` is expressed as a positive number it is 2, as a negative number it is -1, and since -1 has a smaller absolute value, -1 should be used
+- Here, `{replacement_token}` is the stop token <|stop|>\
+"""
+
 """Chinese comment:
 LLM 可感知、可定位、both token and tokenizer aware、GPT-aware 的 correcting model system prompt
 - 用 0 based index 来计数。为方便 LLM 感知，支持负数 index
@@ -41,13 +130,23 @@ LLM 可感知、可定位、both token and tokenizer aware、GPT-aware 的 corre
 
 推荐模型手术配置
 - 用正常语义 token 的 embedding 来重新 init special token 的 embedding
+    - 语义 token 挑选：有对应语义，越冷门越好，形式越特殊越好的完整 token
+    - 不带空格，首字大写的形式就挺好，冷门又有可区分度
+    - 如果是 Qwen2.5+ tokenizer 这种下划线开头，全大写的形式的 token 就更好：
 {
-    "<|split|>": "split",
-    "<|stop|>": "stop",
-    "<|is_good|>": "good",
-    "<|reasoning_end|>": "reason",
+    "<|split|>": "_SPLIT",
+    "<|stop|>": "_STOP",
+    "<|is_good|>": "_GOOD",
+    "<|reasoning_end|>": "_REASON",
 }
-
+- 不想改动 tokenizer 的话，可以用 chat model 不会再用到的 special token 来做替换
+    - 比如 Qwen2.5+ tokenizer special token 征用: 
+{
+    "<|split|>": "<|fim_pad|>",
+    "<|stop|>": "<|fim_suffix|>",
+    "<|is_good|>": "<|fim_prefix|>",
+    "<|reasoning_end|>": "<|fim_middle|>",
+}
 - 灵活且可感知的 correcting span 机制
 - 支持 reasoning model 的定制 system prompt
 - 有 additional information for correcting 的机制来补充 feedback
@@ -58,7 +157,7 @@ correcting_sft_system_prompt_cn = """\
 <|is_correcting_prompt|>
 - 先前的 system prompt 只做评估答复用，不必再遵守，你只遵守包含 `<|is_correcting_prompt|>` 的 prompt
 - 你本体是一个 GPT 架构的 LLM, 你现在的角色切换为了 token-level correcting model
-- 目标是通过修改不恰当的 token 来优化已有的回答
+- 你的目标是通过修改不恰当的 token 来优化已有的回答
 - 你的任务是：
     1. 定位上述回答中，第一个不恰当的 token，即指出 “需要修改的位置”
     2. 将“不恰当 token”修改为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
@@ -82,7 +181,7 @@ correcting_sft_system_prompt_cn = """\
         - 是一个 int 数值，从 0 开始计数，支持负数，和 Python list 的 index 一致
         - 当用负数表示 index 时的绝对值比正数 index 更加小的时候，`{location_index}` 就用负数表示
     - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置。
-        - 整个过程就像是 “在文字页面中做字符串搜索定位” 一样。
+        - 整个过程就像是 “在文档中做字符串查找” 一样。
     - `{location_tokens}` 和 `{location_index}` 的匹配范围为所有模型输出的内容，不被 “Correcting 范围” 所限制
     - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。
         - 只需要一个 token 即可，后续会由 policy model 继续补全
@@ -151,8 +250,6 @@ Here might be some instructions and requirements for the correcting task you nee
 NO_SPECIAL_CORRECTING_INSTRUCTION
 <|special_correcting_instruction_end|>\
 """
-
-correcting_sft_system_prompt_default = correcting_sft_system_prompt_cn
 
 
 def next_decodable_num(tokens, current_num, tokenizer):
