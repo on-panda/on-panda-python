@@ -11,7 +11,6 @@ from copy import deepcopy
 
 with mximport.inpkg():
     from ..token_level_supervision_utils import unicode_tokenizer
-# TODO 添加 is_good token， 强调要照抄不能省略任何空格回车
 
 correcting_span_description_template = "<|is_correcting_prompt|><|correcting_span_description_begin|>span_idx = SPAN_IDX: SPAN_DESCRIPTION<|correcting_span_description_end|>"
 
@@ -80,7 +79,7 @@ correcting_sft_system_prompt_default = """\
 ## Custom format for Reasoning Model
 - To avoid the reasoning field content in messages being removed by the chat template, messages with a reasoning field will be specially processed
 - Use the following template to place reasoning into content:
-    - `<|reasoning_begin|>{message.reasoning}<|reasoning_end|>\n\n<|content_begin|>{message.content}<|stop|>`
+    - `<|reasoning_begin|>{message.reasoning}<|reasoning_end|>\n\n<|content_begin|>{message.content}{message.tool_calls}<|stop|>`
     - Here, `<|reasoning_end|>\n\n<|content_begin|>` is a fixed combination, indicating the reasoning model's thinking has ended and the answer begins
         - `<|reasoning_end|>` is the escape of the "reasoning end" special token, `<|content_begin|>` indicates the start of content
     - `<|stop|>` indicates the end of content, i.e., the end of the response
@@ -199,7 +198,7 @@ correcting_sft_system_prompt_cn = """\
 ## Reasoning Model 的定制格式
 - 为了避免 message 的 reasoning 字段内容被 chat template 删掉，带 reasoning 字段的 message 会被特殊处理
 - 通过如下模版把 reasoning 放入 content：
-    - `<|reasoning_begin|>{message.reasoning}<|reasoning_end|>\n\n<|content_begin|>{message.content}<|stop|>`
+    - `<|reasoning_begin|>{message.reasoning}<|reasoning_end|>\n\n<|content_begin|>{message.content}{message.tool_calls}<|stop|>`
     - 其中 `<|reasoning_end|>\n\n<|content_begin|>` 是固定搭配，表示 reasoning model 的 thinking 结束，开始回答问题。
         - 其中 `<|reasoning_end|>` 是 “reasoning end” special token 的转义，`<|content_begin|>` 表示 content 开始
     - `<|stop|>` 表示 content 结束，即回答结束
