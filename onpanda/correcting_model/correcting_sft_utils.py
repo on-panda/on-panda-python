@@ -316,7 +316,7 @@ class NextTokenPredictionAsCorrectingBuilder:
                 return {"message_index": i, "unicode_index": unicode_location}
         return {"not_found": True}
 
-    def parser_ntp_as_correcting_text(self, ntp_as_correcting_text):
+    def parse_ntp_as_correcting_text(self, ntp_as_correcting_text):
         mid_text = ntp_as_correcting_text.removeprefix(self.SPLIT_TOKEN).removesuffix(
             self.SPLIT_TOKEN
         )
@@ -344,7 +344,7 @@ class NextTokenPredictionAsCorrectingBuilder:
             msgs = msgs[:-2]
             # ntp_as_correcting_gt = correcting_msg.get('correcting')
             ntp_as_correcting_text = mxlm.get_text_content(correcting_msg)
-            ntp_as_location = self.parser_ntp_as_correcting_text(ntp_as_correcting_text)
+            ntp_as_location = self.parse_ntp_as_correcting_text(ntp_as_correcting_text)
             if ntp_as_location.get("is_good"):
                 return dict(not_found=True, is_good=True)
         unicode_location = self._get_unicode_location(msgs, ntp_as_location)
@@ -537,7 +537,7 @@ class NextTokenPredictionAsCorrectingBuilder:
 
         ntp_as_location["location_tokens"] = suffix_tokens[:decodable_num]
 
-        if "asset_location_consistency":
+        if "assert_location_consistency":
             unicode_location2 = self.get_unicode_location(
                 rejected_msgs, ntp_as_location
             )
@@ -546,7 +546,7 @@ class NextTokenPredictionAsCorrectingBuilder:
                 and unicode_location["unicode_index"]
                 == unicode_location2["unicode_index"]
             ), (
-                "asset_location_consistency: "
+                "assert_location_consistency: "
                 + str(unicode_location)
                 + str(unicode_location2)
                 + str(ntp_as_location)
@@ -625,7 +625,7 @@ class NextTokenPredictionAsCorrectingBuilder:
 
     def apply_ntp_as_correcting(self, msgs, ntp_as_correcting: str | dict):
         if isinstance(ntp_as_correcting, str):
-            ntp_as_correcting = self.parser_ntp_as_correcting_text(ntp_as_correcting)
+            ntp_as_correcting = self.parse_ntp_as_correcting_text(ntp_as_correcting)
         if ntp_as_correcting.get("is_good"):
             return dict(
                 ntp_as_correcting=ntp_as_correcting,

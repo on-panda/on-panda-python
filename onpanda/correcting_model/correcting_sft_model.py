@@ -11,7 +11,7 @@ with mximport.inpkg():
     from .is_good_score_mixin import IsGoodScoreMixin
 
 
-class TokenLevelCorrectingModelMeta:
+class TokenLevelCorrectingModelBase:
     """
     TODO: using this or delete
     Meta class of different token-level correcting models. e.g.:
@@ -29,7 +29,7 @@ class TokenLevelCorrectingModelMeta:
         return text
 
 
-class CorrectingSftModel(TokenLevelCorrectingModelMeta, IsGoodScoreMixin):
+class CorrectingSftModel(TokenLevelCorrectingModelBase, IsGoodScoreMixin):
     def __init__(
         self,
         chat_correcting,
