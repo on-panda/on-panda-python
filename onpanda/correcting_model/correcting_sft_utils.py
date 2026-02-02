@@ -44,7 +44,7 @@ correcting_sft_system_prompt_default = """\
 - Correcting Scope: All ranges described by <|correcting_span_description_begin|>
     - Only evaluate content within these described ranges that belongs to the model's output, attempting to find the first "inappropriate token" therein
 - If there are special instructions within <|special_correcting_instruction_begin|>, you must strictly follow them
-- Since you as an LLM can output text, please output your correcting operation in the following defined "next-token prediction as correcting" text format:
+- Since you as an LLM can output text, please output your correction operation in the following defined "Find and Replace" text format:
     - `<|split|>{location_tokens}<|split|>{location_index}<|split|>{replacement_token}<|split|>`
     - `<|split|>` is a special token for separating content, and the response must start and end with `<|split|>`
     - `{location_tokens}`: A sequence of tokens used to locate the "modification position"
@@ -61,7 +61,6 @@ correcting_sft_system_prompt_default = """\
         - It is an integer value, counted from 0, supports negative numbers, consistent with Python list indexing
         - When the absolute value of a negative index is smaller than the positive index, `{location_index}` should use the negative number
     - `{location_tokens}` and `{location_index}` together uniquely locate one position in the all responses, i.e., the position of the "first inappropriate token"
-        - The entire process is similar to "performing a string search within a document"
     - The matching scope of `{location_tokens}` and `{location_index}` covers all model-output content, not limited by the "Correcting Scope"
     - `{replacement_token}`: A more appropriate token, expected that after changing to this appropriate token, continuing completion will yield the best and most accurate response
         - Only one token is needed; the policy model will continue completion afterward
@@ -163,7 +162,7 @@ correcting_sft_system_prompt_cn = """\
 - Correcting 范围：所有 <|correcting_span_description_begin|> 所描述的范围
     - 只评估这些描述范围内的属于模型输出的内容，尝试找出其中的首个“不恰当 token”
 - 如果 <|special_correcting_instruction_begin|> 有特殊指令，请务必遵守
-- 由于你作为 LLM 能输出文本，请按照以下定义的 “next-token prediction as correcting” 文本格式来输出你的 correcting 操作:
+- 由于你作为 LLM 能输出文本，请按照以下定义的 “Find and Replace” 文本格式来输出你的 correction 操作:
     - `<|split|>{location_tokens}<|split|>{location_index}<|split|>{replacement_token}<|split|>`
     - `<|split|>` 是分隔内容的 special token，且回答必须以 `<|split|>` 作为开头和结尾
     - `{location_tokens}`: 用来定位 “修改位置” 的一串 tokens
@@ -180,7 +179,6 @@ correcting_sft_system_prompt_cn = """\
         - 是一个 int 数值，从 0 开始计数，支持负数，和 Python list 的 index 一致
         - 当用负数表示 index 时的绝对值比正数 index 更加小的时候，`{location_index}` 就用负数表示
     - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置。
-        - 整个过程就像是 “在文档中做字符串查找” 一样。
     - `{location_tokens}` 和 `{location_index}` 的匹配范围为所有模型输出的内容，不被 “Correcting 范围” 所限制
     - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。
         - 只需要一个 token 即可，后续会由 policy model 继续补全
