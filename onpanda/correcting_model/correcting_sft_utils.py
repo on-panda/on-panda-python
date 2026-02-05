@@ -621,7 +621,7 @@ class NextTokenPredictionAsCorrectingBuilder:
         # import boxx.g
         return correcting_sft
 
-    def apply_ntp_as_correcting(self, msgs, ntp_as_correcting: str | dict):
+    def apply_ntp_as_correcting(self, msgs, ntp_as_correcting):
         if isinstance(ntp_as_correcting, str):
             ntp_as_correcting = self.parse_ntp_as_correcting_text(ntp_as_correcting)
         if ntp_as_correcting.get("is_good"):

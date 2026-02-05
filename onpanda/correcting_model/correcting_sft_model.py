@@ -14,7 +14,7 @@ with mximport.inpkg():
 class TokenLevelCorrectingModelBase:
     """
     TODO: using this or delete
-    Meta class of different token-level correcting models. e.g.:
+    Base class of different token-level correcting models. e.g.:
     - CorrectingCopyResponseModel: Using Copy response to get whole context for each generated token, and better computation for each token
     - CorrectingSftModel: Next Token Prediction as correcting location
     - Reasoning for Correcting using JSON output with right prefix
