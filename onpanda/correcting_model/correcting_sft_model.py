@@ -133,6 +133,7 @@ def build_test_correcting_sft_model(chat_correcting=None, builder=None):
             tokenizer=tokenizer,
             SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
             STOP_TOKEN="<|fim_suffix|>",
+            IS_GOOD_TOKEN="<|fim_prefix|>",
         )
     return CorrectingSftModel(chat_correcting, builder)
 

@@ -276,12 +276,14 @@ class NextTokenPredictionAsCorrectingBuilder:
         tokenizer=None,
         SPLIT_TOKEN="<|split|>",  # for qwen 2.5
         STOP_TOKEN="<|stop|>",
+        IS_GOOD_TOKEN="<|is_good|>",
         max_location_tokens=20,
         scope_slice=(-1, None),  # TODO: slice of which messages can be correcting
     ):
         self.tokenizer = tokenizer or unicode_tokenizer
         self.SPLIT_TOKEN = SPLIT_TOKEN
         self.STOP_TOKEN = STOP_TOKEN
+        self.IS_GOOD_TOKEN = IS_GOOD_TOKEN
         self.max_location_tokens = max_location_tokens
         self.scope_slice = scope_slice
 
@@ -293,6 +295,7 @@ class NextTokenPredictionAsCorrectingBuilder:
         return (
             prompt.replace("<|split|>", self.SPLIT_TOKEN)
             .replace("<|stop|>", self.STOP_TOKEN)
+            .replace("<|is_good|>", self.IS_GOOD_TOKEN)
             .replace(" 20 ", f" {self.max_location_tokens} ")
         )
 
@@ -318,7 +321,9 @@ class NextTokenPredictionAsCorrectingBuilder:
         mid_text = ntp_as_correcting_text.removeprefix(self.SPLIT_TOKEN).removesuffix(
             self.SPLIT_TOKEN
         )
-        if mid_text:  # correcting
+        if mid_text == self.IS_GOOD_TOKEN:  # is_good
+            ntp_as_correcting = dict(is_good=True, location_text="")
+        else:  # correcting
             splits = mid_text.split(self.SPLIT_TOKEN)
             # TODO: How to handle exception?
             assert len(splits) == 3, splits
@@ -328,8 +333,6 @@ class NextTokenPredictionAsCorrectingBuilder:
             ntp_as_correcting["location_index"] = int(
                 ntp_as_correcting["location_index"]
             )
-        else:  # is_good
-            ntp_as_correcting = dict(is_good=True, location_text="")
         return ntp_as_correcting
 
     def get_unicode_location(self, msgs, ntp_as_location=None):
@@ -572,7 +575,7 @@ class NextTokenPredictionAsCorrectingBuilder:
         ):  # 没有 token_level 信息, 属于 is_good 的 SFT
             is_good_correcting_msg = dict(
                 role="assistant",
-                content=self.SPLIT_TOKEN * 2,
+                content=f"{self.SPLIT_TOKEN}{self.IS_GOOD_TOKEN}{self.SPLIT_TOKEN}",
                 correcting=dict(is_good=True, scope_slice=self.scope_slice),
             )
             correcting_sft = msgs + [sys_prompt_message, is_good_correcting_msg]
@@ -675,6 +678,7 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
         SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
         STOP_TOKEN="<|fim_suffix|>",
+        IS_GOOD_TOKEN="<|fim_prefix|>",
     )
     builder = NextTokenPredictionAsCorrectingBuilder(**build_argkws)
 

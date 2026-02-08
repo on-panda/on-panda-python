@@ -12,7 +12,7 @@ class IsGoodScoreMixin:
         self,
         messages,
     ):
-        # add correcting SFT system prompt and is_good answer (`<|split|><|split|>`)
+        # add correcting SFT system prompt and is_good answer (`<|split|><|is_good|><|split|>`)
         is_good_msgs = self.builder.build_correcting_sft_by_token_level_SFT(
             messages, is_good=True
         )
@@ -32,21 +32,27 @@ class IsGoodScoreMixin:
                 skip_special_tokens=False,
             ),
         )
-        first_split_token = list(dic["prompt_logprobs"][-2].values())[0]
+        first_split_token = list(dic["prompt_logprobs"][-3].values())[0]
         assert (
             first_split_token["decoded_token"] == self.builder.SPLIT_TOKEN
-        ), f"first_split_tokens: {dic['prompt_logprobs'][-2]}, self.builder.SPLIT_TOKEN: {self.builder.SPLIT_TOKEN}"
+        ), f"first_split_tokens: {dic['prompt_logprobs'][-3]}, self.builder.SPLIT_TOKEN: {self.builder.SPLIT_TOKEN}"
         e = 2.718281828459045  # base of the natural logarithm
         prob_first_split = e ** first_split_token["logprob"]
         assert (
             prob_first_split > 0.99
-        ), f"CorrectingSftModel should learn to output `{self.builder.SPLIT_TOKEN}` first. first_split_tokens: {dic['prompt_logprobs'][-2]}, prob_first_split: {prob_first_split}"
+        ), f"CorrectingSftModel should learn to output `{self.builder.SPLIT_TOKEN}` first. first_split_tokens: {dic['prompt_logprobs'][-3]}, prob_first_split: {prob_first_split}"
+
+        is_good_token = list(dic["prompt_logprobs"][-2].values())[0]
+        assert (
+            is_good_token["decoded_token"] == self.builder.IS_GOOD_TOKEN
+        ), f"is_good_token: {dic['prompt_logprobs'][-2]}, self.builder.IS_GOOD_TOKEN: {self.builder.IS_GOOD_TOKEN}"
+        is_good_logprob = is_good_token["logprob"]
 
         second_split_token = list(dic["prompt_logprobs"][-1].values())[0]
         assert (
             second_split_token["decoded_token"] == self.builder.SPLIT_TOKEN
         ), f"second_split_tokens: {dic['prompt_logprobs'][-1]}, self.builder.SPLIT_TOKEN: {self.builder.SPLIT_TOKEN}"
-        is_good_logprob = second_split_token["logprob"]
+
         is_good_prob = e**is_good_logprob
         is_good_score = dict(is_good_prob=is_good_prob, is_good_logprob=is_good_logprob)
 
@@ -58,7 +64,7 @@ class IsGoodScoreMixin:
             print(is_good_prob)
             is_good_prob = e ** sum([d["logprob"] for d in prefill_logprobs])
             print(is_good_prob)
-            g()
+            import boxx.g
         return is_good_score
 
 

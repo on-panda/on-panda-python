@@ -532,6 +532,7 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
         SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
         STOP_TOKEN="<|fim_suffix|>",
+        IS_GOOD_TOKEN="<|fim_prefix|>",
         max_location_tokens=20,
     )
 
