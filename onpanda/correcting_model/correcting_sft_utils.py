@@ -78,12 +78,12 @@ correcting_sft_system_prompt_default = """\
 ## Custom format for Reasoning Model
 - To avoid the reasoning field content in messages being removed by the chat template, messages with a reasoning field will be specially processed
 - Use the following template to place reasoning into content:
-    - `<|reasoning_begin|>{message.reasoning}<|reasoning_end|>\n\n<|content_begin|>{message.content}{message.tool_calls}<|stop|>`
-    - Here, `<|reasoning_end|>\n\n<|content_begin|>` is a fixed combination, indicating the reasoning model's thinking has ended and the answer begins
-        - `<|reasoning_end|>` is the escape of the "reasoning end" special token, `<|content_begin|>` indicates the start of content
+    - `{message.reasoning}<|reasoning|>\n\n\n<|reasoning|>{message.content}{message.tool_calls}<|stop|>`
+    - Here, `<|reasoning|>\n\n\n<|reasoning|>` is a fixed combination, indicating the reasoning model's thinking has ended and the answer begins
+        - `<|reasoning|>` is the escape of the "thinking end" special token
     - `<|stop|>` indicates the end of content, i.e., the end of the response
-    - Supplement: message.reasoning belongs to the model's output content and needs to be evaluated by the correcting model
-- If you do not see markers related to `<|content_begin|>`, it means the message has no reasoning field, then ignore this rule
+    - {message.reasoning} belongs to the model's output content and needs to be evaluated by the correcting model
+- If you do not see `<|reasoning|>` marker, it means the message has no reasoning field, then ignore this rule
 
 
 ## Examples
@@ -135,7 +135,7 @@ LLM 可感知、可定位、both token and tokenizer aware、GPT-aware 的 corre
     "<|split|>": "_SPLIT",
     "<|stop|>": "_STOP",
     "<|is_good|>": "_GOOD",
-    "<|reasoning_end|>": "_REASON",
+    "<|reasoning|>": "_REASON",
 }
 - 不想改动 tokenizer 的话，可以用 chat model 不会再用到的 special token 来做替换
     - 比如 Qwen2.5+ tokenizer special token 征用: 
@@ -143,7 +143,7 @@ LLM 可感知、可定位、both token and tokenizer aware、GPT-aware 的 corre
     "<|split|>": "<|fim_pad|>",
     "<|stop|>": "<|fim_suffix|>",
     "<|is_good|>": "<|fim_prefix|>",
-    "<|reasoning_end|>": "<|fim_middle|>",
+    "<|reasoning|>": "<|fim_middle|>",
 }
 - 灵活且可感知的 correcting span 机制
 - 支持 reasoning model 的定制 system prompt
@@ -196,12 +196,12 @@ correcting_sft_system_prompt_cn = """\
 ## Reasoning Model 的定制格式
 - 为了避免 message 的 reasoning 字段内容被 chat template 删掉，带 reasoning 字段的 message 会被特殊处理
 - 通过如下模版把 reasoning 放入 content：
-    - `<|reasoning_begin|>{message.reasoning}<|reasoning_end|>\n\n<|content_begin|>{message.content}{message.tool_calls}<|stop|>`
-    - 其中 `<|reasoning_end|>\n\n<|content_begin|>` 是固定搭配，表示 reasoning model 的 thinking 结束，开始回答问题。
-        - 其中 `<|reasoning_end|>` 是 “reasoning end” special token 的转义，`<|content_begin|>` 表示 content 开始
+    - `{message.reasoning}<|reasoning|>\n\n\n<|reasoning|>{message.content}{message.tool_calls}<|stop|>`
+    - 其中 `<|reasoning|>\n\n\n<|reasoning|>` 是固定搭配，表示 reasoning model 的 thinking 结束，开始正式回答问题。
+        - 其中 `<|reasoning|>` 是 “thinking end” special token 的转义
     - `<|stop|>` 表示 content 结束，即回答结束
-    - 补充：message.reasoning 属于模型输出内容，需要被 correcting model 评估
-- 如果没有看到 `<|content_begin|>` 相关标记，说明该消息没有 reasoning 字段，则忽略此规则
+    - {message.reasoning} 属于模型输出内容，需要被 correcting model 评估
+- 如果没有看到 `<|reasoning|>` 标记，说明该消息没有 reasoning 字段，则忽略此规则
 
 
 ## 示例
