@@ -355,6 +355,14 @@ class PandaTree:
             token_level_info["rejected_finish_reason"] = rejected_msgs[-1].get(
                 "finish_reason", ""
             )
+            # TODO: 实现 messages level 的多轮 compute_token_level_supervision 返回 messages_location
+            char_index = token_level_info["rejected_text_unicode_range"][0]
+            token_level_info["rejected_messages_location"] = dict(
+                path_keys=[len(chosen_msgs)-1, "content"], 
+                char_index=char_index,
+                left5=rejected_content[max(0, char_index-5):char_index],
+                right5=rejected_content[char_index:char_index+5],
+                )
             token_level_msgs = chosen_msgs[:-1] + [
                 {
                     **chosen_msgs[-1],
@@ -539,5 +547,6 @@ if __name__ == "__main__":
     correcting_sfts = panda_tree.build_correcting_sft_data_v1(sft_correcting_builder)
 
     tree(correcting_sfts[-1])
+    # tree(token_level_v1s[-1])
     # savejson(correcting_sfts[-1], "/home/yl/onPanda/asset/correcting_sft/correcting_sft_example1.sft.json")
     # tree(correcting_sfts[3])
