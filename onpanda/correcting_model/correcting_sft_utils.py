@@ -41,12 +41,13 @@ correcting_sft_system_prompt_default = """\
 - Your task is:
     1. Identify the first inappropriate token in the above response, i.e., point out the "position needing modification"
     2. Replace the "inappropriate token" with a more appropriate token, such that continuing completion based on the "appropriate token" yields the best and most accurate response
-- Correcting Scope: All ranges described by <|correcting_span_description_begin|>
-    - Only evaluate content within these described ranges that belongs to the model's output, attempting to find the first "inappropriate token" therein
+- Correcting Scope: All spans described by <|correcting_span_description_begin|>
+    - Only evaluate content within these described spans that belongs to the model's output, attempting to find the first "inappropriate token" therein
+    - If there is no span description starting with <|correcting_span_description_begin|>, evaluate the most recent response by default
 - If there are special instructions within <|special_correcting_instruction_begin|>, you must strictly follow them
 - Since you as an LLM can output text, please output your correction operation in the following defined "Find and Replace" text format:
     - `<|split|>{location_tokens}<|split|>{location_index}<|split|>{replacement_token}<|split|>`
-    - `<|split|>` is a special token for separating content, and the response must start and end with `<|split|>`
+    - `<|split|>` is a special token for separating content, and your response must start and end with `<|split|>`
     - `{location_tokens}`: A sequence of tokens used to locate the "modification position"
         - Its content starts from the inappropriate token and continuously copies and generates until one of the following conditions is triggered:
             1. Among all model-output tokens, the first position matched by `{location_tokens}` is exactly the "modification position"
@@ -161,10 +162,11 @@ correcting_sft_system_prompt_cn = """\
     2. 将“不恰当 token”修改为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
 - Correcting 范围：所有 <|correcting_span_description_begin|> 所描述的范围
     - 只评估这些描述范围内的属于模型输出的内容，尝试找出其中的首个“不恰当 token”
+    - 若没有带 <|correcting_span_description_begin|> 的范围描述，则默认评估最后一条回答内容
 - 如果 <|special_correcting_instruction_begin|> 有特殊指令，请务必遵守
 - 由于你作为 LLM 能输出文本，请按照以下定义的 “Find and Replace” 文本格式来输出你的 correction 操作:
     - `<|split|>{location_tokens}<|split|>{location_index}<|split|>{replacement_token}<|split|>`
-    - `<|split|>` 是分隔内容的 special token，且回答必须以 `<|split|>` 作为开头和结尾
+    - `<|split|>` 是分隔内容的 special token，且你的新回答必须以 `<|split|>` 作为开头和结尾
     - `{location_tokens}`: 用来定位 “修改位置” 的一串 tokens
         - 其内容为从不恰当的 token 开始，持续摘抄并生成，直到触发以下任意情况：
             1. 在所有模型输出的 tokens 中，被 `{location_tokens}` 匹配上的第一处位置正好就是 “修改位置” 
