@@ -79,8 +79,14 @@ correcting_sft_system_prompt_default = """\
 ## Custom format for Reasoning Model
 - To avoid the reasoning field content in messages being removed by the chat template, messages with a reasoning field will be specially processed
 - Use the following template to place reasoning into content:
-    - `{message.reasoning}<|reasoning|>\n\n\n<|reasoning|>{message.content}{message.tool_calls}<|stop|>`
-    - Here, `<|reasoning|>\n\n\n<|reasoning|>` is a fixed combination, indicating the reasoning model's thinking has ended and the answer begins
+    - `{message.reasoning}<|reasoning|>
+
+
+<|reasoning|>{message.content}{message.tool_calls}<|stop|>`
+    - Here, `<|reasoning|>
+
+
+<|reasoning|>` is a fixed combination, indicating the reasoning model's thinking has ended and the answer begins
         - `<|reasoning|>` is the escape of the "thinking end" special token
     - `<|stop|>` indicates the end of content, i.e., the end of the response
     - {message.reasoning} belongs to the model's output content and needs to be evaluated by the correcting model
@@ -198,9 +204,15 @@ correcting_sft_system_prompt_cn = """\
 ## Reasoning Model 的定制格式
 - 为了避免 message 的 reasoning 字段内容被 chat template 删掉，带 reasoning 字段的 message 会被特殊处理
 - 通过如下模版把 reasoning 放入 content：
-    - `{message.reasoning}<|reasoning|>\n\n\n<|reasoning|>{message.content}{message.tool_calls}<|stop|>`
-    - 其中 `<|reasoning|>\n\n\n<|reasoning|>` 是固定搭配，表示 reasoning model 的 thinking 结束，开始正式回答问题。
-        - 其中 `<|reasoning|>` 是 “thinking end” special token 的转义
+    - `{message.reasoning}<|reasoning|>
+
+
+<|reasoning|>{message.content}{message.tool_calls}<|stop|>`
+    - 其中 `<|reasoning|>
+
+
+<|reasoning|>` 是固定搭配，表示 reasoning model 的 thinking 结束，开始正式回答问题。
+        - `<|reasoning|>` 是 “thinking end” special token 的转义
     - `<|stop|>` 表示 content 结束，即回答结束
     - {message.reasoning} 属于模型输出内容，需要被 correcting model 评估
 - 如果没有看到 `<|reasoning|>` 标记，说明该消息没有 reasoning 字段，则忽略此规则
@@ -279,6 +291,7 @@ class NextTokenPredictionAsCorrectingBuilder:
         SPLIT_TOKEN="<|split|>",  # for qwen 2.5
         STOP_TOKEN="<|stop|>",
         IS_GOOD_TOKEN="<|is_good|>",
+        REASONING_TOKEN="<|reasoning|>",
         max_location_tokens=20,
         scope_slice=(-1, None),  # TODO: slice of which messages can be correcting
     ):
@@ -286,10 +299,11 @@ class NextTokenPredictionAsCorrectingBuilder:
         self.SPLIT_TOKEN = SPLIT_TOKEN
         self.STOP_TOKEN = STOP_TOKEN
         self.IS_GOOD_TOKEN = IS_GOOD_TOKEN
+        self.REASONING_TOKEN = REASONING_TOKEN
         self.max_location_tokens = max_location_tokens
         self.scope_slice = scope_slice
 
-    def get_correcting_sft_system_prompt(self, language="cn"):
+    def get_correcting_sft_system_prompt(self, language=None):
         if language == "cn":
             prompt = correcting_sft_system_prompt_cn
         else:
@@ -298,6 +312,7 @@ class NextTokenPredictionAsCorrectingBuilder:
             prompt.replace("<|split|>", self.SPLIT_TOKEN)
             .replace("<|stop|>", self.STOP_TOKEN)
             .replace("<|is_good|>", self.IS_GOOD_TOKEN)
+            .replace("<|reasoning|>", self.REASONING_TOKEN)
             .replace(" 20 ", f" {self.max_location_tokens} ")
         )
 

@@ -58,6 +58,7 @@ class PandaTree:
 
     def __init__(self, data, tokenizer=None):
         if isinstance(data, str):  # path
+            data = os.path.expanduser(data)
             assert os.path.exists(data), data
             data = json.load(open(data))
         self.raw_data = data
