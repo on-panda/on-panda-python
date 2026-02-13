@@ -338,12 +338,13 @@ class NextTokenPredictionAsCorrectingBuilder:
         mid_text = ntp_as_correcting_text.removeprefix(self.SPLIT_TOKEN).removesuffix(
             self.SPLIT_TOKEN
         )
-        if mid_text == self.IS_GOOD_TOKEN:  # is_good
+        # TODO: remove workaround for old step1f correcting model
+        if mid_text == self.IS_GOOD_TOKEN or mid_text in ["", "<|fim_pad|>"]:  # is_good
             ntp_as_correcting = dict(is_good=True, location_text="")
         else:  # correcting
             splits = mid_text.split(self.SPLIT_TOKEN)
             # TODO: How to handle exception?
-            assert len(splits) == 3, splits
+            assert len(splits) == 3, ntp_as_correcting_text
             ntp_as_correcting = dict(
                 zip(["location_text", "location_index", "replacement_token"], splits)
             )
