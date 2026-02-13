@@ -614,7 +614,9 @@ class NextTokenPredictionAsCorrectingBuilder:
                 token_level=token_level_info,
             )
             if "rejected_messages_location" in token_level_info:
-                token_level_info["messages_location"] = token_level_info.pop("rejected_messages_location")
+                token_level_info["messages_location"] = token_level_info.pop(
+                    "rejected_messages_location"
+                )
             rejected_msgs = msgs[:-1] + [rejected_msg]
 
             ntp_as_location = self.convert_rejected_content_to_ntp_as_location(
