@@ -1,7 +1,10 @@
 import argparse
+import copy
 import json
 import queue
 import threading
+import time
+import traceback
 import urllib.parse
 
 import requests
@@ -109,6 +112,7 @@ def create_app(base_urls, api_keys, cli_config):
 
     default_base_url = base_urls[0]
     default_api_key = api_keys[0] if api_keys else ""
+    correct_model_holder = {"model": None}
 
     @app.before_request
     def handle_cors_preflight():
@@ -142,9 +146,15 @@ def create_app(base_urls, api_keys, cli_config):
             stream=False,
         )
         resp_headers = normalize_response_headers(upstream.headers)
-        return Response(upstream.content, status=upstream.status_code, headers=resp_headers)
+        return Response(
+            upstream.content, status=upstream.status_code, headers=resp_headers
+        )
 
     def proxy_chat_with_heartbeat(subpath, base_url, api_key, cli_config, url_config):
+        body = json.loads(request.get_data(as_text=True) or "{}")
+        if body.get("prompt_logprobs") and int(body.get("max_tokens", 0)) <= 1:
+            return proxy_plain(subpath, base_url, api_key)
+
         correction_config = deep_merge(cli_config, url_config)
         print(
             "[iterative_correction] correction_config="
@@ -152,44 +162,137 @@ def create_app(base_urls, api_keys, cli_config):
             flush=True,
         )
 
-        url = build_upstream_url(base_url, subpath)
-        headers = build_upstream_headers(api_key)
-        request_method = request.method
-        request_body = request.get_data()
-        qs = request.query_string.decode("utf-8")
-        if qs:
-            url = f"{url}?{qs}"
-
         result_q = queue.Queue()
-        body = request.get_json(silent=True) or {}
         stream_flag = bool(body.get("stream"))
+        req_model = body.get("model", "")
+        req_messages = body.get("messages", [])
+        correction_n = int(correction_config.get("n", 5))
+        auth_header = request.headers.get("Authorization", "")
+        bearer_token = (
+            auth_header[len("Bearer ") :].strip()
+            if auth_header.startswith("Bearer ")
+            else ""
+        )
+        policy_api_key = bearer_token or "no-key"
+
+        def get_correct_model():
+            if correct_model_holder["model"] is None:
+                from onpanda.correcting_model.correcting_sft_model import (
+                    build_test_correcting_sft_model,
+                )
+
+                correct_model_holder["model"] = build_test_correcting_sft_model()
+            return correct_model_holder["model"]
 
         def worker():
             try:
-                with requests.request(
-                    method=request_method,
-                    url=url,
-                    headers=headers,
-                    data=request_body,
-                    allow_redirects=False,
-                    timeout=UPSTREAM_TIMEOUT,
-                    stream=True,
-                ) as upstream:
+                import mxlm
+
+                correct_model = get_correct_model()
+                result_q.put(
+                    (
+                        "meta",
+                        (
+                            200,
+                            {
+                                "Content-Type": (
+                                    "text/event-stream"
+                                    if stream_flag
+                                    else "application/json"
+                                )
+                            },
+                        ),
+                    )
+                )
+
+                policy_kwargs = dict(
+                    base_url=base_url,
+                    api_key=policy_api_key,
+                    model=req_model,
+                )
+                for k in (
+                    "temperature",
+                    "max_tokens",
+                    "top_p",
+                    "frequency_penalty",
+                    "presence_penalty",
+                ):
+                    if k in body:
+                        policy_kwargs[k] = body[k]
+                chat_policy = mxlm.ChatAPI(**policy_kwargs)
+
+                corrected = correct_model.correcting_sampling(
+                    copy.deepcopy(req_messages),
+                    chat_policy,
+                    n=correction_n,
+                )
+                corrected_messages = corrected.get("corrected_messages", [])
+                final_message = (
+                    corrected_messages[-1]
+                    if corrected_messages
+                    else {"role": "assistant", "content": ""}
+                )
+                created = int(time.time())
+                response_id = f"chatcmpl-iterative-{created}"
+                model_name = req_model or ""
+                if stream_flag:
+                    result_q.put(("chunk", b": iterative-correction-stream-start\n\n"))
+                    chunk_obj = {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model_name,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "role": "assistant",
+                                    "content": final_message.get("content", ""),
+                                },
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "iterative_correction": corrected,
+                    }
                     result_q.put(
                         (
-                            "meta",
-                            (
-                                upstream.status_code,
-                                normalize_response_headers(upstream.headers),
-                                upstream.headers.get("Content-Type"),
+                            "chunk",
+                            f"data: {json.dumps(chunk_obj, ensure_ascii=False)}\n\n".encode(
+                                "utf-8"
                             ),
                         )
                     )
-                    for chunk in upstream.iter_content(chunk_size=8192):
-                        if chunk:
-                            result_q.put(("chunk", chunk))
+                    result_q.put(("chunk", b"data: [DONE]\n\n"))
+                else:
+                    result_obj = {
+                        "id": response_id,
+                        "object": "chat.completion",
+                        "created": created,
+                        "model": model_name,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {
+                                    "role": "assistant",
+                                    "content": final_message.get("content", ""),
+                                },
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "iterative_correction": corrected,
+                    }
+                    result_q.put(
+                        (
+                            "chunk",
+                            json.dumps(result_obj, ensure_ascii=False).encode("utf-8"),
+                        )
+                    )
                 result_q.put(("done", None))
             except Exception as e:
+                print(
+                    "[iterative_correction] traceback:\n" + traceback.format_exc(),
+                    flush=True,
+                )
                 payload = {"error": {"message": str(e), "type": "proxy_error"}}
                 result_q.put(("error", payload))
                 result_q.put(("done", None))
@@ -203,13 +306,30 @@ def create_app(base_urls, api_keys, cli_config):
             if first_kind == "error":
                 return jsonify(first_payload), 502
             if first_kind == "done":
-                return jsonify({"error": {"message": "upstream closed before response", "type": "proxy_error"}}), 502
+                return (
+                    jsonify(
+                        {
+                            "error": {
+                                "message": "iterative correction finished before response meta",
+                                "type": "proxy_error",
+                            }
+                        }
+                    ),
+                    502,
+                )
 
-        upstream_status, upstream_headers, upstream_content_type = first_payload
+        upstream_status, upstream_headers = first_payload
+        if stream_flag:
+            upstream_headers["Cache-Control"] = "no-cache, no-transform"
+            upstream_headers["X-Accel-Buffering"] = "no"
+            upstream_headers["Connection"] = "keep-alive"
 
         @stream_with_context
         def generate():
             heartbeat = b" \n"
+            if stream_flag:
+                # Send an immediate SSE comment frame so devtools can see the stream opened.
+                yield b": stream-open\n\n"
             while True:
                 try:
                     kind, payload = result_q.get(timeout=HEARTBEAT_INTERVAL_SECONDS)
@@ -222,12 +342,6 @@ def create_app(base_urls, api_keys, cli_config):
                 except queue.Empty:
                     yield heartbeat
 
-        if upstream_content_type:
-            upstream_headers["Content-Type"] = upstream_content_type
-        elif stream_flag:
-            upstream_headers["Content-Type"] = "text/event-stream"
-        else:
-            upstream_headers["Content-Type"] = "application/json"
         return Response(generate(), status=upstream_status, headers=upstream_headers)
 
     def handle_models_aggregate(subpath):
@@ -265,8 +379,12 @@ def create_app(base_urls, api_keys, cli_config):
 
         return proxy_plain(subpath, default_base_url, default_api_key)
 
-    @app.route("/iterative_correction/v1", defaults={"subpath": ""}, methods=ALL_METHODS)
-    @app.route("/iterative_correction/v1/", defaults={"subpath": ""}, methods=ALL_METHODS)
+    @app.route(
+        "/iterative_correction/v1", defaults={"subpath": ""}, methods=ALL_METHODS
+    )
+    @app.route(
+        "/iterative_correction/v1/", defaults={"subpath": ""}, methods=ALL_METHODS
+    )
     @app.route("/iterative_correction/v1/<path:subpath>", methods=ALL_METHODS)
     def proxy_iterative_empty(subpath):
         return route_common(subpath, cli_config, {})
@@ -303,11 +421,16 @@ def main():
     parser.add_argument(
         "--default_url_config",
         default="",
-        help="Default URL config in JSON or url_config-path format, e.g. '{\"model\":\"CorrectingModle\"}' or model@CorrectingModle",
+        help='Default URL config in JSON or url_config-path format, e.g. \'{"model":"CorrectingModle"}\' or model@CorrectingModle',
     )
-    parser.add_argument("--model", default="", help="Default model, merged into cli_config")
+    parser.add_argument(
+        "--model", default="", help="Default model, merged into cli_config"
+    )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9300)
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable Flask debug and auto-reload"
+    )
     args = parser.parse_args()
 
     base_urls = split_csv_arg(args.base_url)
@@ -328,7 +451,9 @@ def main():
     print("[iterative_correction_api] config:")
     print("  - CLI config: from --default_url_config and --model")
     print("  - URL config: url_config in /iterative_correction/{url_config}/v1/*")
-    print("  - Merge in hijack code: correction_config = deep_merge(cli_config, url_config)")
+    print(
+        "  - Merge in hijack code: correction_config = deep_merge(cli_config, url_config)"
+    )
     print("  - URL config overrides CLI config")
     print("  - List mode: --base_url and --api_key support comma-separated lists")
     print("  - List mode rule: number of base URLs must equal number of API keys")
@@ -342,7 +467,13 @@ def main():
         "--api_key key1,key2 --default_url_config model@CorrectingModle --model CorrectingModle"
     )
     app = create_app(base_urls=base_urls, api_keys=api_keys, cli_config=cli_config)
-    app.run(host=args.host, port=args.port, threaded=True)
+    app.run(
+        host=args.host,
+        port=args.port,
+        threaded=True,
+        debug=args.debug,
+        use_reloader=args.debug,
+    )
 
 
 if __name__ == "__main__":
