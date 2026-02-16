@@ -131,7 +131,7 @@ class PandaTree:
                     if dialog_key not in dense_keys:
                         # find in this tree's dense which has nearst sequence as pair dense
                         # may be multiple pair dense with the same prefix length
-                        min_prefix_len = 9e10
+                        max_prefix_len = -1
                         pair_dense_keys = []
                         for dense_key in tree_dense_keys:
                             prefix_len = sequence_prefix_length(
@@ -139,10 +139,10 @@ class PandaTree:
                                 dialogs[dense_key]["sequence"],
                             )
                             # for multiple pieces of data with the same branching point, token level negative supervision should duplicate
-                            if prefix_len < min_prefix_len:
-                                min_prefix_len = prefix_len
+                            if prefix_len > max_prefix_len:
+                                max_prefix_len = prefix_len
                                 pair_dense_keys = [dense_key]
-                            elif prefix_len == min_prefix_len:
+                            elif prefix_len == max_prefix_len:
                                 pair_dense_keys.append(dense_key)
                         for dense_key in pair_dense_keys:
                             assert (
