@@ -9,8 +9,10 @@ from .token_level_supervision_utils import (
     unicode_tokenizer,
 )
 from .correcting_model.correcting_sft_utils import (
+    CorrectionAdapter,
+    FindAndReplaceCorrectionAdapter,
     NextTokenPredictionAsCorrectingBuilder,
-    correcting_sft_system_prompt_cn,
-    correcting_sft_system_prompt_default,
+    correction_sft_system_prompt_cn,
+    correction_sft_system_prompt_default,
 )
-from .correcting_model.correcting_sft_model import CorrectingSftModel
+from .correcting_model.correcting_sft_model import CorrectingModel

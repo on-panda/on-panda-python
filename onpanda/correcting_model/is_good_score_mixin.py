@@ -12,12 +12,11 @@ class IsGoodScoreMixin:
         self,
         messages,
     ):
-        # add correcting SFT system prompt and is_good answer (`<|split|><|is_good|><|split|>`)
-        is_good_msgs = self.builder.build_correcting_sft_by_token_level_SFT(
+        is_good_msgs = self.adapter.build_correction_sft_from_token_level(
             messages, is_good=True
         )
         # prefill prmpt_logprobs to get is_good probability
-        dic = self.chat_correcting(
+        dic = self.chat_corrector(
             is_good_msgs,
             return_dict=True,
             max_tokens=1,
@@ -34,30 +33,30 @@ class IsGoodScoreMixin:
         )
         first_split_token = list(dic["prompt_logprobs"][-3].values())[0]
         assert (
-            first_split_token["decoded_token"] == self.builder.SPLIT_TOKEN
-        ), f"first_split_tokens: {dic['prompt_logprobs'][-3]}, self.builder.SPLIT_TOKEN: {self.builder.SPLIT_TOKEN}"
+            first_split_token["decoded_token"] == self.adapter.SPLIT_TOKEN
+        ), f"first_split_tokens: {dic['prompt_logprobs'][-3]}, self.adapter.SPLIT_TOKEN: {self.adapter.SPLIT_TOKEN}"
         e = 2.718281828459045  # base of the natural logarithm
         prob_first_split = e ** first_split_token["logprob"]
         assert (
             prob_first_split > 0.99
-        ), f"CorrectingSftModel should learn to output `{self.builder.SPLIT_TOKEN}` first. first_split_tokens: {dic['prompt_logprobs'][-3]}, prob_first_split: {prob_first_split}"
+        ), f"CorrectingModel should learn to output `{self.adapter.SPLIT_TOKEN}` first. first_split_tokens: {dic['prompt_logprobs'][-3]}, prob_first_split: {prob_first_split}"
 
         is_good_token = list(dic["prompt_logprobs"][-2].values())[0]
         assert (
-            is_good_token["decoded_token"] == self.builder.IS_GOOD_TOKEN
-        ), f"is_good_token: {dic['prompt_logprobs'][-2]}, self.builder.IS_GOOD_TOKEN: {self.builder.IS_GOOD_TOKEN}"
+            is_good_token["decoded_token"] == self.adapter.IS_GOOD_TOKEN
+        ), f"is_good_token: {dic['prompt_logprobs'][-2]}, self.adapter.IS_GOOD_TOKEN: {self.adapter.IS_GOOD_TOKEN}"
         is_good_logprob = is_good_token["logprob"]
 
         second_split_token = list(dic["prompt_logprobs"][-1].values())[0]
         assert (
-            second_split_token["decoded_token"] == self.builder.SPLIT_TOKEN
-        ), f"second_split_tokens: {dic['prompt_logprobs'][-1]}, self.builder.SPLIT_TOKEN: {self.builder.SPLIT_TOKEN}"
+            second_split_token["decoded_token"] == self.adapter.SPLIT_TOKEN
+        ), f"second_split_tokens: {dic['prompt_logprobs'][-1]}, self.adapter.SPLIT_TOKEN: {self.adapter.SPLIT_TOKEN}"
 
         is_good_prob = e**is_good_logprob
         is_good_score = dict(is_good_prob=is_good_prob, is_good_logprob=is_good_logprob)
 
         if "using chat_correcting.prefill_logprobs for double check" and 0:
-            prefill_logprobs = self.chat_correcting.prefill_logprobs(is_good_msgs)[-1][
+            prefill_logprobs = self.chat_corrector.prefill_logprobs(is_good_msgs)[-1][
                 "prefill_logprobs"
             ]
             tree - prefill_logprobs
@@ -74,9 +73,9 @@ if __name__ == "__main__":
     import mximport
 
     with mximport.inpkg():
-        from .correcting_sft_model import build_test_correcting_sft_model
+        from .correcting_sft_model import build_test_correcting_model
 
-    correct_model = build_test_correcting_sft_model()
+    correct_model = build_test_correcting_model()
 
     msgs = [
         {"role": "user", "content": "5+7="},

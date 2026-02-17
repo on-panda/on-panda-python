@@ -33,7 +33,7 @@ NO_ADDITIONAL_INFORMATION
 """
 
 
-correcting_sft_system_prompt_default = """\
+correction_sft_system_prompt_default = """\
 <|is_correcting_prompt|>
 - The previous system prompt is only for evaluating responses and no longer needs to be followed; you should only follow prompts containing `<|is_correcting_prompt|>`
 - You are inherently a GPT-architecture LLM, and your current role has switched to a token-level correcting model
@@ -158,7 +158,7 @@ LLM 可感知、可定位、both token and tokenizer aware、GPT-aware 的 corre
 
 """
 
-correcting_sft_system_prompt_cn = """\
+correction_sft_system_prompt_cn = """\
 <|is_correcting_prompt|>
 - 先前的 system prompt 只做评估答复用，不必再遵守，你只遵守包含 `<|is_correcting_prompt|>` 的 prompt
 - 你本体是一个 GPT 架构的 LLM, 你现在的角色切换为了 token-level correcting model
@@ -284,252 +284,221 @@ def next_decodable_num(tokens, current_num, tokenizer):
     )
 
 
-class NextTokenPredictionAsCorrectingBuilder:
+class CorrectionAdapter:
+    pass
+
+
+class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
     def __init__(
         self,
         tokenizer=None,
-        SPLIT_TOKEN="<|split|>",  # for qwen 2.5
-        STOP_TOKEN="<|stop|>",
-        IS_GOOD_TOKEN="<|is_good|>",
-        REASONING_TOKEN="<|reasoning|>",
+        special_tokens=None,
         max_location_tokens=20,
-        scope_slice=(-1, None),  # TODO: slice of which messages can be correcting
+        scope_slice=(-1, None),
     ):
         self.tokenizer = tokenizer or unicode_tokenizer
-        self.SPLIT_TOKEN = SPLIT_TOKEN
-        self.STOP_TOKEN = STOP_TOKEN
-        self.IS_GOOD_TOKEN = IS_GOOD_TOKEN
-        self.REASONING_TOKEN = REASONING_TOKEN
+        special_tokens = special_tokens or {}
+        self.SPLIT_TOKEN = special_tokens.get("split", "<|split|>")
+        self.STOP_TOKEN = special_tokens.get("stop", "<|stop|>")
+        self.IS_GOOD_TOKEN = special_tokens.get("is_good", "<|is_good|>")
+        self.REASONING_TOKEN = special_tokens.get("reasoning", "<|reasoning|>")
         self.max_location_tokens = max_location_tokens
         self.scope_slice = scope_slice
 
-    def get_correcting_sft_system_prompt(self, language=None):
+    def build_correction_prompt(self, messages, language=None):
         if language == "cn":
-            prompt = correcting_sft_system_prompt_cn
+            prompt = correction_sft_system_prompt_cn
         else:
-            prompt = correcting_sft_system_prompt_default
-        return (
+            prompt = correction_sft_system_prompt_default
+        system_prompt = (
             prompt.replace("<|split|>", self.SPLIT_TOKEN)
             .replace("<|stop|>", self.STOP_TOKEN)
             .replace("<|is_good|>", self.IS_GOOD_TOKEN)
             .replace("<|reasoning|>", self.REASONING_TOKEN)
             .replace(" 20 ", f" {self.max_location_tokens} ")
         )
+        sys_prompt_message = dict(
+            role="system",
+            content=system_prompt,
+        )
+        return messages + [sys_prompt_message]
 
-    def convert_token_level_to_unicode_location(self, rejected_msgs):
-        """
-        根据 rejected_msgs 中的 token_level 信息返回 unicode_location
-
-        Args:
-            rejected_msgs: 消息列表
-
-        Returns:
-            dict: {"message_index": int, "unicode_index": int}
-        """
-        # 查找首个有 token_level 的 assistant 消息
-        for i, msg in enumerate(rejected_msgs):
-            if msg["role"] == "assistant" and "token_level" in msg:
-                token_level = msg["token_level"]
-                unicode_location = token_level["rejected_text_unicode_range"][0]
-                return {"message_index": i, "unicode_index": unicode_location}
-        return {"not_found": True}
-
-    def parse_ntp_as_correcting_text(self, ntp_as_correcting_text):
-        mid_text = ntp_as_correcting_text.removeprefix(self.SPLIT_TOKEN).removesuffix(
+    def parse(self, far_text):
+        mid_text = far_text.removeprefix(self.SPLIT_TOKEN).removesuffix(
             self.SPLIT_TOKEN
         )
         # TODO: remove workaround for old step1f correcting model
-        if mid_text == self.IS_GOOD_TOKEN or mid_text in ["", "<|fim_pad|>"]:  # is_good
-            ntp_as_correcting = dict(is_good=True, location_text="")
-        else:  # correcting
+        if mid_text == self.IS_GOOD_TOKEN or mid_text in ["", self.SPLIT_TOKEN]:
+            find_and_replace = dict(
+                is_good=True,
+                location_text="",
+                location_index=0,
+                replacement_token="",
+            )
+        else:
             splits = mid_text.split(self.SPLIT_TOKEN)
-            # TODO: How to handle exception?
-            assert len(splits) == 3, ntp_as_correcting_text
-            ntp_as_correcting = dict(
-                zip(["location_text", "location_index", "replacement_token"], splits)
+            assert len(splits) == 3, far_text
+            find_and_replace = dict(
+                is_good=False,
+                location_text=splits[0],
+                location_index=int(splits[1]),
+                replacement_token=splits[2],
             )
-            ntp_as_correcting["location_index"] = int(
-                ntp_as_correcting["location_index"]
-            )
-        return ntp_as_correcting
+        return find_and_replace
 
-    def get_unicode_location(self, msgs, ntp_as_location=None):
-        """
-        根据 ntp_as_location 定位 unicode_location
-        如果 ntp_as_location is None, 则从 msgs 必须是 correcting_sft, 会从最后一条消息中解析出 ntp_as_location
-        """
-        if ntp_as_location is None:
-            sys_msg, correcting_msg = msgs[-2:]
-            msgs = msgs[:-2]
-            # ntp_as_correcting_gt = correcting_msg.get('correcting')
-            ntp_as_correcting_text = mxlm.get_text_content(correcting_msg)
-            ntp_as_location = self.parse_ntp_as_correcting_text(ntp_as_correcting_text)
-            if ntp_as_location.get("is_good"):
-                return dict(not_found=True, is_good=True)
-        unicode_location = self._get_unicode_location(msgs, ntp_as_location)
-        return unicode_location
+    def _iter_assistant_text_locations(self, messages):
+        for message_index, message in enumerate(messages):
+            if message["role"] != "assistant":
+                continue
+            reasoning = message.get("reasoning")
+            if isinstance(reasoning, str):
+                yield [message_index, "reasoning"], reasoning
 
-    def _get_unicode_location(self, msgs, ntp_as_location):
-        """
-        Compute unicode_location by ntp_as_location in messages without token_level_info
-        if Not found:
-            return dict(not_found=True)
+            content = message.get("content", "")
+            if isinstance(content, list):
+                assert all([d["type"] == "text" for d in content]), message
+                content = mxlm.get_text_content(content)
+            else:
+                content = mxlm.get_text_content(content)
+            yield [message_index, "content"], content
 
-        用 for loop 遍历所有 assistant 消息，找到所有能匹配上 location_text 的位置
-        如果能找到， 返回 location_index 对应的位置的 unicode_location
-        否则返回 not_found=True
-        """
-        unicode_sequence_dic = self.messages_to_assistant_unicode_sequence(msgs)
-        assistant_sequence = unicode_sequence_dic["assistant_sequence"]
-        location_index = ntp_as_location["location_index"]
-        location_text = ntp_as_location.get("location_text", "")
-        assert location_text, ntp_as_location
-        unicode_locations = []
-        for message_index, assistant_content in zip(
-            unicode_sequence_dic["assistant_indices"],
-            assistant_sequence.split(self.STOP_TOKEN),
-        ):
+            for tool_call_index, tool_call in enumerate(message.get("tool_calls", [])):
+                function = tool_call.get("function", {})
+                function_name = function.get("name")
+                if isinstance(function_name, str):
+                    yield [
+                        message_index,
+                        "tool_calls",
+                        tool_call_index,
+                        "function",
+                        "name",
+                    ], function_name
+                function_arguments = function.get("arguments")
+                if isinstance(function_arguments, str):
+                    yield [
+                        message_index,
+                        "tool_calls",
+                        tool_call_index,
+                        "function",
+                        "arguments",
+                    ], function_arguments
 
-            assistant_content += self.STOP_TOKEN
+    def locate(self, messages, find_and_replace):
+        if find_and_replace.get("is_good"):
+            return dict(not_found=True, is_good=True)
+
+        location_index = find_and_replace["location_index"]
+        location_text = find_and_replace.get("location_text", "")
+        assert location_text, find_and_replace
+        messages_locations = []
+        for path_keys, text in self._iter_assistant_text_locations(messages):
+            search_scope = text + self.STOP_TOKEN
             start = 0
             while True:
-                index = assistant_content.find(location_text, start)
+                index = search_scope.find(location_text, start)
                 if index == -1:
                     break
-                unicode_location = dict(
-                    message_index=message_index, unicode_index=index
+                messages_location = dict(
+                    path_keys=path_keys,
+                    char_index=index,
+                    left5=search_scope[max(0, index - 5) : index],
+                    right5=search_scope[index : index + 5],
                 )
-                unicode_locations.append(unicode_location)
+                messages_locations.append(messages_location)
                 start = index + 1
-        match_num = len(unicode_locations)
+        match_num = len(messages_locations)
+        if match_num and -match_num <= location_index < match_num:
+            messages_location = deepcopy(messages_locations[location_index])
+            messages_location["match_num"] = match_num
+            messages_location["patch_length"] = len(location_text)
+            return messages_location
+        return dict(not_found=True, match_num=match_num)
 
-        if match_num and -match_num <= location_index and location_index < match_num:
-            unicode_location = unicode_locations[location_index]
-            unicode_location["match_num"] = match_num
-            return unicode_location
-        else:
-            return dict(not_found=True, match_num=match_num)
+    def _get_by_path(self, data, path_keys):
+        target = data
+        for key in path_keys:
+            target = target[key]
+        return target
 
-    def messages_to_assistant_unicode_sequence(self, msgs, unicode_location=None):
+    def _set_by_path(self, data, path_keys, value):
+        target = data
+        for key in path_keys[:-1]:
+            target = target[key]
+        target[path_keys[-1]] = value
+
+    def convert_token_level_to_messages_location(self, rejected_messages):
         """
-        Convert messages to a single text sequence, if unicode_location is given,
-        also compute the sequence_index in the combined text sequence.
-
-        Returns:
-            update to unicode_location dict: {"assistant_sequence": str, "sequence_index": int (if unicode_location is given)}
+        根据 rejected_messages 中的 token_level 信息返回 messages_location
         """
+        for message_index, message in enumerate(rejected_messages):
+            if message["role"] == "assistant" and "token_level" in message:
+                token_level = message["token_level"]
+                if "messages_location" in token_level:
+                    return deepcopy(token_level["messages_location"])
+                char_index = token_level["rejected_text_unicode_range"][0]
+                patch_length = token_level["rejected_text_unicode_range"][1]
+                content = mxlm.get_text_content(message["content"])
+                return dict(
+                    path_keys=[message_index, "content"],
+                    char_index=char_index,
+                    patch_length=patch_length,
+                    left5=content[max(0, char_index - 5) : char_index],
+                    right5=content[char_index : char_index + 5],
+                )
+        return dict(not_found=True)
 
-        # 收集所有assistant消息的内容，并记录其在原始消息中的索引
-        assistant_contents = []
-        assistant_indices = []
-        for i, msg in enumerate(msgs):
-            if msg["role"] == "assistant":
-                content = mxlm.get_text_content(msg["content"])
-                # 添加隐藏的 STOP_TOKEN
-                content += self.STOP_TOKEN
-                # content += "\n\n-----\n\n" 会导致潜在的 tokenizer 粘连问题
-                assistant_contents.append(content)
-                assistant_indices.append(i)
-
-        assistant_sequence = "".join(assistant_contents)
-        if unicode_location is None:
-            unicode_location = {}
-        else:
-            message_index = unicode_location["message_index"]
-            target_unicode_index = unicode_location["unicode_index"]
-            # 计算目标位置的unicode位置
-            # 找到目标消息在assistant消息列表中的索引
-            try:
-                assistant_msg_idx = assistant_indices.index(message_index)
-            except ValueError:
-                raise ValueError(f"消息索引 {message_index} 不是 assistant 消息")
-
-            current_index = 0
-            for i in range(assistant_msg_idx):
-                current_index += len(assistant_contents[i])
-            sequence_index = current_index + target_unicode_index
-            # unicode_location = deepcopy(unicode_location)
-            unicode_location["sequence_index"] = sequence_index
-        unicode_location["assistant_sequence"] = assistant_sequence
-        unicode_location["assistant_indices"] = assistant_indices
-        # print(unicode_location)
-        return unicode_location
-
-    def set_location_index(self, rejected_msgs, ntp_as_location, unicode_location):
+    def set_location_index(self, rejected_messages, find_and_replace, messages_location):
         """
-        在所有模型输出的 tokens 中查找 ntp_as_location.location_text 的所有匹配位置，
-        返回对应的索引位置 ntp_as_location.location_index
-
-        Args:
-            rejected_msgs: 消息列表
-            ntp_as_location: dict(location_text=...) or 要查找的字符串
-            unicode_location: dict, 包含 message_index 和 unicode_index, 也可以包含 assistant_sequence 和 sequence_index
-
-        Returns ntp_as_location:
-            int: location_index，从0开始计数，负数表示从末尾倒数
+        在所有模型输出文本中查找 find_and_replace.location_text 的所有匹配位置，
+        返回对应的 find_and_replace.location_index
         """
-        if isinstance(ntp_as_location, str):
-            ntp_as_location = dict(location_text=ntp_as_location)
-        ntp_as_location = deepcopy(ntp_as_location)
-        location_text = ntp_as_location["location_text"]
-        if "assistant_sequence" not in unicode_location:
-            unicode_location = self.messages_to_assistant_unicode_sequence(
-                rejected_msgs, unicode_location
-            )
-        assistant_sequence = unicode_location["assistant_sequence"]
-        sequence_index = unicode_location["sequence_index"]
-
-        # 在所有assistant内容中查找location_text的所有匹配位置
+        if isinstance(find_and_replace, str):
+            find_and_replace = dict(location_text=find_and_replace)
+        find_and_replace = deepcopy(find_and_replace)
+        location_text = find_and_replace["location_text"]
         matches = []
-        start = 0
-        while True:
-            index = assistant_sequence.find(location_text, start)
-            if index == -1:
-                break
-            matches.append(index)
-            start = index + 1
+        for path_keys, text in self._iter_assistant_text_locations(rejected_messages):
+            search_scope = text + self.STOP_TOKEN
+            start = 0
+            while True:
+                index = search_scope.find(location_text, start)
+                if index == -1:
+                    break
+                matches.append((path_keys, index))
+                start = index + 1
 
+        target_path_keys = messages_location["path_keys"]
+        target_char_index = messages_location["char_index"]
         location_index = None
-        # 找到目标位置对应的匹配索引
-        for idx, match_index in enumerate(matches):
-            if match_index == sequence_index:
-                # 如果负数的绝对值更小，使用负数表示
+        for idx, (path_keys, char_index) in enumerate(matches):
+            if path_keys == target_path_keys and char_index == target_char_index:
                 negative_idx = idx - len(matches)
                 if abs(negative_idx) < idx:
                     location_index = negative_idx
                 else:
                     location_index = idx
+                break
 
-        ntp_as_location.update(
-            unicode_location=unicode_location, match_num=len(matches)
+        find_and_replace.update(
+            match_num=len(matches),
+            location_index=location_index,
         )
-        ntp_as_location["location_index"] = location_index
-        if not len(matches):
-            ntp_as_location["not_found"] = True
-        return ntp_as_location
+        if not matches or location_index is None:
+            find_and_replace["not_found"] = True
+        return find_and_replace
 
-    def convert_rejected_content_to_ntp_as_location(self, rejected_msgs):
+    def build_correction_from_rejected_messages(self, rejected_messages):
         """
-        将 rejected_msgs 和 token_level_info 转换为 Next Token Prediction as location 格式
-
-        - 获得 correcting 位置的 unicode_location
-        - 从 unicode_location 处取 suffix 再 decode
-        - 循环 next valid decodable 直到 location_index 为 0，或者 token 超长
-        - 生成并返回 location_text 和 location_index
-
-        Args:
-            rejected_msgs: 消息列表
-
-        Returns:
-            dict: {"location_text": str, "location_index": int}
+        将 rejected_messages 的 token_level 信息转换为 correction
         """
-        # 获取 unicode_location
-        unicode_location = self.convert_token_level_to_unicode_location(rejected_msgs)
-        message_index = unicode_location["message_index"]
-        unicode_index = unicode_location["unicode_index"]
-
-        content = mxlm.get_text_content(rejected_msgs[message_index]["content"])
-        content_suffix = content[unicode_index:] + self.STOP_TOKEN
+        messages_location = self.convert_token_level_to_messages_location(rejected_messages)
+        path_keys = messages_location["path_keys"]
+        char_index = messages_location["char_index"]
+        content = self._get_by_path(rejected_messages, path_keys)
+        if isinstance(content, list):
+            assert all([d["type"] == "text" for d in content]), rejected_messages
+            content = mxlm.get_text_content(content)
+        content_suffix = content[char_index:] + self.STOP_TOKEN
         suffix_tokens = self.tokenizer.encode(content_suffix, add_special_tokens=False)
         decodable_num = 0
 
@@ -539,14 +508,14 @@ class NextTokenPredictionAsCorrectingBuilder:
             )
             decodable_num = decodable_res["next_num"]
             location_text = decodable_res["decoded_text"]
-            ntp_as_location = self.set_location_index(
-                rejected_msgs,
+            find_and_replace = self.set_location_index(
+                rejected_messages,
                 location_text,
-                unicode_location,
+                messages_location,
             )
-            if ntp_as_location.get("not_found"):
-                raise ValueError("无法定位到 location_text", ntp_as_location)
-            location_index = ntp_as_location.get("location_index", None)
+            if find_and_replace.get("not_found"):
+                raise ValueError("无法定位到 location_text", find_and_replace)
+            location_index = find_and_replace.get("location_index", None)
             if location_index == 0:
                 break
             if decodable_num >= len(suffix_tokens):
@@ -554,136 +523,170 @@ class NextTokenPredictionAsCorrectingBuilder:
             if decodable_num >= self.max_location_tokens:
                 break
 
-        ntp_as_location["location_tokens"] = suffix_tokens[:decodable_num]
-
+        find_and_replace["location_tokens"] = suffix_tokens[:decodable_num]
         if "assert_location_consistency":
-            unicode_location2 = self.get_unicode_location(
-                rejected_msgs, ntp_as_location
-            )
+            messages_location2 = self.locate(rejected_messages, find_and_replace)
             assert (
-                unicode_location["message_index"] == unicode_location2["message_index"]
-                and unicode_location["unicode_index"]
-                == unicode_location2["unicode_index"]
+                messages_location["path_keys"] == messages_location2["path_keys"]
+                and messages_location["char_index"] == messages_location2["char_index"]
             ), (
                 "assert_location_consistency: "
-                + str(unicode_location)
-                + str(unicode_location2)
-                + str(ntp_as_location)
+                + str(messages_location)
+                + str(messages_location2)
+                + str(find_and_replace)
             )
-        return ntp_as_location
-
-    def build_correcting_sft_by_token_level_SFT(
-        self, msgs, is_good=None
-    ):  # must be is_good SFT msgs or token_level_SFT msgs
-        unicode_location = self.convert_token_level_to_unicode_location(msgs)
-
-        sys_prompt_message = dict(
-            role="system",
-            content=self.get_correcting_sft_system_prompt(),
+        return dict(
+            messages_location=messages_location,
+            find_and_replace=find_and_replace,
         )
-        # double check
+
+    def build_correction_sft_from_token_level(
+        self, messages, is_good=None
+    ):  # must be is_good SFT msgs or token_level_SFT msgs
+        messages = deepcopy(messages)
+        messages_location = self.convert_token_level_to_messages_location(messages)
         if is_good is not None:
             assert bool(is_good) == bool(
-                unicode_location.get("not_found")
-            ), f"is_good must consistent with token_level_info, is_good: {is_good} != unicode_location: {unicode_location}"
+                messages_location.get("not_found")
+            ), f"is_good must consistent with token_level_info, is_good: {is_good} != messages_location: {messages_location}"
 
-        [msg.update(ignore_loss=True) for msg in msgs if msg["role"] == "assistant"]
-        if unicode_location.get(
-            "not_found"
-        ):  # 没有 token_level 信息, 属于 is_good 的 SFT
+        [msg.update(ignore_loss=True) for msg in messages if msg["role"] == "assistant"]
+        if messages_location.get("not_found"):
+            is_good_messages_location = dict(not_found=True, is_good=True)
+            is_good_find_and_replace = dict(
+                is_good=True,
+                location_text="",
+                location_index=0,
+                replacement_token="",
+            )
             is_good_correcting_msg = dict(
                 role="assistant",
                 content=f"{self.SPLIT_TOKEN}{self.IS_GOOD_TOKEN}{self.SPLIT_TOKEN}",
-                correcting=dict(is_good=True, scope_slice=self.scope_slice),
+                correcting=dict(
+                    messages_location=is_good_messages_location,
+                    find_and_replace=is_good_find_and_replace,
+                    scope_slice=self.scope_slice,
+                ),
             )
-            correcting_sft = msgs + [sys_prompt_message, is_good_correcting_msg]
+            return self.build_correction_prompt(messages) + [is_good_correcting_msg]
 
-            return correcting_sft
-        else:  # 有 token_level 信息, 属于 not is_good 的 token-level SFT
-            token_level_msg = msgs[-1]
-            token_level_info = token_level_msg["token_level"]
-            rejected_content_chunks = token_level_info.pop("rejected_content")
-            token_level_info["chosen_content"] = token_level_msg["content"]
+        token_level_msg = messages[-1]
+        token_level_info = token_level_msg["token_level"]
+        rejected_content_chunks = token_level_info.pop("rejected_content")
+        token_level_info["chosen_content"] = token_level_msg["content"]
 
-            rejected_content_str = mxlm.get_text_content(rejected_content_chunks)
-            rejected_msg = dict(
-                role="assistant",
-                ignore_loss=True,
-                content=rejected_content_str,
-                finish_reason=token_level_info.get("rejected_finish_reason", ""),
-                token_level=token_level_info,
+        rejected_content_str = mxlm.get_text_content(rejected_content_chunks)
+        rejected_msg = dict(
+            role="assistant",
+            ignore_loss=True,
+            content=rejected_content_str,
+            finish_reason=token_level_info.get("rejected_finish_reason", ""),
+            token_level=token_level_info,
+        )
+        if "rejected_messages_location" in token_level_info:
+            token_level_info["messages_location"] = token_level_info.pop(
+                "rejected_messages_location"
             )
-            if "rejected_messages_location" in token_level_info:
-                token_level_info["messages_location"] = token_level_info.pop(
-                    "rejected_messages_location"
-                )
-            rejected_msgs = msgs[:-1] + [rejected_msg]
+        rejected_messages = messages[:-1] + [rejected_msg]
 
-            ntp_as_location = self.convert_rejected_content_to_ntp_as_location(
-                rejected_msgs,
-            )
-            ntp_as_correcting = deepcopy(ntp_as_location)
-            ntp_as_correcting.pop("unicode_location", None)
-            replacement_text = (
-                token_level_info["chosen_text"] or self.STOP_TOKEN
-            )  # if chosen_text is empty mean chosen stop token
-            ntp_as_correcting.update(
-                replacement_text=replacement_text,
-                is_good=False,
+        correction = self.build_correction_from_rejected_messages(
+            rejected_messages,
+        )
+        find_and_replace = correction["find_and_replace"]
+        messages_location = correction["messages_location"]
+        replacement_token = token_level_info["chosen_text"] or self.STOP_TOKEN
+        find_and_replace.update(
+            replacement_token=replacement_token,
+            is_good=False,
+        )
+        correcting_content = (
+            f"{self.SPLIT_TOKEN}{find_and_replace['location_text']}{self.SPLIT_TOKEN}"
+            f"{find_and_replace['location_index']}{self.SPLIT_TOKEN}"
+            f"{find_and_replace['replacement_token']}{self.SPLIT_TOKEN}"
+        )
+        correcting_msg = dict(
+            role="assistant",
+            content=correcting_content,
+            correcting=dict(
+                messages_location=messages_location,
+                find_and_replace=find_and_replace,
                 scope_slice=self.scope_slice,
-            )
+            ),
+        )
+        correction_sft = self.build_correction_prompt(rejected_messages) + [correcting_msg]
+        return correction_sft
 
-            correcting_content = f"{self.SPLIT_TOKEN}{ntp_as_correcting['location_text']}{self.SPLIT_TOKEN}{ntp_as_correcting['location_index']}{self.SPLIT_TOKEN}{ntp_as_correcting['replacement_text']}{self.SPLIT_TOKEN}"
-            correcting_msg = dict(
-                role="assistant",
-                content=correcting_content,
-                correcting=ntp_as_correcting,
-            )
-            correcting_sft = rejected_msgs + [
-                sys_prompt_message,
-                correcting_msg,
-            ]
-        # import boxx.g
-        return correcting_sft
-
-    def apply_ntp_as_correcting(self, msgs, ntp_as_correcting):
-        if isinstance(ntp_as_correcting, str):
-            ntp_as_correcting = self.parse_ntp_as_correcting_text(ntp_as_correcting)
-        if ntp_as_correcting.get("is_good"):
-            return dict(
-                ntp_as_correcting=ntp_as_correcting,
-            )
-        unicode_location = self.get_unicode_location(msgs, ntp_as_correcting)
-        if unicode_location.get("not_found"):
-            return dict(
-                ntp_as_correcting=ntp_as_correcting, unicode_location=unicode_location
-            )
+    def apply(self, messages, correction_or_far_text):
+        if isinstance(correction_or_far_text, str):
+            find_and_replace = self.parse(correction_or_far_text)
+            correction = dict(find_and_replace=find_and_replace)
         else:
-            msg_idx = unicode_location["message_index"]
-            partial_msg = deepcopy(msgs[msg_idx])
-            if isinstance(partial_msg["content"], list):
-                assert all(
-                    [d["type"] == "text" for d in partial_msg["content"]]
-                ), partial_msg
-                partial_msg["content"] = mxlm.get_text_content(partial_msg["content"])
-            good_prefix = partial_msg["content"][: unicode_location["unicode_index"]]
-            if self.STOP_TOKEN == ntp_as_correcting["replacement_token"]:
-                # no need continue final message
-                partial_msg["content"] = good_prefix
-                partial_msg["finish_reason"] = "stop"
+            correction = deepcopy(correction_or_far_text)
+            if "find_and_replace" in correction:
+                find_and_replace = correction["find_and_replace"]
+            elif "replacement_token" in correction:
+                find_and_replace = correction
+                correction = dict(find_and_replace=find_and_replace)
             else:
-                partial_msg["content"] = (
-                    good_prefix + ntp_as_correcting["replacement_token"]
-                )
-                if "finish_reason" in partial_msg:
-                    del partial_msg["finish_reason"]
-            partial_messages = msgs[:msg_idx] + [partial_msg]
-            correction = dict(
-                ntp_as_correcting=ntp_as_correcting,
-                unicode_location=unicode_location,
-                partial_messages=partial_messages,
+                assert (
+                    "messages_location" not in correction
+                ), "apply(messages, messages_location) is not supported. Please provide find_and_replace with replacement_token."
+                raise AssertionError(correction)
+
+        if "messages_location" not in correction:
+            correction["messages_location"] = self.locate(messages, find_and_replace)
+
+        if find_and_replace.get("is_good"):
+            return dict(
+                correction=correction,
+                partial_messages=messages,
             )
-            return correction
+
+        assert (
+            "replacement_token" in find_and_replace
+        ), f"`replacement_token` not found in find_and_replace: {find_and_replace}"
+        messages_location = correction["messages_location"]
+        if messages_location.get("not_found"):
+            return dict(
+                correction=correction,
+                partial_messages=messages,
+            )
+
+        path_keys = messages_location["path_keys"]
+        char_index = messages_location["char_index"]
+        replacement_token = find_and_replace["replacement_token"]
+        partial_messages = deepcopy(messages[: path_keys[0] + 1])
+
+        field_text = self._get_by_path(partial_messages, path_keys)
+        if isinstance(field_text, list):
+            assert all([d["type"] == "text" for d in field_text]), partial_messages
+            field_text = mxlm.get_text_content(field_text)
+
+        good_prefix = field_text[:char_index]
+        if self.STOP_TOKEN == replacement_token:
+            corrected_field_text = good_prefix
+        else:
+            corrected_field_text = good_prefix + replacement_token
+        self._set_by_path(partial_messages, path_keys, corrected_field_text)
+
+        if path_keys[-1] == "content":
+            if self.STOP_TOKEN == replacement_token:
+                partial_messages[-1]["finish_reason"] = "stop"
+            elif "finish_reason" in partial_messages[-1]:
+                del partial_messages[-1]["finish_reason"]
+
+        return dict(
+            correction=correction,
+            partial_messages=partial_messages,
+        )
+
+class NextTokenPredictionAsCorrectingBuilder:
+    def __init__(self, *args, **kwargs):
+        assert False, (
+            "NextTokenPredictionAsCorrectingBuilder has been removed. "
+            "Please downgrade to onpanda<=0.0.10, or switch to "
+            "FindAndReplaceCorrectionAdapter."
+        )
 
 
 if __name__ == "__main__":
@@ -695,14 +698,16 @@ if __name__ == "__main__":
 
     panda_json_dir = "../../../on-panda-example-data/panda_json"
     tokenizer = build_test_tokenizer()
-    # build_argkws = dict(tokenizer=unicode_tokenizer)
     build_argkws = dict(
         tokenizer=tokenizer,
-        SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
-        STOP_TOKEN="<|fim_suffix|>",
-        IS_GOOD_TOKEN="<|fim_prefix|>",
+        special_tokens=dict(
+            split="<|fim_pad|>",  # for qwen 2.5
+            stop="<|fim_suffix|>",
+            is_good="<|fim_prefix|>",
+            reasoning="<|fim_middle|>",
+        ),
     )
-    builder = NextTokenPredictionAsCorrectingBuilder(**build_argkws)
+    far_adapter = FindAndReplaceCorrectionAdapter(**build_argkws)
 
     # test next_decodable_num
     complex_emoji_text = "🧎🏿‍♂️‍➡️"
@@ -712,11 +717,11 @@ if __name__ == "__main__":
     # test sample case
     rejected_msgs1, ntp_as_correcting_text_gt1 = get_test_rejected_msgs1()[:2]
 
-    result1 = builder.convert_rejected_content_to_ntp_as_location(rejected_msgs1)
-    assert result1["location_text"] == " potato", result1
-    assert result1["location_index"] == 0, result1
+    result1 = far_adapter.build_correction_from_rejected_messages(rejected_msgs1)
+    assert result1["find_and_replace"]["location_text"] == " potato", result1
+    assert result1["find_and_replace"]["location_index"] == 0, result1
 
-    correction1 = builder.apply_ntp_as_correcting(
+    correction1 = far_adapter.apply(
         rejected_msgs1, ntp_as_correcting_text_gt1
     )
     assert correction1["partial_messages"][-1]["content"] == "Apple, orange"
@@ -724,25 +729,25 @@ if __name__ == "__main__":
         "finish_reason" not in correction1["partial_messages"][-1]
     ), "Should continue_final_message (no finish_reason)"
 
-    # test correcting_sft extreme cases: chosen stop
+    # test correction_sft extreme cases: chosen stop
     test_json = (
         f"{panda_json_dir}/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
     )
     panda_tree = build_test_panda_tree(test_json)
-    correcting_sft2 = panda_tree.build_correcting_sft_data_v1(builder)[-1]
-    correcting_content2 = correcting_sft2[-1]["content"]
+    correction_sft2 = panda_tree.build_correction_sft_data_v1(far_adapter)[-1]
+    correcting_content2 = correction_sft2[-1]["content"]
     ntp_as_correcting_text_gt2 = "<|fim_pad|>|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|><|fim_pad|>"
     assert correcting_content2 == ntp_as_correcting_text_gt2, correcting_content2
-    correction2 = builder.apply_ntp_as_correcting(
-        correcting_sft2[:-2], ntp_as_correcting_text_gt2
+    correction2 = far_adapter.apply(
+        correction_sft2[:-2], ntp_as_correcting_text_gt2
     )
     assert correction2["partial_messages"][-1]["finish_reason"] == "stop"
 
-    # test correcting_sft extreme cases: chosen continue
+    # test correction_sft extreme cases: chosen continue
     test_json3 = f"{panda_json_dir}/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"
     panda_tree3 = build_test_panda_tree(test_json3)
-    correcting_sft3 = panda_tree3.build_correcting_sft_data_v1(builder)[-1]
-    correcting_content3 = correcting_sft3[-1]["content"]
+    correction_sft3 = panda_tree3.build_correction_sft_data_v1(far_adapter)[-1]
+    correcting_content3 = correction_sft3[-1]["content"]
     assert (
         correcting_content3
         == "<|fim_pad|><|fim_suffix|><|fim_pad|>1<|fim_pad|>|<|fim_pad|>"
@@ -753,4 +758,4 @@ if __name__ == "__main__":
         f"{panda_json_dir}/2025-09-12_single_char_repeat_tokenizer-Qwen2.5.panda.json"
     )
     panda_tree4 = build_test_panda_tree(test_json4)
-    correcting_sft4 = panda_tree4.build_correcting_sft_data_v1(builder)[-1]
+    correction_sft4 = panda_tree4.build_correction_sft_data_v1(far_adapter)[-1]

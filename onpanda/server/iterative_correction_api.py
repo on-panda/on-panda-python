@@ -40,10 +40,10 @@ def create_app(base_url, api_key, cli_config):
     def get_correct_model():
         if correct_model_holder["model"] is None:
             from onpanda.correcting_model.correcting_sft_model import (
-                build_test_correcting_sft_model,
+                build_test_correcting_model,
             )
 
-            correct_model_holder["model"] = build_test_correcting_sft_model()
+            correct_model_holder["model"] = build_test_correcting_model()
         return correct_model_holder["model"]
 
     def iterative_correction_process_func(body, headers, url_config):
@@ -65,7 +65,7 @@ def create_app(base_url, api_key, cli_config):
 
         req_messages = body.get("messages", [])
         req_model = body.get("model", "")
-        correction_n = int(correction_config.get("n", 5))
+        max_corrections = int(correction_config.get("max_corrections", 5))
 
         auth_header = headers.get("Authorization", "")
         bearer_token = (
@@ -92,10 +92,10 @@ def create_app(base_url, api_key, cli_config):
 
         chat_policy = ChatAPI(**policy_kwargs)
         correct_model = get_correct_model()
-        corrected = correct_model.correcting_sampling(
+        corrected = correct_model.iterative_correction(
             copy.deepcopy(req_messages),
             chat_policy,
-            n=correction_n,
+            max_corrections=max_corrections,
         )
 
         corrected_messages = corrected.get("corrected_messages", [])

@@ -12,7 +12,7 @@ with mximport.inpkg():
         apply_ignore_unicode_loss_mask_to_content,
     )
     from .correcting_model.correcting_sft_utils import (
-        NextTokenPredictionAsCorrectingBuilder,
+        FindAndReplaceCorrectionAdapter,
     )
     from .utils import HASH_TEMPLATE_PREFIX, HASH_TEMPLATE_REGEX
     from .dump_utils import dump_panda_json
@@ -444,9 +444,9 @@ class PandaTree:
         # g() / 0
         return token_level_v2s
 
-    def build_correcting_sft_data_v1(self, ntp_as_correcting_builder):
+    def build_correction_sft_data_v1(self, adapter):
         """
-        tree(correcting_sfts[-1])
+        tree(correction_sfts[-1])
         ├── 1: dict  3
         │   ├── role: user
         │   ├── content: How many 1 in 01011010101111011011?
@@ -463,36 +463,30 @@ class PandaTree:
         └── 4: dict  3
             ├── role: assistant
             ├── content: <|fim_pad|> **0<|fim_pad|>0<|fim_pad|> <|f...
-            └── correcting: dict  7
-                ├── location_text:  **0
-                ├── match_num: 1
-                ├── location_index: 0
-                ├── location_tokens: list  2
-                │   ├── 0: 3070
-                │   └── 1: 15
-                ├── replacement_text:
-                ├── is_good: False
+            └── correcting: dict  3
+                ├── messages_location: dict  4
+                ├── find_and_replace: dict  6
                 └── scope_slice: tuple 2
                     ├── 0: -1
                     └── 1: None
         """
         sfts = self.build_legacy_data_v1()["sfts"]
-        correcting_sfts = [
-            ntp_as_correcting_builder.build_correcting_sft_by_token_level_SFT(
+        correction_sfts = [
+            adapter.build_correction_sft_from_token_level(
                 sft, is_good=True
             )
             for sft in sfts
         ]
         token_level_v1s = self.build_token_level_supervision_data_v1(
-            tokenizer=ntp_as_correcting_builder.tokenizer
+            tokenizer=adapter.tokenizer
         )
-        correcting_sfts += [
-            ntp_as_correcting_builder.build_correcting_sft_by_token_level_SFT(
+        correction_sfts += [
+            adapter.build_correction_sft_from_token_level(
                 sft, is_good=False
             )
             for sft in token_level_v1s
         ]
-        return correcting_sfts
+        return correction_sfts
 
 
 def build_test_panda_tree(panda_json=None, tokenizer=None):
@@ -537,17 +531,20 @@ if __name__ == "__main__":
     token_level_v2s = panda_tree.build_token_level_supervision_data_v2(
         tokenizer=tokenizer
     )
-    sft_correcting_builder = NextTokenPredictionAsCorrectingBuilder(
+    adapter = FindAndReplaceCorrectionAdapter(
         tokenizer=tokenizer,
-        SPLIT_TOKEN="<|fim_pad|>",  # for qwen 2.5
-        STOP_TOKEN="<|fim_suffix|>",
-        IS_GOOD_TOKEN="<|fim_prefix|>",
+        special_tokens=dict(
+            split="<|fim_pad|>",  # for qwen 2.5
+            stop="<|fim_suffix|>",
+            is_good="<|fim_prefix|>",
+            reasoning="<|fim_middle|>",
+        ),
         max_location_tokens=20,
     )
 
-    correcting_sfts = panda_tree.build_correcting_sft_data_v1(sft_correcting_builder)
+    correction_sfts = panda_tree.build_correction_sft_data_v1(adapter)
 
-    tree(correcting_sfts[-1])
+    tree(correction_sfts[-1])
     # tree(token_level_v1s[-1])
-    # savejson(correcting_sfts[-1], "/home/yl/onPanda/asset/correcting_sft/correcting_sft_example1.sft.json")
-    # tree(correcting_sfts[3])
+    # savejson(correction_sfts[-1], "/home/yl/onPanda/asset/correcting_sft/correcting_sft_example1.sft.json")
+    # tree(correction_sfts[3])
