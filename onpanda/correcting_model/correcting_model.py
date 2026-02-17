@@ -54,6 +54,7 @@ class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin):
             correction=correction,
             partial_messages=partial_messages,
             is_good=is_good,
+            far_text=far_text,
         )
 
     def generate_and_apply_correction(self, messages, chat_policy):

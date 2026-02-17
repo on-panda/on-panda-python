@@ -11,6 +11,7 @@ from copy import deepcopy
 
 with mximport.inpkg():
     from ..token_level_supervision_utils import unicode_tokenizer
+    from .verifier import FindAndReplaceVerifier
 
 correcting_span_description_template = "<|is_correcting_prompt|><|correcting_span_description_begin|>span_idx = SPAN_IDX: SPAN_DESCRIPTION<|correcting_span_description_end|>"
 
@@ -298,10 +299,14 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
     ):
         self.tokenizer = tokenizer or unicode_tokenizer
         special_tokens = special_tokens or {}
-        self.SPLIT_TOKEN = special_tokens.get("split", "<|split|>")
-        self.STOP_TOKEN = special_tokens.get("stop", "<|stop|>")
-        self.IS_GOOD_TOKEN = special_tokens.get("is_good", "<|is_good|>")
-        self.REASONING_TOKEN = special_tokens.get("reasoning", "<|reasoning|>")
+        self.verifier = FindAndReplaceVerifier(
+            tokenizer=self.tokenizer,
+            special_tokens=special_tokens,
+        )
+        self.SPLIT_TOKEN = self.verifier.SPLIT_TOKEN
+        self.STOP_TOKEN = self.verifier.STOP_TOKEN
+        self.IS_GOOD_TOKEN = self.verifier.IS_GOOD_TOKEN
+        self.REASONING_TOKEN = self.verifier.REASONING_TOKEN
         self.max_location_tokens = max_location_tokens
         self.scope_slice = scope_slice
 
@@ -323,97 +328,6 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         )
         return messages + [sys_prompt_message]
 
-    def parse(self, far_text):
-        mid_text = far_text.removeprefix(self.SPLIT_TOKEN).removesuffix(
-            self.SPLIT_TOKEN
-        )
-        # TODO: remove workaround for old step1f correcting model
-        if mid_text == self.IS_GOOD_TOKEN or mid_text in ["", self.SPLIT_TOKEN]:
-            find_and_replace = dict(
-                is_good=True,
-                location_text="",
-                location_index=0,
-                replacement_token="",
-            )
-        else:
-            splits = mid_text.split(self.SPLIT_TOKEN)
-            assert len(splits) == 3, far_text
-            find_and_replace = dict(
-                is_good=False,
-                location_text=splits[0],
-                location_index=int(splits[1]),
-                replacement_token=splits[2],
-            )
-        return find_and_replace
-
-    def _iter_assistant_text_locations(self, messages):
-        for message_index, message in enumerate(messages):
-            if message["role"] != "assistant":
-                continue
-            reasoning = message.get("reasoning")
-            if isinstance(reasoning, str):
-                yield [message_index, "reasoning"], reasoning
-
-            content = message.get("content", "")
-            if isinstance(content, list):
-                assert all([d["type"] == "text" for d in content]), message
-                content = mxlm.get_text_content(content)
-            else:
-                content = mxlm.get_text_content(content)
-            yield [message_index, "content"], content
-
-            for tool_call_index, tool_call in enumerate(message.get("tool_calls", [])):
-                function = tool_call.get("function", {})
-                function_name = function.get("name")
-                if isinstance(function_name, str):
-                    yield [
-                        message_index,
-                        "tool_calls",
-                        tool_call_index,
-                        "function",
-                        "name",
-                    ], function_name
-                function_arguments = function.get("arguments")
-                if isinstance(function_arguments, str):
-                    yield [
-                        message_index,
-                        "tool_calls",
-                        tool_call_index,
-                        "function",
-                        "arguments",
-                    ], function_arguments
-
-    def locate(self, messages, find_and_replace):
-        if find_and_replace.get("is_good"):
-            return dict(not_found=True, is_good=True)
-
-        location_index = find_and_replace["location_index"]
-        location_text = find_and_replace.get("location_text", "")
-        assert location_text, find_and_replace
-        messages_locations = []
-        for path_keys, text in self._iter_assistant_text_locations(messages):
-            search_scope = text + self.STOP_TOKEN
-            start = 0
-            while True:
-                index = search_scope.find(location_text, start)
-                if index == -1:
-                    break
-                messages_location = dict(
-                    path_keys=path_keys,
-                    char_index=index,
-                    left5=search_scope[max(0, index - 5) : index],
-                    right5=search_scope[index : index + 5],
-                )
-                messages_locations.append(messages_location)
-                start = index + 1
-        match_num = len(messages_locations)
-        if match_num and -match_num <= location_index < match_num:
-            messages_location = deepcopy(messages_locations[location_index])
-            messages_location["match_num"] = match_num
-            messages_location["patch_length"] = len(location_text)
-            return messages_location
-        return dict(not_found=True, match_num=match_num)
-
     def _get_by_path(self, data, path_keys):
         target = data
         for key in path_keys:
@@ -433,18 +347,33 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         for message_index, message in enumerate(rejected_messages):
             if message["role"] == "assistant" and "token_level" in message:
                 token_level = message["token_level"]
+                replacement_token = None
+                if "chosen_text" in token_level:
+                    replacement_token = token_level["chosen_text"] or self.STOP_TOKEN
                 if "messages_location" in token_level:
-                    return deepcopy(token_level["messages_location"])
+                    messages_location = deepcopy(token_level["messages_location"])
+                    if replacement_token is not None:
+                        messages_location.update(
+                            replacement_token=replacement_token,
+                            is_good=False,
+                        )
+                    return messages_location
                 char_index = token_level["rejected_text_unicode_range"][0]
                 patch_length = token_level["rejected_text_unicode_range"][1]
                 content = mxlm.get_text_content(message["content"])
-                return dict(
+                messages_location = dict(
                     path_keys=[message_index, "content"],
                     char_index=char_index,
                     patch_length=patch_length,
                     left5=content[max(0, char_index - 5) : char_index],
                     right5=content[char_index : char_index + 5],
                 )
+                if replacement_token is not None:
+                    messages_location.update(
+                        replacement_token=replacement_token,
+                        is_good=False,
+                    )
+                return messages_location
         return dict(not_found=True)
 
     def set_location_index(
@@ -459,7 +388,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         find_and_replace = deepcopy(find_and_replace)
         location_text = find_and_replace["location_text"]
         matches = []
-        for path_keys, text in self._iter_assistant_text_locations(rejected_messages):
+        for path_keys, text in self.verifier._iter_assistant_text_locations(
+            rejected_messages
+        ):
             search_scope = text + self.STOP_TOKEN
             start = 0
             while True:
@@ -529,7 +460,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
 
         find_and_replace["location_tokens"] = suffix_tokens[:decodable_num]
         if "assert_location_consistency":
-            messages_location2 = self.locate(rejected_messages, find_and_replace)
+            messages_location2 = self.verifier.locate(
+                rejected_messages, find_and_replace
+            )
             assert (
                 messages_location["path_keys"] == messages_location2["path_keys"]
                 and messages_location["char_index"] == messages_location2["char_index"]
@@ -538,6 +471,12 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                 + str(messages_location)
                 + str(messages_location2)
                 + str(find_and_replace)
+            )
+        replacement_token = messages_location.get("replacement_token")
+        if replacement_token is not None:
+            find_and_replace.update(
+                replacement_token=replacement_token,
+                is_good=False,
             )
         return dict(
             messages_location=messages_location,
@@ -598,11 +537,6 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         )
         find_and_replace = correction["find_and_replace"]
         messages_location = correction["messages_location"]
-        replacement_token = token_level_info["chosen_text"] or self.STOP_TOKEN
-        find_and_replace.update(
-            replacement_token=replacement_token,
-            is_good=False,
-        )
         correcting_content = (
             f"{self.SPLIT_TOKEN}{find_and_replace['location_text']}{self.SPLIT_TOKEN}"
             f"{find_and_replace['location_index']}{self.SPLIT_TOKEN}"
@@ -624,7 +558,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
 
     def apply(self, messages, correction_or_far_text):
         if isinstance(correction_or_far_text, str):
-            find_and_replace = self.parse(correction_or_far_text)
+            find_and_replace = self.verifier.parse(correction_or_far_text)[
+                "find_and_replace"
+            ]
             correction = dict(find_and_replace=find_and_replace)
         else:
             correction = deepcopy(correction_or_far_text)
@@ -640,7 +576,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                 raise AssertionError(correction)
 
         if "messages_location" not in correction:
-            correction["messages_location"] = self.locate(messages, find_and_replace)
+            correction["messages_location"] = self.verifier.locate(
+                messages, find_and_replace
+            )
 
         if find_and_replace.get("is_good"):
             return dict(

@@ -15,4 +15,5 @@ from .correcting_model.far_correction_utils import (
     far_correction_system_prompt_cn,
     far_correction_system_prompt_default,
 )
+from .correcting_model.verifier import FindAndReplaceVerifier
 from .correcting_model.correcting_model import CorrectingModel
