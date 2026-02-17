@@ -12,7 +12,7 @@ class IsGoodScoreMixin:
         self,
         messages,
     ):
-        is_good_msgs = self.adapter.build_correction_sft_from_token_level(
+        is_good_msgs = self.adapter.build_correction_data_from_token_level(
             messages, is_good=True
         )
         # prefill prmpt_logprobs to get is_good probability
@@ -73,7 +73,7 @@ if __name__ == "__main__":
     import mximport
 
     with mximport.inpkg():
-        from .correcting_sft_model import build_test_correcting_model
+        from .correcting_model import build_test_correcting_model
 
     correct_model = build_test_correcting_model()
 

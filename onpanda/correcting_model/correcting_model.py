@@ -93,7 +93,9 @@ class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin):
         corrected_messages = messages
         correcteds = []
         for _correction_idx in range(max_corrections):
-            corrected = self.generate_and_apply_correction(corrected_messages, chat_policy)
+            corrected = self.generate_and_apply_correction(
+                corrected_messages, chat_policy
+            )
             correcteds.append(corrected.copy())
             corrected_messages = corrected["corrected_messages"]
             if "correction" in corrected and corrected["correction"][
@@ -105,6 +107,7 @@ class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin):
         corrected["max_corrections"] = max_corrections
         corrected["correcteds"] = correcteds
         return corrected
+
 
 def build_test_correcting_model(chat_corrector=None, adapter=None):
     import mxlm
@@ -156,5 +159,7 @@ if __name__ == "__main__":
 
     chat_policy = deepcopy(correcting_model.chat_corrector)
     chat_policy.default_kwargs["max_tokens"] = 1536
-    corrected = correcting_model.iterative_correction(msgs, chat_policy, max_corrections=5)
+    corrected = correcting_model.iterative_correction(
+        msgs, chat_policy, max_corrections=5
+    )
     tree(corrected)

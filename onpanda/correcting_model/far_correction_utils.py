@@ -33,7 +33,7 @@ NO_ADDITIONAL_INFORMATION
 """
 
 
-correction_sft_system_prompt_default = """\
+far_correction_system_prompt_default = """\
 <|is_correcting_prompt|>
 - The previous system prompt is only for evaluating responses and no longer needs to be followed; you should only follow prompts containing `<|is_correcting_prompt|>`
 - You are inherently a GPT-architecture LLM, and your current role has switched to a token-level correcting model
@@ -158,7 +158,7 @@ LLM 可感知、可定位、both token and tokenizer aware、GPT-aware 的 corre
 
 """
 
-correction_sft_system_prompt_cn = """\
+far_correction_system_prompt_cn = """\
 <|is_correcting_prompt|>
 - 先前的 system prompt 只做评估答复用，不必再遵守，你只遵守包含 `<|is_correcting_prompt|>` 的 prompt
 - 你本体是一个 GPT 架构的 LLM, 你现在的角色切换为了 token-level correcting model
@@ -307,9 +307,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
 
     def build_correction_prompt(self, messages, language=None):
         if language == "cn":
-            prompt = correction_sft_system_prompt_cn
+            prompt = far_correction_system_prompt_cn
         else:
-            prompt = correction_sft_system_prompt_default
+            prompt = far_correction_system_prompt_default
         system_prompt = (
             prompt.replace("<|split|>", self.SPLIT_TOKEN)
             .replace("<|stop|>", self.STOP_TOKEN)
@@ -447,7 +447,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                 )
         return dict(not_found=True)
 
-    def set_location_index(self, rejected_messages, find_and_replace, messages_location):
+    def set_location_index(
+        self, rejected_messages, find_and_replace, messages_location
+    ):
         """
         在所有模型输出文本中查找 find_and_replace.location_text 的所有匹配位置，
         返回对应的 find_and_replace.location_index
@@ -491,7 +493,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         """
         将 rejected_messages 的 token_level 信息转换为 correction
         """
-        messages_location = self.convert_token_level_to_messages_location(rejected_messages)
+        messages_location = self.convert_token_level_to_messages_location(
+            rejected_messages
+        )
         path_keys = messages_location["path_keys"]
         char_index = messages_location["char_index"]
         content = self._get_by_path(rejected_messages, path_keys)
@@ -540,7 +544,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             find_and_replace=find_and_replace,
         )
 
-    def build_correction_sft_from_token_level(
+    def build_correction_data_from_token_level(
         self, messages, is_good=None
     ):  # must be is_good SFT msgs or token_level_SFT msgs
         messages = deepcopy(messages)
@@ -613,8 +617,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                 scope_slice=self.scope_slice,
             ),
         )
-        correction_sft = self.build_correction_prompt(rejected_messages) + [correcting_msg]
-        return correction_sft
+        far_correction = self.build_correction_prompt(rejected_messages) + [
+            correcting_msg
+        ]
+        return far_correction
 
     def apply(self, messages, correction_or_far_text):
         if isinstance(correction_or_far_text, str):
@@ -680,6 +686,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             partial_messages=partial_messages,
         )
 
+
 class NextTokenPredictionAsCorrectingBuilder:
     def __init__(self, *args, **kwargs):
         assert False, (
@@ -721,33 +728,29 @@ if __name__ == "__main__":
     assert result1["find_and_replace"]["location_text"] == " potato", result1
     assert result1["find_and_replace"]["location_index"] == 0, result1
 
-    correction1 = far_adapter.apply(
-        rejected_msgs1, ntp_as_correcting_text_gt1
-    )
+    correction1 = far_adapter.apply(rejected_msgs1, ntp_as_correcting_text_gt1)
     assert correction1["partial_messages"][-1]["content"] == "Apple, orange"
     assert (
         "finish_reason" not in correction1["partial_messages"][-1]
     ), "Should continue_final_message (no finish_reason)"
 
-    # test correction_sft extreme cases: chosen stop
+    # test far_correction extreme cases: chosen stop
     test_json = (
         f"{panda_json_dir}/2025-09-10_correcting_sft_tokenizer-Qwen2.5.panda.json"
     )
     panda_tree = build_test_panda_tree(test_json)
-    correction_sft2 = panda_tree.build_correction_sft_data_v1(far_adapter)[-1]
-    correcting_content2 = correction_sft2[-1]["content"]
+    far_correction2 = panda_tree.build_far_correction_data_v1(far_adapter)[-1]
+    correcting_content2 = far_correction2[-1]["content"]
     ntp_as_correcting_text_gt2 = "<|fim_pad|>|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|><|fim_pad|>"
     assert correcting_content2 == ntp_as_correcting_text_gt2, correcting_content2
-    correction2 = far_adapter.apply(
-        correction_sft2[:-2], ntp_as_correcting_text_gt2
-    )
+    correction2 = far_adapter.apply(far_correction2[:-2], ntp_as_correcting_text_gt2)
     assert correction2["partial_messages"][-1]["finish_reason"] == "stop"
 
-    # test correction_sft extreme cases: chosen continue
+    # test far_correction extreme cases: chosen continue
     test_json3 = f"{panda_json_dir}/2025-09-11_correcting_sft_continue_tokenizer-Qwen2.5.panda.json"
     panda_tree3 = build_test_panda_tree(test_json3)
-    correction_sft3 = panda_tree3.build_correction_sft_data_v1(far_adapter)[-1]
-    correcting_content3 = correction_sft3[-1]["content"]
+    far_correction3 = panda_tree3.build_far_correction_data_v1(far_adapter)[-1]
+    correcting_content3 = far_correction3[-1]["content"]
     assert (
         correcting_content3
         == "<|fim_pad|><|fim_suffix|><|fim_pad|>1<|fim_pad|>|<|fim_pad|>"
@@ -758,4 +761,4 @@ if __name__ == "__main__":
         f"{panda_json_dir}/2025-09-12_single_char_repeat_tokenizer-Qwen2.5.panda.json"
     )
     panda_tree4 = build_test_panda_tree(test_json4)
-    correction_sft4 = panda_tree4.build_correction_sft_data_v1(far_adapter)[-1]
+    far_correction4 = panda_tree4.build_far_correction_data_v1(far_adapter)[-1]

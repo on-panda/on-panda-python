@@ -8,11 +8,11 @@ from .token_level_supervision_utils import (
     compute_token_level_supervision,
     unicode_tokenizer,
 )
-from .correcting_model.correcting_sft_utils import (
+from .correcting_model.far_correction_utils import (
     CorrectionAdapter,
     FindAndReplaceCorrectionAdapter,
     NextTokenPredictionAsCorrectingBuilder,
-    correction_sft_system_prompt_cn,
-    correction_sft_system_prompt_default,
+    far_correction_system_prompt_cn,
+    far_correction_system_prompt_default,
 )
-from .correcting_model.correcting_sft_model import CorrectingModel
+from .correcting_model.correcting_model import CorrectingModel

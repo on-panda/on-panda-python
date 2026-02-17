@@ -39,7 +39,7 @@ def create_app(base_url, api_key, cli_config):
 
     def get_correct_model():
         if correct_model_holder["model"] is None:
-            from onpanda.correcting_model.correcting_sft_model import (
+            from onpanda.correcting_model.correcting_model import (
                 build_test_correcting_model,
             )
 
@@ -152,10 +152,14 @@ def main():
         default="",
         help='Default URL config in JSON or url_config-path format, e.g. \'{"model":"CorrectingModle"}\' or model@CorrectingModle',
     )
-    parser.add_argument("--model", default="", help="Default model, merged into cli_config")
+    parser.add_argument(
+        "--model", default="", help="Default model, merged into cli_config"
+    )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9300)
-    parser.add_argument("--debug", action="store_true", help="Enable Flask debug and auto-reload")
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable Flask debug and auto-reload"
+    )
     args = parser.parse_args()
 
     base_url = args.base_url.strip()
@@ -172,7 +176,9 @@ def main():
     print("[iterative_correction_api] config:")
     print("  - CLI config: from --default_url_config and --model")
     print("  - URL config: url_config in /iterative_correction/{url_config}/v1/*")
-    print("  - Merge in process_func: correction_config = deep_merge(cli_config, url_config)")
+    print(
+        "  - Merge in process_func: correction_config = deep_merge(cli_config, url_config)"
+    )
     print("  - URL config overrides CLI config")
     print("  - Aggregation moved to: python -m mxlm.aggregate_apis")
     print("[iterative_correction_api] examples:")
@@ -186,7 +192,13 @@ def main():
     )
 
     app = create_app(base_url=base_url, api_key=api_key, cli_config=cli_config)
-    app.run(host=args.host, port=args.port, threaded=True, debug=args.debug, use_reloader=args.debug)
+    app.run(
+        host=args.host,
+        port=args.port,
+        threaded=True,
+        debug=args.debug,
+        use_reloader=args.debug,
+    )
 
 
 if __name__ == "__main__":

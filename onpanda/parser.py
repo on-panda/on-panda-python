@@ -11,7 +11,7 @@ with mximport.inpkg():
         unicode_tokenizer,
         apply_ignore_unicode_loss_mask_to_content,
     )
-    from .correcting_model.correcting_sft_utils import (
+    from .correcting_model.far_correction_utils import (
         FindAndReplaceCorrectionAdapter,
     )
     from .utils import HASH_TEMPLATE_PREFIX, HASH_TEMPLATE_REGEX
@@ -444,9 +444,9 @@ class PandaTree:
         # g() / 0
         return token_level_v2s
 
-    def build_correction_sft_data_v1(self, adapter):
+    def build_far_correction_data_v1(self, far_adapter):
         """
-        tree(correction_sfts[-1])
+        tree(far_corrections[-1])
         ├── 1: dict  3
         │   ├── role: user
         │   ├── content: How many 1 in 01011010101111011011?
@@ -471,22 +471,18 @@ class PandaTree:
                     └── 1: None
         """
         sfts = self.build_legacy_data_v1()["sfts"]
-        correction_sfts = [
-            adapter.build_correction_sft_from_token_level(
-                sft, is_good=True
-            )
+        far_corrections = [
+            far_adapter.build_correction_data_from_token_level(sft, is_good=True)
             for sft in sfts
         ]
         token_level_v1s = self.build_token_level_supervision_data_v1(
-            tokenizer=adapter.tokenizer
+            tokenizer=far_adapter.tokenizer
         )
-        correction_sfts += [
-            adapter.build_correction_sft_from_token_level(
-                sft, is_good=False
-            )
+        far_corrections += [
+            far_adapter.build_correction_data_from_token_level(sft, is_good=False)
             for sft in token_level_v1s
         ]
-        return correction_sfts
+        return far_corrections
 
 
 def build_test_panda_tree(panda_json=None, tokenizer=None):
@@ -531,7 +527,7 @@ if __name__ == "__main__":
     token_level_v2s = panda_tree.build_token_level_supervision_data_v2(
         tokenizer=tokenizer
     )
-    adapter = FindAndReplaceCorrectionAdapter(
+    far_adapter = FindAndReplaceCorrectionAdapter(
         tokenizer=tokenizer,
         special_tokens=dict(
             split="<|fim_pad|>",  # for qwen 2.5
@@ -542,9 +538,9 @@ if __name__ == "__main__":
         max_location_tokens=20,
     )
 
-    correction_sfts = panda_tree.build_correction_sft_data_v1(adapter)
+    far_corrections = panda_tree.build_far_correction_data_v1(far_adapter)
 
-    tree(correction_sfts[-1])
+    tree(far_corrections[-1])
     # tree(token_level_v1s[-1])
-    # savejson(correction_sfts[-1], "/home/yl/onPanda/asset/correcting_sft/correcting_sft_example1.sft.json")
-    # tree(correction_sfts[3])
+    # savejson(far_corrections[-1], "/home/yl/onPanda/asset/correcting_sft/correcting_sft_example1.sft.json")
+    # tree(far_corrections[3])
