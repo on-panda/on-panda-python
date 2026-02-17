@@ -1,4 +1,4 @@
-__version__ = "0.0.10"
+__version__ = "0.1.0"
 __description__ = "onPanda Python package"
 __license__ = "MIT"
 __author__ = "DIYer22"
