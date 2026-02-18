@@ -244,19 +244,21 @@ class FindAndReplaceVerifier:
         find_feedback = pred_location.get("find_feedback", "")
 
         if pred_find_and_replace.get("is_good"):
-            valid_reward = 1.0 if parse_reward > 0.0 else 0.0
-            valid_feedback = "valid success: is_good format"
+            format_reward = 1.0 if parse_reward > 0.0 else 0.0
+            format_feedback = "format success: is_good format"
         elif parse_reward == 0.0:
-            valid_reward = 0.0
-            valid_feedback = f"valid failed: {parse_feedback}"
+            format_reward = 0.0
+            format_feedback = f"format failed: {parse_feedback}"
         else:
-            find_valid_reward = 0.5 if not pred_location.get("not_found") else 0.0
-            valid_reward = parse_reward + find_valid_reward
-            if find_valid_reward:
-                valid_feedback = f"valid success: find matched (match_num={match_num})"
+            find_format_reward = 0.5 if not pred_location.get("not_found") else 0.0
+            format_reward = parse_reward + find_format_reward
+            if find_format_reward:
+                format_feedback = (
+                    f"format success: find matched (match_num={match_num})"
+                )
             else:
-                valid_feedback = (
-                    "valid half: find not matched "
+                format_feedback = (
+                    "format half: find not matched "
                     f"(reason={find_feedback}, match_num={match_num})"
                 )
 
@@ -294,14 +296,15 @@ class FindAndReplaceVerifier:
                     location_feedback = (
                         "location mismatch: find not matched "
                         f"(reason={find_feedback}, match_num={match_num}, "
-                        f"location_text=`{pred_find_and_replace.get('location_text', '')}`), "
-                        f"gt={gt_messages_location.get('path_keys')}@{gt_messages_location.get('char_index')}"
+                        f"location_text=`{pred_find_and_replace.get('location_text', '')}`, "
+                        f"pred_messages_location={pred_location}, "
+                        f"gt_messages_location={gt_messages_location})"
                     )
                 else:
                     location_feedback = (
                         "location mismatch: "
-                        f"pred={pred_location.get('path_keys')}@{pred_location.get('char_index')}, "
-                        f"gt={gt_messages_location.get('path_keys')}@{gt_messages_location.get('char_index')}, "
+                        f"pred_messages_location={pred_location}, "
+                        f"gt_messages_location={gt_messages_location}, "
                         f"match_num={match_num}"
                     )
 
@@ -321,24 +324,25 @@ class FindAndReplaceVerifier:
                         f"pred=`{pred_replacement_token}` gt=`{gt_replacement_token}`"
                     )
 
-        reward = self._mean([valid_reward, location_reward, replacement_reward])
+        final_reward = self._mean([format_reward, location_reward, replacement_reward])
         feedback = "\n".join(
             [
-                f"reward={reward:.3f}",
-                f"valid_reward={valid_reward:.3f}",
-                f"location_reward={location_reward:.3f}",
-                f"replacement_reward={replacement_reward:.3f}",
-                f"valid_feedback: {valid_feedback}",
+                f"final_reward = {round(final_reward, 3)}",
+                f"format_reward = {round(format_reward, 3)}",
+                f"location_reward = {round(location_reward, 3)}",
+                f"replacement_reward = {round(replacement_reward, 3)}",
+                f"format_feedback: {format_feedback}",
                 f"location_feedback: {location_feedback}",
                 f"replacement_feedback: {replacement_feedback}",
+                "Note: Each reward ∈ [0, 1], and final_reward is the average of the other rewards.",
             ]
         )
         return dict(
-            reward=reward,
-            valid_reward=valid_reward,
+            final_reward=final_reward,
+            format_reward=format_reward,
             location_reward=location_reward,
             replacement_reward=replacement_reward,
-            valid_feedback=valid_feedback,
+            format_feedback=format_feedback,
             feedback=feedback,
             pred_find_and_replace=pred_find_and_replace,
             pred_messages_location=pred_location,
@@ -374,7 +378,7 @@ if __name__ == "__main__":
             "case1_all_correct",
             far_text_gt,
             dict(
-                valid_reward=1.0,
+                format_reward=1.0,
                 location_reward=1.0,
                 replacement_reward=1.0,
             ),
@@ -383,7 +387,7 @@ if __name__ == "__main__":
             "case2_wrong_replacement",
             f"{split}{location_text}{split}{location_index}{split} banana{split}",
             dict(
-                valid_reward=1.0,
+                format_reward=1.0,
                 location_reward=1.0,
                 replacement_reward=0.0,
             ),
@@ -392,7 +396,7 @@ if __name__ == "__main__":
             "case3_wrong_location_index",
             f"{split}{location_text}{split}{location_index + 1}{split}{replacement_token}{split}",
             dict(
-                valid_reward=1.0,
+                format_reward=1.0,
                 location_reward=0.0,
                 replacement_reward=0.0,
             ),
@@ -401,7 +405,7 @@ if __name__ == "__main__":
             "case4_is_good_prediction",
             f"{split}{is_good}{split}",
             dict(
-                valid_reward=1.0,
+                format_reward=1.0,
                 location_reward=0.0,
                 replacement_reward=0.0,
             ),
@@ -410,7 +414,7 @@ if __name__ == "__main__":
             "case5_bad_format_missing_end_split",
             f"{split}{location_text}{split}{location_index}{split}{replacement_token}",
             dict(
-                valid_reward=0.0,
+                format_reward=0.0,
                 location_reward=0.0,
                 replacement_reward=0.0,
             ),
@@ -419,7 +423,7 @@ if __name__ == "__main__":
             "case6_parse_success_but_locate_not_found",
             f"{split} no_such_text{split}0{split}{replacement_token}{split}",
             dict(
-                valid_reward=0.5,
+                format_reward=0.5,
                 location_reward=0.0,
                 replacement_reward=0.0,
             ),
@@ -431,3 +435,4 @@ if __name__ == "__main__":
         assert all(
             [reward_res[k] == expected[k] for k in expected]
         ), f"{case_name}, {far_text}, {expected}\n\n{reward_res}"
+        print(f"\n\n{case_name} passed: \n{far_text}\n{reward_res['feedback']}")
