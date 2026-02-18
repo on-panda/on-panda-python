@@ -575,7 +575,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                 assert (
                     "messages_location" not in correction
                 ), "apply(messages, messages_location) is not supported. Please provide find_and_replace with replacement_token."
-                raise AssertionError(correction)
+                raise AssertionError(
+                    f"correction_or_far_text is not a valid correction opreation: \n{correction_or_far_text}"
+                )
 
         if "messages_location" not in correction:
             correction["messages_location"] = self.verifier.locate(

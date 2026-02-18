@@ -50,13 +50,16 @@ class FindAndReplaceVerifier:
             location_text="",
             location_index=0,
             replacement_token="",
+            far_text=far_text,
         )
         has_prefix = far_text.startswith(self.special_tokens["split"])
         has_suffix = far_text.endswith(self.special_tokens["split"])
         if not (has_prefix and has_suffix):
             return dict(
-                parse_reward=0.0,
-                parse_feedback="parse failed: missing split boundary",
+                reward_with_feedback=dict(
+                    parse_reward=0.0,
+                    parse_feedback="parse failed: missing split boundary",
+                ),
                 find_and_replace=default_find_and_replace,
             )
 
@@ -69,23 +72,27 @@ class FindAndReplaceVerifier:
             self.special_tokens["split"],
         ]:
             return dict(
-                parse_reward=0.5,
-                parse_feedback="parse success: is_good format",
+                reward_with_feedback=dict(
+                    parse_reward=0.5, parse_feedback="parse success: is_good format"
+                ),
                 find_and_replace=dict(
                     is_good=True,
                     location_text="",
                     location_index=0,
                     replacement_token="",
+                    far_text=far_text,
                 ),
             )
 
         splits = mid_text.split(self.special_tokens["split"])
         if len(splits) != 3:
             return dict(
-                parse_reward=0.0,
-                parse_feedback=(
-                    "parse failed: expect 3 fields split by "
-                    f"`{self.special_tokens['split']}`"
+                reward_with_feedback=dict(
+                    parse_reward=0.0,
+                    parse_feedback=(
+                        "parse failed: expect 3 fields split by "
+                        f"`{self.special_tokens['split']}`"
+                    ),
                 ),
                 find_and_replace=default_find_and_replace,
             )
@@ -97,19 +104,22 @@ class FindAndReplaceVerifier:
             location_index = int(location_index_text)
         except ValueError:
             return dict(
-                parse_reward=0.0,
-                parse_feedback=f"parse failed: location_index must be int, got `{location_index_text}`",
+                reward_with_feedback=dict(
+                    parse_reward=0.0,
+                    parse_feedback=f"parse failed: location_index must be int, got `{location_index_text}`",
+                ),
                 find_and_replace=default_find_and_replace,
+                far_text=far_text,
             )
 
         return dict(
-            parse_reward=0.5,
-            parse_feedback="parse success",
+            reward_with_feedback=dict(parse_reward=0.5, parse_feedback="parse success"),
             find_and_replace=dict(
                 is_good=False,
                 location_text=location_text,
                 location_index=location_index,
                 replacement_token=replacement_token,
+                far_text=far_text,
             ),
         )
 
@@ -229,10 +239,9 @@ class FindAndReplaceVerifier:
         find_and_replace = parse_res["find_and_replace"]
         messages_location = self.locate(messages, find_and_replace)
         return dict(
-            parse_reward=parse_res["parse_reward"],
-            parse_feedback=parse_res["parse_feedback"],
             find_and_replace=find_and_replace,
             messages_location=messages_location,
+            reward_with_feedback=parse_res["reward_with_feedback"],
         )
 
     def compute_reward(self, messages, far_text, gt_correction):
@@ -244,8 +253,9 @@ class FindAndReplaceVerifier:
                 "pass FAR output via `far_text`"
             )
         correction = self.parse_and_locate(messages, far_text)
-        parse_reward = correction["parse_reward"]
-        parse_feedback = correction["parse_feedback"]
+        reward_with_feedback = correction.pop("reward_with_feedback")
+        parse_reward = reward_with_feedback["parse_reward"]
+        parse_feedback = reward_with_feedback["parse_feedback"]
         pred_find_and_replace = correction["find_and_replace"]
         gt_find_and_replace = gt_correction["find_and_replace"]
         gt_messages_location = gt_correction["messages_location"]
@@ -354,8 +364,6 @@ class FindAndReplaceVerifier:
             replacement_reward=replacement_reward,
             format_feedback=format_feedback,
             feedback=feedback,
-            pred_find_and_replace=pred_find_and_replace,
-            pred_messages_location=pred_location,
         )
         reward_result = dict(reward_with_feedback=reward_with_feedback, **correction)
         return reward_result

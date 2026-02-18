@@ -14,7 +14,7 @@ with mximport.inpkg():
     from .correcting_model.far_correction_utils import (
         FindAndReplaceCorrectionAdapter,
     )
-    from .utils import HASH_TEMPLATE_PREFIX, HASH_TEMPLATE_REGEX
+    from .utils import HASH_TEMPLATE_PREFIX, HASH_TEMPLATE_REGEX, RESPONSE_ROLES
     from .dump_utils import dump_panda_json
 
 
@@ -40,9 +40,6 @@ def sequence_prefix_length(seq1, seq2):
         if seq1[i] != seq2[i]:
             return i
     return i + 1
-
-
-RESPONSE_ROLES = ["assistant"]
 
 
 class PandaTreeParser:

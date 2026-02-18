@@ -9,6 +9,8 @@ import mximport
 
 with mximport.inpkg():
     from .is_good_score_mixin import IsGoodScoreMixin
+    from .panda_score_mixin import PandaScoreMixin
+    from ..test_utils import build_test_tokenizer
 
 
 class CorrectingModelBase:
@@ -24,12 +26,8 @@ class CorrectingModelBase:
     def __init__(self):
         pass
 
-    def correct(self, text: str) -> str:
-        # Implement token-level correction logic here
-        return text
 
-
-class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin):
+class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin, PandaScoreMixin):
     def __init__(
         self,
         chat_corrector,
@@ -110,7 +108,9 @@ class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin):
         return corrected
 
 
-def build_test_correcting_model(chat_corrector=None, adapter=None):
+def build_test_correcting_model(
+    chat_corrector=None, adapter=None, tokenizer="Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4"
+):
     import mxlm
     import onpanda
     import transformers
@@ -124,12 +124,9 @@ def build_test_correcting_model(chat_corrector=None, adapter=None):
             logprobs=True,
             return_dict=True,
         )
+    if isinstance(tokenizer, str):
+        tokenizer = build_test_tokenizer(tokenizer)
     if adapter is None:
-        tokenizer = transformers.AutoTokenizer.from_pretrained(
-            "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
-            use_fast=True,
-            # local_files_only=True,
-        )
         adapter = onpanda.FindAndReplaceCorrectionAdapter(
             tokenizer=tokenizer,
             special_tokens=dict(

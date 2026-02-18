@@ -8,6 +8,7 @@ Created on Sat Dec 21 16:23:49 2024
 HASH_TEMPLATE_PREFIX = "<|hash|>"
 HASH_TEMPLATE_REGEX = r"^<\|hash\|>([A-Za-z0-9+\/=]+)$"
 HASH_MAP_LENGTH = 16000
+RESPONSE_ROLES = ["assistant"]
 
 true = True
 false = False
@@ -28,6 +29,20 @@ def messages_to_panda_tree(msgs, uuid=None):
     if uuid is not None:
         panda_tree["uuid"] = uuid
     return panda_tree
+
+
+def remove_msgs_after_last_response_role(messages, response_roles=None):
+    """
+    Keep messages up to and including the last message whose role is in response_roles.
+    """
+    if response_roles is None:
+        response_roles = RESPONSE_ROLES
+    last_response_idx = -1
+    for msg_idx, msg in enumerate(messages):
+        if msg["role"] in response_roles:
+            last_response_idx = msg_idx
+    assert last_response_idx >= 0, messages
+    return messages[: last_response_idx + 1]
 
 
 if __name__ == "__main__":
