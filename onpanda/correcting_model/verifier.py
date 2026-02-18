@@ -6,6 +6,7 @@ Created on Wed Feb 18 03:15:00 2026
 @author: DIYer22
 """
 from copy import deepcopy
+from onpanda.utils import get_content_by_path_keys
 
 
 class FindAndReplaceVerifier:
@@ -16,8 +17,7 @@ class FindAndReplaceVerifier:
         reasoning="<|reasoning|>",
     )
 
-    def __init__(self, special_tokens=None, tokenizer=None):
-        self.tokenizer = tokenizer
+    def __init__(self, special_tokens=None):
         self.special_tokens = {**self.default_special_tokens, **(special_tokens or {})}
 
     @staticmethod
@@ -43,6 +43,25 @@ class FindAndReplaceVerifier:
             and location1.get("path_keys") == location2.get("path_keys")
             and location1.get("char_index") == location2.get("char_index")
         )
+
+    def _build_good_prefix_and_fork_location(self, rejected_content_str, correction):
+        path_keys = correction["messages_location"]["path_keys"]
+        char_index = correction["messages_location"]["char_index"]
+        replacement_token = correction["find_and_replace"]["replacement_token"]
+        good_prefix = rejected_content_str[:char_index]
+        if replacement_token != self.special_tokens["stop"]:
+            good_prefix += replacement_token
+        fork_char_index = 0
+        max_common_len = min(len(rejected_content_str), len(good_prefix))
+        while (
+            fork_char_index < max_common_len
+            and rejected_content_str[fork_char_index] == good_prefix[fork_char_index]
+        ):
+            fork_char_index += 1
+        fork_messages_location = dict(
+            path_keys=list(path_keys), char_index=fork_char_index
+        )
+        return good_prefix, fork_messages_location
 
     def parse(self, far_text):
         default_find_and_replace = dict(
@@ -289,14 +308,14 @@ class FindAndReplaceVerifier:
             location_reward = 1.0 if pred_find_and_replace.get("is_good") else 0.0
             replacement_reward = location_reward
             location_feedback = (
-                "location skipped: ground truth is_good"
+                "location skipped: gt is_good"
                 if location_reward
-                else "ground truth is_good but prediction is not is_good"
+                else "location mismatch: gt is_good"
             )
             replacement_feedback = (
-                "replacement skipped: ground truth is_good"
+                "replacement skipped: gt is_good"
                 if replacement_reward
-                else "ground truth is_good but prediction is not is_good"
+                else "replacement mismatch: gt is_good"
             )
         else:
             if "left5" in gt_messages_location:
@@ -304,45 +323,65 @@ class FindAndReplaceVerifier:
                     messages,
                     gt_messages_location,
                 )
-            is_same_location = self._has_same_location(
-                pred_location,
-                gt_messages_location,
+            pred_is_good = bool(
+                pred_find_and_replace.get("is_good") or pred_location.get("is_good")
             )
-            location_reward = 1.0 if is_same_location else 0.0
-            if is_same_location:
-                location_feedback = f"location matched (match_num={match_num})"
-            else:
-                if pred_location.get("not_found"):
-                    location_feedback = (
-                        "location mismatch: find not matched "
-                        f"(reason={find_feedback}, match_num={match_num}, "
-                        f"location_text=`{pred_find_and_replace.get('location_text', '')}`, "
-                        f"pred_messages_location={pred_location}, "
-                        f"gt_messages_location={gt_messages_location})"
+            if pred_is_good:
+                location_reward = 0.0
+                replacement_reward = 0.0
+                location_feedback = "location mismatch: pred is_good"
+                replacement_feedback = "replacement mismatch: pred is_good"
+            else:  # using tokenizer_agnostic_loose_reward for location_reward and replacement_reward
+                gt_path_keys = gt_messages_location["path_keys"]
+                rejected_content_str = self._content_to_text(
+                    get_content_by_path_keys(messages, gt_path_keys)
+                )
+                gt_good_prefix, gt_fork_messages_location = (
+                    self._build_good_prefix_and_fork_location(
+                        rejected_content_str=rejected_content_str,
+                        correction=gt_correction,
                     )
+                )
+
+                pred_not_found = pred_location.get("not_found")
+                pred_path_keys = pred_location.get("path_keys")
+                if pred_not_found or pred_path_keys != gt_path_keys:
+                    location_reward = 0.0
+                    replacement_reward = 0.0
+                    if pred_not_found:
+                        location_feedback = "location mismatch: find not matched"
+                        replacement_feedback = "replacement skipped: find not matched"
+                    else:
+                        location_feedback = "location mismatch: path_keys mismatch"
+                        replacement_feedback = "replacement skipped: path_keys mismatch"
                 else:
-                    location_feedback = (
-                        "location mismatch: "
-                        f"pred_messages_location={pred_location}, "
-                        f"gt_messages_location={gt_messages_location}, "
-                        f"match_num={match_num}"
+                    pred_good_prefix, pred_fork_messages_location = (
+                        self._build_good_prefix_and_fork_location(
+                            rejected_content_str=rejected_content_str,
+                            correction=correction,
+                        )
+                    )
+                    # tokenizer_agnostic_reward
+                    location_reward = float(
+                        self._has_same_location(
+                            pred_fork_messages_location,
+                            gt_fork_messages_location,
+                        )
+                    )
+                    # loose_reward that allow longer replacement_tokens
+                    replacement_reward = float(
+                        pred_good_prefix.startswith(gt_good_prefix)
                     )
 
-            gt_replacement_token = gt_find_and_replace.get("replacement_token", "")
-            pred_replacement_token = pred_find_and_replace.get("replacement_token", "")
-            if not is_same_location:
-                replacement_reward = 0.0
-                replacement_feedback = "replacement skipped: location mismatch"
-            else:
-                is_same_replacement = pred_replacement_token == gt_replacement_token
-                replacement_reward = 1.0 if is_same_replacement else 0.0
-                if is_same_replacement:
-                    replacement_feedback = "replacement matched"
-                else:
-                    replacement_feedback = (
-                        "replacement mismatch: "
-                        f"pred=`{pred_replacement_token}` gt=`{gt_replacement_token}`"
-                    )
+                    if location_reward:
+                        location_feedback = "location matched: fork"
+                    else:
+                        location_feedback = "location mismatch: fork"
+
+                    if replacement_reward:
+                        replacement_feedback = "replacement matched: prefix"
+                    else:
+                        replacement_feedback = "replacement mismatch: prefix"
 
         final_reward = self._mean([format_reward, location_reward, replacement_reward])
         feedback = "\n".join(
@@ -446,6 +485,15 @@ if __name__ == "__main__":
                 format_reward=0.5,
                 location_reward=0.0,
                 replacement_reward=0.0,
+            ),
+        ),
+        (
+            "case7_tokenizer_agnostic_loose_reward",
+            f"{split}potato, banana{split}{location_index}{split}orange, pineapple{split}",
+            dict(
+                format_reward=1.0,
+                location_reward=1.0,
+                replacement_reward=1.0,
             ),
         ),
     ]

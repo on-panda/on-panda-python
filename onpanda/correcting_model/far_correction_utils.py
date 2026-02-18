@@ -12,6 +12,7 @@ from copy import deepcopy
 with mximport.inpkg():
     from ..token_level_supervision_utils import unicode_tokenizer
     from .verifier import FindAndReplaceVerifier
+    from ..utils import get_content_by_path_keys
 
 correcting_span_description_template = "<|is_correcting_prompt|><|correcting_span_description_begin|>span_idx = SPAN_IDX: SPAN_DESCRIPTION<|correcting_span_description_end|>"
 
@@ -299,7 +300,6 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
     ):
         self.verifier = FindAndReplaceVerifier(
             special_tokens=special_tokens,
-            tokenizer=tokenizer,
         )
         self.special_tokens = self.verifier.special_tokens
         self.tokenizer = tokenizer or unicode_tokenizer
@@ -323,12 +323,6 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             content=system_prompt,
         )
         return messages + [sys_prompt_message]
-
-    def _get_by_path(self, data, path_keys):
-        target = data
-        for key in path_keys:
-            target = target[key]
-        return target
 
     def _set_by_path(self, data, path_keys, value):
         target = data
@@ -427,7 +421,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         )
         path_keys = messages_location["path_keys"]
         char_index = messages_location["char_index"]
-        content = self._get_by_path(rejected_messages, path_keys)
+        content = get_content_by_path_keys(rejected_messages, path_keys)
         if isinstance(content, list):
             assert all([d["type"] == "text" for d in content]), rejected_messages
             content = mxlm.get_text_content(content)
@@ -605,7 +599,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         replacement_token = find_and_replace["replacement_token"]
         partial_messages = deepcopy(messages[: path_keys[0] + 1])
 
-        field_text = self._get_by_path(partial_messages, path_keys)
+        field_text = get_content_by_path_keys(partial_messages, path_keys)
         if isinstance(field_text, list):
             assert all([d["type"] == "text" for d in field_text]), partial_messages
             field_text = mxlm.get_text_content(field_text)

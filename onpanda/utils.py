@@ -45,6 +45,13 @@ def remove_msgs_after_last_response_role(messages, response_roles=None):
     return messages[: last_response_idx + 1]
 
 
+def get_content_by_path_keys(data, path_keys):
+    target = data
+    for key in path_keys:
+        target = target[key]
+    return target
+
+
 if __name__ == "__main__":
     pass
     image_url_msg_example = [
