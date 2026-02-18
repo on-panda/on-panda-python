@@ -145,6 +145,27 @@ class FindAndReplaceVerifier:
                         "arguments",
                     ], function_arguments
 
+    def assert_messages_location_context_valid(self, messages, messages_location):
+        if "left5" not in messages_location:
+            return
+
+        path_keys = list(messages_location["path_keys"])
+        char_index = messages_location["char_index"]
+        text = messages
+        for key in path_keys:
+            text = text[key]
+        text = self._content_to_text(text)
+        left5 = messages_location["left5"]
+        right5 = messages_location["right5"]
+        assert left5 == text[max(0, char_index - 5) : char_index], (
+            "messages_location.left5 is invalid for current messages: "
+            f"left5={left5!r}, path_keys={path_keys}, char_index={char_index}"
+        )
+        assert right5 == text[char_index : char_index + 5], (
+            "messages_location.right5 is invalid for current messages: "
+            f"right5={right5!r}, path_keys={path_keys}, char_index={char_index}"
+        )
+
     def locate(self, messages, find_and_replace):
         if find_and_replace.get("is_good"):
             return dict(
@@ -181,8 +202,8 @@ class FindAndReplaceVerifier:
                 messages_location = dict(
                     path_keys=path_keys,
                     char_index=index,
-                    left5=search_scope[max(0, index - 5) : index],
-                    right5=search_scope[index : index + 5],
+                    left5=text[max(0, index - 5) : index],
+                    right5=text[index : index + 5],
                 )
                 messages_locations.append(messages_location)
                 start = index + 1
@@ -256,6 +277,11 @@ class FindAndReplaceVerifier:
                 else "ground truth is_good but prediction is not is_good"
             )
         else:
+            if "left5" in gt_messages_location:
+                self.assert_messages_location_context_valid(
+                    messages,
+                    gt_messages_location,
+                )
             is_same_location = self._has_same_location(
                 pred_location,
                 gt_messages_location,
