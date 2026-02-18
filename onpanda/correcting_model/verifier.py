@@ -224,22 +224,32 @@ class FindAndReplaceVerifier:
             find_feedback=find_feedback,
         )
 
-    def compute_reward(self, messages, answer_text, gt):
+    def parse_and_locate(self, messages, far_text):
+        parse_res = self.parse(far_text)
+        find_and_replace = parse_res["find_and_replace"]
+        messages_location = self.locate(messages, find_and_replace)
+        return dict(
+            parse_reward=parse_res["parse_reward"],
+            parse_feedback=parse_res["parse_feedback"],
+            find_and_replace=find_and_replace,
+            messages_location=messages_location,
+        )
+
+    def compute_reward(self, messages, far_text, gt_correction):
         assert isinstance(messages, list), type(messages)
         if messages and messages[-1]["role"] == "assistant":
             last_content = self._content_to_text(messages[-1].get("content", ""))
             assert self.special_tokens["split"] not in last_content, (
                 "messages should not include FAR answer, "
-                "pass FAR output via `answer_text`"
+                "pass FAR output via `far_text`"
             )
-        parse_res = self.parse(answer_text)
-
-        parse_reward = parse_res["parse_reward"]
-        parse_feedback = parse_res["parse_feedback"]
-        pred_find_and_replace = parse_res["find_and_replace"]
-        gt_find_and_replace = gt["find_and_replace"]
-        gt_messages_location = gt["messages_location"]
-        pred_location = self.locate(messages, pred_find_and_replace)
+        correction = self.parse_and_locate(messages, far_text)
+        parse_reward = correction["parse_reward"]
+        parse_feedback = correction["parse_feedback"]
+        pred_find_and_replace = correction["find_and_replace"]
+        gt_find_and_replace = gt_correction["find_and_replace"]
+        gt_messages_location = gt_correction["messages_location"]
+        pred_location = correction["messages_location"]
         match_num = pred_location.get("match_num", 0)
         find_feedback = pred_location.get("find_feedback", "")
 
@@ -337,7 +347,7 @@ class FindAndReplaceVerifier:
                 "Note: Each reward ∈ [0, 1], and final_reward is the average of the other rewards.",
             ]
         )
-        return dict(
+        reward_with_feedback = dict(
             final_reward=final_reward,
             format_reward=format_reward,
             location_reward=location_reward,
@@ -347,6 +357,8 @@ class FindAndReplaceVerifier:
             pred_find_and_replace=pred_find_and_replace,
             pred_messages_location=pred_location,
         )
+        reward_result = dict(reward_with_feedback=reward_with_feedback, **correction)
+        return reward_result
 
 
 if __name__ == "__main__":
@@ -365,13 +377,13 @@ if __name__ == "__main__":
         )
     )
     verifier = adapter.verifier
-    gt = adapter.build_correction_from_rejected_messages(rejected_msgs1)
+    gt_correction = adapter.build_correction_from_rejected_messages(rejected_msgs1)
 
     split = verifier.special_tokens["split"]
     is_good = verifier.special_tokens["is_good"]
-    location_text = gt["find_and_replace"]["location_text"]
-    location_index = gt["find_and_replace"]["location_index"]
-    replacement_token = gt["find_and_replace"]["replacement_token"]
+    location_text = gt_correction["find_and_replace"]["location_text"]
+    location_index = gt_correction["find_and_replace"]["location_index"]
+    replacement_token = gt_correction["find_and_replace"]["replacement_token"]
 
     far_text_cases = [
         (
@@ -431,7 +443,10 @@ if __name__ == "__main__":
     ]
 
     for case_name, far_text, expected in far_text_cases:
-        reward_res = verifier.compute_reward(rejected_msgs1, far_text, gt=gt)
+        result = verifier.compute_reward(
+            rejected_msgs1, far_text, gt_correction=gt_correction
+        )
+        reward_res = result["reward_with_feedback"]
         assert all(
             [reward_res[k] == expected[k] for k in expected]
         ), f"{case_name}, {far_text}, {expected}\n\n{reward_res}"

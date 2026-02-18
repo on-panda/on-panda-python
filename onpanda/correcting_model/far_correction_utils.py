@@ -560,10 +560,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
 
     def apply(self, messages, correction_or_far_text):
         if isinstance(correction_or_far_text, str):
-            find_and_replace = self.verifier.parse(correction_or_far_text)[
-                "find_and_replace"
-            ]
-            correction = dict(find_and_replace=find_and_replace)
+            correction = self.verifier.parse_and_locate(
+                messages, correction_or_far_text
+            )
+            find_and_replace = correction["find_and_replace"]
         else:
             correction = deepcopy(correction_or_far_text)
             if "find_and_replace" in correction:
