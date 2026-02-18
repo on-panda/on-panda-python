@@ -297,16 +297,12 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         max_location_tokens=20,
         scope_slice=(-1, None),
     ):
-        self.tokenizer = tokenizer or unicode_tokenizer
-        special_tokens = special_tokens or {}
         self.verifier = FindAndReplaceVerifier(
-            tokenizer=self.tokenizer,
             special_tokens=special_tokens,
+            tokenizer=tokenizer,
         )
-        self.SPLIT_TOKEN = self.verifier.SPLIT_TOKEN
-        self.STOP_TOKEN = self.verifier.STOP_TOKEN
-        self.IS_GOOD_TOKEN = self.verifier.IS_GOOD_TOKEN
-        self.REASONING_TOKEN = self.verifier.REASONING_TOKEN
+        self.special_tokens = self.verifier.special_tokens
+        self.tokenizer = tokenizer or unicode_tokenizer
         self.max_location_tokens = max_location_tokens
         self.scope_slice = scope_slice
 
@@ -316,10 +312,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         else:
             prompt = far_correction_system_prompt_default
         system_prompt = (
-            prompt.replace("<|split|>", self.SPLIT_TOKEN)
-            .replace("<|stop|>", self.STOP_TOKEN)
-            .replace("<|is_good|>", self.IS_GOOD_TOKEN)
-            .replace("<|reasoning|>", self.REASONING_TOKEN)
+            prompt.replace("<|split|>", self.special_tokens["split"])
+            .replace("<|stop|>", self.special_tokens["stop"])
+            .replace("<|is_good|>", self.special_tokens["is_good"])
+            .replace("<|reasoning|>", self.special_tokens["reasoning"])
             .replace(" 20 ", f" {self.max_location_tokens} ")
         )
         sys_prompt_message = dict(
@@ -349,7 +345,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                 token_level = message["token_level"]
                 replacement_token = None
                 if "chosen_text" in token_level:
-                    replacement_token = token_level["chosen_text"] or self.STOP_TOKEN
+                    replacement_token = (
+                        token_level["chosen_text"] or self.special_tokens["stop"]
+                    )
                 if "messages_location" in token_level:
                     messages_location = deepcopy(token_level["messages_location"])
                     if replacement_token is not None:
@@ -391,7 +389,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         for path_keys, text in self.verifier._iter_assistant_text_locations(
             rejected_messages
         ):
-            search_scope = text + self.STOP_TOKEN
+            search_scope = text + self.special_tokens["stop"]
             start = 0
             while True:
                 index = search_scope.find(location_text, start)
@@ -433,7 +431,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         if isinstance(content, list):
             assert all([d["type"] == "text" for d in content]), rejected_messages
             content = mxlm.get_text_content(content)
-        content_suffix = content[char_index:] + self.STOP_TOKEN
+        content_suffix = content[char_index:] + self.special_tokens["stop"]
         suffix_tokens = self.tokenizer.encode(content_suffix, add_special_tokens=False)
         decodable_num = 0
 
@@ -504,7 +502,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             )
             is_good_correcting_msg = dict(
                 role="assistant",
-                content=f"{self.SPLIT_TOKEN}{self.IS_GOOD_TOKEN}{self.SPLIT_TOKEN}",
+                content=(
+                    f"{self.special_tokens['split']}{self.special_tokens['is_good']}"
+                    f"{self.special_tokens['split']}"
+                ),
                 correcting=dict(
                     messages_location=is_good_messages_location,
                     find_and_replace=is_good_find_and_replace,
@@ -538,9 +539,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         find_and_replace = correction["find_and_replace"]
         messages_location = correction["messages_location"]
         correcting_content = (
-            f"{self.SPLIT_TOKEN}{find_and_replace['location_text']}{self.SPLIT_TOKEN}"
-            f"{find_and_replace['location_index']}{self.SPLIT_TOKEN}"
-            f"{find_and_replace['replacement_token']}{self.SPLIT_TOKEN}"
+            f"{self.special_tokens['split']}{find_and_replace['location_text']}"
+            f"{self.special_tokens['split']}"
+            f"{find_and_replace['location_index']}{self.special_tokens['split']}"
+            f"{find_and_replace['replacement_token']}{self.special_tokens['split']}"
         )
         correcting_msg = dict(
             role="assistant",
@@ -607,14 +609,14 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             field_text = mxlm.get_text_content(field_text)
 
         good_prefix = field_text[:char_index]
-        if self.STOP_TOKEN == replacement_token:
+        if self.special_tokens["stop"] == replacement_token:
             corrected_field_text = good_prefix
         else:
             corrected_field_text = good_prefix + replacement_token
         self._set_by_path(partial_messages, path_keys, corrected_field_text)
 
         if path_keys[-1] == "content":
-            if self.STOP_TOKEN == replacement_token:
+            if self.special_tokens["stop"] == replacement_token:
                 partial_messages[-1]["finish_reason"] = "stop"
             elif "finish_reason" in partial_messages[-1]:
                 del partial_messages[-1]["finish_reason"]

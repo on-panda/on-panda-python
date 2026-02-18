@@ -33,24 +33,42 @@ class IsGoodScoreMixin:
         )
         first_split_token = list(dic["prompt_logprobs"][-3].values())[0]
         assert (
-            first_split_token["decoded_token"] == self.adapter.SPLIT_TOKEN
-        ), f"first_split_tokens: {dic['prompt_logprobs'][-3]}, self.adapter.SPLIT_TOKEN: {self.adapter.SPLIT_TOKEN}"
+            first_split_token["decoded_token"] == self.adapter.special_tokens["split"]
+        ), (
+            "first_split_tokens: "
+            f"{dic['prompt_logprobs'][-3]}, "
+            "self.adapter.special_tokens['split']: "
+            f"{self.adapter.special_tokens['split']}"
+        )
         e = 2.718281828459045  # base of the natural logarithm
         prob_first_split = e ** first_split_token["logprob"]
-        assert (
-            prob_first_split > 0.99
-        ), f"CorrectingModel should learn to output `{self.adapter.SPLIT_TOKEN}` first. first_split_tokens: {dic['prompt_logprobs'][-3]}, prob_first_split: {prob_first_split}"
+        assert prob_first_split > 0.99, (
+            "CorrectingModel should learn to output "
+            f"`{self.adapter.special_tokens['split']}` first. "
+            f"first_split_tokens: {dic['prompt_logprobs'][-3]}, "
+            f"prob_first_split: {prob_first_split}"
+        )
 
         is_good_token = list(dic["prompt_logprobs"][-2].values())[0]
         assert (
-            is_good_token["decoded_token"] == self.adapter.IS_GOOD_TOKEN
-        ), f"is_good_token: {dic['prompt_logprobs'][-2]}, self.adapter.IS_GOOD_TOKEN: {self.adapter.IS_GOOD_TOKEN}"
+            is_good_token["decoded_token"] == self.adapter.special_tokens["is_good"]
+        ), (
+            "is_good_token: "
+            f"{dic['prompt_logprobs'][-2]}, "
+            "self.adapter.special_tokens['is_good']: "
+            f"{self.adapter.special_tokens['is_good']}"
+        )
         is_good_logprob = is_good_token["logprob"]
 
         second_split_token = list(dic["prompt_logprobs"][-1].values())[0]
         assert (
-            second_split_token["decoded_token"] == self.adapter.SPLIT_TOKEN
-        ), f"second_split_tokens: {dic['prompt_logprobs'][-1]}, self.adapter.SPLIT_TOKEN: {self.adapter.SPLIT_TOKEN}"
+            second_split_token["decoded_token"] == self.adapter.special_tokens["split"]
+        ), (
+            "second_split_tokens: "
+            f"{dic['prompt_logprobs'][-1]}, "
+            "self.adapter.special_tokens['split']: "
+            f"{self.adapter.special_tokens['split']}"
+        )
 
         is_good_prob = e**is_good_logprob
         is_good_score = dict(is_good_prob=is_good_prob, is_good_logprob=is_good_logprob)

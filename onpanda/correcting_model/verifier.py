@@ -9,13 +9,16 @@ from copy import deepcopy
 
 
 class FindAndReplaceVerifier:
-    def __init__(self, tokenizer, special_tokens):
+    default_special_tokens = dict(
+        split="<|split|>",
+        stop="<|stop|>",
+        is_good="<|is_good|>",
+        reasoning="<|reasoning|>",
+    )
+
+    def __init__(self, special_tokens=None, tokenizer=None):
         self.tokenizer = tokenizer
-        special_tokens = special_tokens or {}
-        self.SPLIT_TOKEN = special_tokens.get("split", "<|split|>")
-        self.STOP_TOKEN = special_tokens.get("stop", "<|stop|>")
-        self.IS_GOOD_TOKEN = special_tokens.get("is_good", "<|is_good|>")
-        self.REASONING_TOKEN = special_tokens.get("reasoning", "<|reasoning|>")
+        self.special_tokens = {**self.default_special_tokens, **(special_tokens or {})}
 
     @staticmethod
     def _mean(nums):
@@ -48,40 +51,25 @@ class FindAndReplaceVerifier:
             location_index=0,
             replacement_token="",
         )
-        if not isinstance(far_text, str):
-            return dict(
-                parse_reward=0.0,
-                parse_feedback=f"far_text must be str, got {type(far_text).__name__}",
-                find_and_replace=default_find_and_replace,
-            )
-
-        parse_reward = 0.0
-        parse_feedbacks = []
-
-        has_prefix = far_text.startswith(self.SPLIT_TOKEN)
-        has_suffix = far_text.endswith(self.SPLIT_TOKEN)
-        if has_prefix:
-            parse_reward += 0.25
-        else:
-            parse_feedbacks.append("missing start split token")
-        if has_suffix:
-            parse_reward += 0.25
-        else:
-            parse_feedbacks.append("missing end split token")
+        has_prefix = far_text.startswith(self.special_tokens["split"])
+        has_suffix = far_text.endswith(self.special_tokens["split"])
         if not (has_prefix and has_suffix):
             return dict(
-                parse_reward=parse_reward,
-                parse_feedback="; ".join(parse_feedbacks),
+                parse_reward=0.0,
+                parse_feedback="parse failed: missing split boundary",
                 find_and_replace=default_find_and_replace,
             )
 
-        mid_text = far_text.removeprefix(self.SPLIT_TOKEN).removesuffix(
-            self.SPLIT_TOKEN
+        mid_text = far_text.removeprefix(self.special_tokens["split"]).removesuffix(
+            self.special_tokens["split"]
         )
-        # Keep compatibility with old correcting model behavior.
-        if mid_text == self.IS_GOOD_TOKEN or mid_text in ["", self.SPLIT_TOKEN]:
+        # Keep compatibility with old correcting model step1f behavior.
+        if mid_text == self.special_tokens["is_good"] or mid_text in [
+            "",
+            self.special_tokens["split"],
+        ]:
             return dict(
-                parse_reward=1.0,
+                parse_reward=0.5,
                 parse_feedback="parse success: is_good format",
                 find_and_replace=dict(
                     is_good=True,
@@ -91,45 +79,32 @@ class FindAndReplaceVerifier:
                 ),
             )
 
-        splits = mid_text.split(self.SPLIT_TOKEN)
-        if len(splits) >= 3:
-            parse_reward += 0.25
-            if len(splits) > 3:
-                parse_reward -= 0.1
-                parse_feedbacks.append(
-                    "found extra split token in replacement, merged as tail text"
-                )
-        else:
-            parse_feedbacks.append(
-                f"expect 3 fields split by `{self.SPLIT_TOKEN}`, got {len(splits)}"
-            )
+        splits = mid_text.split(self.special_tokens["split"])
+        if len(splits) != 3:
             return dict(
-                parse_reward=parse_reward,
-                parse_feedback="; ".join(parse_feedbacks),
+                parse_reward=0.0,
+                parse_feedback=(
+                    "parse failed: expect 3 fields split by "
+                    f"`{self.special_tokens['split']}`"
+                ),
                 find_and_replace=default_find_and_replace,
             )
 
         location_text = splits[0]
         location_index_text = splits[1]
-        replacement_token = self.SPLIT_TOKEN.join(splits[2:])
+        replacement_token = self.special_tokens["split"].join(splits[2:])
         try:
             location_index = int(location_index_text)
-            parse_reward += 0.25
         except ValueError:
-            location_index = 0
-            parse_feedbacks.append(
-                f"location_index must be int, got `{location_index_text}`"
+            return dict(
+                parse_reward=0.0,
+                parse_feedback=f"parse failed: location_index must be int, got `{location_index_text}`",
+                find_and_replace=default_find_and_replace,
             )
 
-        if parse_reward >= 0.99:
-            parse_feedback = "parse success"
-            parse_reward = 1.0
-        else:
-            parse_feedback = "; ".join(parse_feedbacks)
-
         return dict(
-            parse_reward=parse_reward,
-            parse_feedback=parse_feedback,
+            parse_reward=0.5,
+            parse_feedback="parse success",
             find_and_replace=dict(
                 is_good=False,
                 location_text=location_text,
@@ -172,19 +147,32 @@ class FindAndReplaceVerifier:
 
     def locate(self, messages, find_and_replace):
         if find_and_replace.get("is_good"):
-            return dict(not_found=True, is_good=True)
+            return dict(
+                not_found=True,
+                is_good=True,
+                match_num=0,
+                find_feedback="is_good: skip find",
+            )
 
         location_text = find_and_replace.get("location_text", "")
         if not location_text:
-            return dict(not_found=True, match_num=0)
+            return dict(
+                not_found=True,
+                match_num=0,
+                find_feedback="empty location_text",
+            )
 
         location_index = find_and_replace.get("location_index")
         if not isinstance(location_index, int):
-            return dict(not_found=True, match_num=0)
+            return dict(
+                not_found=True,
+                match_num=0,
+                find_feedback=f"location_index is not int: {location_index}",
+            )
 
         messages_locations = []
         for path_keys, text in self._iter_assistant_text_locations(messages):
-            search_scope = text + self.STOP_TOKEN
+            search_scope = text + self.special_tokens["stop"]
             start = 0
             while True:
                 index = search_scope.find(location_text, start)
@@ -203,14 +191,23 @@ class FindAndReplaceVerifier:
             messages_location = deepcopy(messages_locations[location_index])
             messages_location["match_num"] = match_num
             messages_location["patch_length"] = len(location_text)
+            messages_location["find_feedback"] = "matched"
             return messages_location
-        return dict(not_found=True, match_num=match_num)
+        if match_num == 0:
+            find_feedback = "location_text not found"
+        else:
+            find_feedback = f"location_index out of range: index={location_index}, match_num={match_num}"
+        return dict(
+            not_found=True,
+            match_num=match_num,
+            find_feedback=find_feedback,
+        )
 
     def compute_reward(self, messages, answer_text, gt):
         assert isinstance(messages, list), type(messages)
         if messages and messages[-1]["role"] == "assistant":
             last_content = self._content_to_text(messages[-1].get("content", ""))
-            assert self.SPLIT_TOKEN not in last_content, (
+            assert self.special_tokens["split"] not in last_content, (
                 "messages should not include FAR answer, "
                 "pass FAR output via `answer_text`"
             )
@@ -221,11 +218,30 @@ class FindAndReplaceVerifier:
         pred_find_and_replace = parse_res["find_and_replace"]
         gt_find_and_replace = gt["find_and_replace"]
         gt_messages_location = gt["messages_location"]
+        pred_location = self.locate(messages, pred_find_and_replace)
+        match_num = pred_location.get("match_num", 0)
+        find_feedback = pred_location.get("find_feedback", "")
+
+        if pred_find_and_replace.get("is_good"):
+            valid_reward = 1.0 if parse_reward > 0.0 else 0.0
+            valid_feedback = "valid success: is_good format"
+        elif parse_reward == 0.0:
+            valid_reward = 0.0
+            valid_feedback = f"valid failed: {parse_feedback}"
+        else:
+            find_valid_reward = 0.5 if not pred_location.get("not_found") else 0.0
+            valid_reward = parse_reward + find_valid_reward
+            if find_valid_reward:
+                valid_feedback = f"valid success: find matched (match_num={match_num})"
+            else:
+                valid_feedback = (
+                    "valid half: find not matched "
+                    f"(reason={find_feedback}, match_num={match_num})"
+                )
 
         gt_is_good = bool(
             gt_find_and_replace.get("is_good") or gt_messages_location.get("is_good")
         )
-        pred_location = self.locate(messages, pred_find_and_replace)
         if gt_is_good:
             location_reward = 1.0 if pred_find_and_replace.get("is_good") else 0.0
             replacement_reward = location_reward
@@ -246,44 +262,57 @@ class FindAndReplaceVerifier:
             )
             location_reward = 1.0 if is_same_location else 0.0
             if is_same_location:
-                location_feedback = "location matched"
+                location_feedback = f"location matched (match_num={match_num})"
             else:
-                location_feedback = (
-                    "location mismatch: "
-                    f"pred={pred_location.get('path_keys')}@{pred_location.get('char_index')}, "
-                    f"gt={gt_messages_location.get('path_keys')}@{gt_messages_location.get('char_index')}"
-                )
+                if pred_location.get("not_found"):
+                    location_feedback = (
+                        "location mismatch: find not matched "
+                        f"(reason={find_feedback}, match_num={match_num}, "
+                        f"location_text=`{pred_find_and_replace.get('location_text', '')}`), "
+                        f"gt={gt_messages_location.get('path_keys')}@{gt_messages_location.get('char_index')}"
+                    )
+                else:
+                    location_feedback = (
+                        "location mismatch: "
+                        f"pred={pred_location.get('path_keys')}@{pred_location.get('char_index')}, "
+                        f"gt={gt_messages_location.get('path_keys')}@{gt_messages_location.get('char_index')}, "
+                        f"match_num={match_num}"
+                    )
 
             gt_replacement_token = gt_find_and_replace.get("replacement_token", "")
             pred_replacement_token = pred_find_and_replace.get("replacement_token", "")
-            is_same_replacement = pred_replacement_token == gt_replacement_token
-            replacement_reward = 1.0 if is_same_replacement else 0.0
-            if is_same_replacement:
-                replacement_feedback = "replacement matched"
+            if not is_same_location:
+                replacement_reward = 0.0
+                replacement_feedback = "replacement skipped: location mismatch"
             else:
-                replacement_feedback = (
-                    "replacement mismatch: "
-                    f"pred=`{pred_replacement_token}` gt=`{gt_replacement_token}`"
-                )
+                is_same_replacement = pred_replacement_token == gt_replacement_token
+                replacement_reward = 1.0 if is_same_replacement else 0.0
+                if is_same_replacement:
+                    replacement_feedback = "replacement matched"
+                else:
+                    replacement_feedback = (
+                        "replacement mismatch: "
+                        f"pred=`{pred_replacement_token}` gt=`{gt_replacement_token}`"
+                    )
 
-        reward = self._mean([parse_reward, location_reward, replacement_reward])
+        reward = self._mean([valid_reward, location_reward, replacement_reward])
         feedback = "\n".join(
             [
                 f"reward={reward:.3f}",
-                f"parse_reward={parse_reward:.3f}",
+                f"valid_reward={valid_reward:.3f}",
                 f"location_reward={location_reward:.3f}",
                 f"replacement_reward={replacement_reward:.3f}",
-                f"parse_feedback: {parse_feedback}",
+                f"valid_feedback: {valid_feedback}",
                 f"location_feedback: {location_feedback}",
                 f"replacement_feedback: {replacement_feedback}",
             ]
         )
         return dict(
             reward=reward,
-            parse_reward=parse_reward,
+            valid_reward=valid_reward,
             location_reward=location_reward,
             replacement_reward=replacement_reward,
-            parse_feedback=parse_feedback,
+            valid_feedback=valid_feedback,
             feedback=feedback,
             pred_find_and_replace=pred_find_and_replace,
             pred_messages_location=pred_location,
@@ -308,8 +337,8 @@ if __name__ == "__main__":
     verifier = adapter.verifier
     gt = adapter.build_correction_from_rejected_messages(rejected_msgs1)
 
-    split = verifier.SPLIT_TOKEN
-    is_good = verifier.IS_GOOD_TOKEN
+    split = verifier.special_tokens["split"]
+    is_good = verifier.special_tokens["is_good"]
     location_text = gt["find_and_replace"]["location_text"]
     location_index = gt["find_and_replace"]["location_index"]
     replacement_token = gt["find_and_replace"]["replacement_token"]
@@ -318,27 +347,56 @@ if __name__ == "__main__":
         (
             "case1_all_correct",
             far_text_gt,
-            dict(parse_reward=1.0, location_reward=1.0, replacement_reward=1.0),
+            dict(
+                valid_reward=1.0,
+                location_reward=1.0,
+                replacement_reward=1.0,
+            ),
         ),
         (
             "case2_wrong_replacement",
             f"{split}{location_text}{split}{location_index}{split} banana{split}",
-            dict(parse_reward=1.0, location_reward=1.0, replacement_reward=0.0),
+            dict(
+                valid_reward=1.0,
+                location_reward=1.0,
+                replacement_reward=0.0,
+            ),
         ),
         (
             "case3_wrong_location_index",
             f"{split}{location_text}{split}{location_index + 1}{split}{replacement_token}{split}",
-            dict(parse_reward=1.0, location_reward=0.0, replacement_reward=1.0),
+            dict(
+                valid_reward=1.0,
+                location_reward=0.0,
+                replacement_reward=0.0,
+            ),
         ),
         (
             "case4_is_good_prediction",
             f"{split}{is_good}{split}",
-            dict(parse_reward=1.0, location_reward=0.0, replacement_reward=0.0),
+            dict(
+                valid_reward=1.0,
+                location_reward=0.0,
+                replacement_reward=0.0,
+            ),
         ),
         (
             "case5_bad_format_missing_end_split",
             f"{split}{location_text}{split}{location_index}{split}{replacement_token}",
-            dict(parse_reward=0.25, location_reward=0.0, replacement_reward=0.0),
+            dict(
+                valid_reward=0.0,
+                location_reward=0.0,
+                replacement_reward=0.0,
+            ),
+        ),
+        (
+            "case6_parse_success_but_locate_not_found",
+            f"{split} no_such_text{split}0{split}{replacement_token}{split}",
+            dict(
+                valid_reward=0.5,
+                location_reward=0.0,
+                replacement_reward=0.0,
+            ),
         ),
     ]
 
