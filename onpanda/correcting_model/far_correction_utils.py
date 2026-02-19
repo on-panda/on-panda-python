@@ -63,7 +63,7 @@ far_correction_system_prompt_default = """\
     - `{location_index}` indicates which position among all positions matched by `{location_tokens}` in the model-output tokens
         - It is an integer value, counted from 0, supports negative numbers, consistent with Python list indexing
         - When the absolute value of a negative index is smaller than the positive index, `{location_index}` should use the negative number
-    - `{location_tokens}` and `{location_index}` together uniquely locate one position in the all responses, i.e., the position of the "first inappropriate token"
+    - `{location_tokens}` and `{location_index}` together uniquely identify a single position across all model outputs, i.e., the position of the "first inappropriate token"
     - The matching scope of `{location_tokens}` and `{location_index}` covers all model-output content, not limited by the "Correcting Scope"
     - `{replacement_token}`: A more appropriate token, expected that after changing to this appropriate token, continuing completion will yield the best and most accurate response
         - Only one token is needed; the policy model will continue completion afterward
@@ -96,23 +96,23 @@ far_correction_system_prompt_default = """\
 
 
 ## Examples
-### example 1:
+### Example 1:
 USER:
 List 3 fruits:
 ASSISTANT:
 Apple, potato, banana.
-Expected output: "<|split|> potato<|split|>0<|split|> orange<|split|>"
+Expected output: <|split|> potato<|split|>0<|split|> orange<|split|>
 
-### example 2:
+### Example 2:
 USER:
 one + two = ?
 ASSISTANT:
 one + two = two
-Expected output: "<|split|> two<|stop|><|split|>0<|split|> three<|split|>", explanation:
+Expected output: <|split|> two<|stop|><|split|>0<|split|> three<|split|>
 - ` two` matches two positions, so continue generating the stop token <|stop|> to precisely locate the last ` two` position
 - Note: ` two` and ` three` are both a single complete token; do not omit their leading space, which would change the token to `two`, `three`
 
-### example 3:
+### Example 3:
 USER:
 Just reply 2 times, Using "|" as a separator:
 1;2;3;4;5;6;7;8;9;8;
@@ -122,10 +122,10 @@ USER:
 Reply again
 ASSISTANT:
 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
-
-Expected output: "<|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>", explanation:
+Expected output: <|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>
 - At the "first inappropriate token" position, there is repetition with other ASSISTANT responses, so generate the full 20 `{location_tokens}`
-- When `{location_index}` is expressed as a positive number it is 2, as a negative number it is -1, and since -1 has a smaller absolute value, -1 should be used
+- `{location_tokens}` is matched once in the first ASSISTANT turn and twice in the second, so a total of three positions can be aligned with `{location_tokens}`
+- For the position that needs to be removed, its `{location_index}` is 2 when expressed as a positive number and −1 when expressed as a negative one; since −1 has the smaller absolute value, −1 is used
 - Here, `{replacement_token}` is the stop token <|stop|>\
 """
 
@@ -221,23 +221,23 @@ far_correction_system_prompt_cn = """\
 
 
 ## 示例
-### example 1:
+### Example 1:
 USER:
 列举 3 种水果：
 ASSISTANT:
 苹果、土豆、香蕉
-期望的输出: “<|split|>土豆<|split|>0<|split|>西瓜<|split|>”
+期望的输出: <|split|>土豆<|split|>0<|split|>西瓜<|split|>
 
-### example 2:
+### Example 2:
 USER:
 one + two = ?
 ASSISTANT:
 one + two = two
-期望的输出: “<|split|> two<|stop|><|split|>0<|split|> three<|split|>”，解释：
+期望的输出: <|split|> two<|stop|><|split|>0<|split|> three<|split|>
 - ` two` 会定位到两个位置，所以继续生成 stop token <|stop|> 来精确定位到最后一个 ` two` 的位置
 - 注意：` two` 和 ` three` 都是一个完整的 token，不可以省略其空格导致 token 变为 `two`, `three`
 
-### example 3:
+### Example 3:
 USER:
 Just reply 2 times, Using "|" as a separator:
 1;2;3;4;5;6;7;8;9;8;
@@ -247,10 +247,10 @@ USER:
 Reply again
 ASSISTANT:
 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
-
-期望的输出: “<|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>”，解释：
+期望的输出: <|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>
 - “第一个不恰当 token”处和其他 ASSISTANT 的回答有重复，所以会生成完整 20 个 `{location_tokens}`
-- `{location_index}` 用正数表示时为 2， 用负数为 -1，其中， -1 绝对值更加小，所以应该用 -1
+- `{location_tokens}` 在第一轮 ASSISTANT 能匹配到一处，第二轮 ASSISTANT 能匹配到两处，所以总共有 3 个位置能匹配上 `{location_tokens}`
+- 对于需要被删掉的那一处 `{location_tokens}`，其 `{location_index}` 用正数表示时为 2， 用负数为 -1，由于 -1 绝对值更加小，所以用了 -1
 - 此处 `{replacement_token}` 为 stop token <|stop|>\
 """
 

@@ -33,25 +33,20 @@ far_tokenizer_agnostic_system_prompt_default = """\
                 - If the first match is not the "modification position", continue generating the next token for more precise positioning
                 - `{location_tokens}` must be an exact copy of the tokens output by the model at the location, with no differences except for the special tokens mentioned in this rule
             2. The length of `{location_tokens}` reaches 20 tokens, then stop generating
-                - However, if the last few tokens cannot be decoded into complete characters by your own (correcting model) tokenizer, you must exceed the 20 tokens limit and continue generating until complete characters can be decoded
                 - If 20 tokens still cannot accurately locate the "modification position", then `{location_index}` must be used together for positioning
             3. The round ends, i.e., the stop token `<|stop|>` has been generated, then stop generating
     - `{location_index}` indicates which position among all positions matched by `{location_tokens}` in the model-output tokens
         - It is an integer value, counted from 0, supports negative numbers, consistent with Python list indexing
-        - When the absolute value of a negative index is smaller than the positive index, `{location_index}` should use the negative number
-    - `{location_tokens}` and `{location_index}` together uniquely locate one position in the all responses, i.e., the position of the "first inappropriate token"
+        - When the absolute value of a negative index is significantly smaller than the positive index, it is preferable to represent `{location_index}` as a negative number.
+    - `{location_tokens}` and `{location_index}` together uniquely identify a single position across all model outputs, i.e., the position of the "first inappropriate token"
     - The matching scope of `{location_tokens}` and `{location_index}` covers all model-output content, not limited by the "Correcting Scope"
     - `{replacement_token}`: A more appropriate token, expected that after changing to this appropriate token, continuing completion will yield the best and most accurate response
-        - Only one token is needed; the policy model will continue completion afterward
+        - You only need to generate a few tokens to steer the correction; the policy model will continue completion afterward
+        - Feel free to output a couple more tokens, but keep it under 3, just enough for `{replacement_token}` to give a clear direction for the fix.
     - Stop token escaping: Each round's response ends with a stop token; use the special token `<|stop|>` to represent the stop token within `{location_tokens}` and `{replacement_token}`
         - For example, to continue writing the last round's response: `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
-    - Rare character tokenizer issues:
-        - A rare character may correspond to multiple tokens, e.g., `🧎`; you need to be aware of this and treat these tokens as a whole
-        - For cases where multiple tokens must be combined to correctly decode, treat them as a single unit and do not truncate tokens, which could lead to abnormal characters like "�"
-        - You need to avoid potential tokenizer decode issues that produce abnormal text by outputting more tokens or outputting tokens earlier
     - If the response within the “Correcting Scope” has no issues, output `<|split|><|is_good|><|split|>` to indicate no modification needed
     - Your output must be absolutely identical, and pay attention to preserving invisible characters such as "spaces, line breaks"
-    - Also, do not overlook invisible characters within tokens, for example, English words are often combined with a space before them into one token, e.g., usually [` apple`], rather than [` `, `apple`]
 
 
 ## Custom format for Reasoning Model
@@ -72,23 +67,22 @@ far_tokenizer_agnostic_system_prompt_default = """\
 
 
 ## Examples
-### example 1:
+### Example 1:
 USER:
 List 3 fruits:
 ASSISTANT:
 Apple, potato, banana.
-Expected output: "<|split|> potato<|split|>0<|split|> orange<|split|>"
+Expected output: <|split|> potato<|split|>0<|split|> orange<|split|>
 
-### example 2:
+### Example 2:
 USER:
 one + two = ?
 ASSISTANT:
 one + two = two
-Expected output: "<|split|> two<|stop|><|split|>0<|split|> three<|split|>", explanation:
+Expected output: <|split|> two<|stop|><|split|>0<|split|> three<|split|>
 - ` two` matches two positions, so continue generating the stop token <|stop|> to precisely locate the last ` two` position
-- Note: ` two` and ` three` are both a single complete token; do not omit their leading space, which would change the token to `two`, `three`
 
-### example 3:
+### Example 3:
 USER:
 Just reply 2 times, Using "|" as a separator:
 1;2;3;4;5;6;7;8;9;8;
@@ -98,10 +92,10 @@ USER:
 Reply again
 ASSISTANT:
 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
-
-Expected output: "<|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>", explanation:
+Expected output: <|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>
 - At the "first inappropriate token" position, there is repetition with other ASSISTANT responses, so generate the full 20 `{location_tokens}`
-- When `{location_index}` is expressed as a positive number it is 2, as a negative number it is -1, and since -1 has a smaller absolute value, -1 should be used
+- `{location_tokens}` is matched once in the first ASSISTANT turn and twice in the second, so a total of three positions can be aligned with `{location_tokens}`
+- For the position that needs to be removed, its `{location_index}` is 2 when expressed as a positive number and −1 when expressed as a negative one; since −1 has the smaller absolute value, −1 is used
 - Here, `{replacement_token}` is the stop token <|stop|>\
 """
 
@@ -132,11 +126,11 @@ far_tokenizer_agnostic_system_prompt_cn = """\
             3. 一轮结束了，即已经生成了 stop token: `<|stop|>`，也应该停止生成
     - `{location_index}` 表示在所有模型输出的 tokens 中, 能被 `{location_tokens}` 匹配上的所有位置中的第几个位置
         - 是一个 int 数值，从 0 开始计数，支持负数，和 Python list 的 index 一致
-        - 当用负数表示 index 时的绝对值比正数 index 明显小的时候，`{location_index}` 更加推荐用负数表示
+        - 当用负数表示 index 时的绝对值比正数 index 明显小的时候，`{location_index}` 推荐优先使用负数表示
     - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置。
     - `{location_tokens}` 和 `{location_index}` 的匹配范围为所有模型输出的内容，不被 “Correcting 范围” 所限制
     - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。
-        - 你只需生成少量 token 引导修正反向即可，后续会由 policy model 继续补全
+        - 你只需生成少量 token 引导修正方向即可，后续会由 policy model 继续补全
         - 可以多生成几个 token，但也别太多(别超过 3 个 token)，只要 `{replacement_token}` 能明确指导出修正方向就可以了
     -  stop token 转义: 每一轮答复最后都存在 stop token，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
         - 比如, 要续写最后一轮的答复 `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
@@ -162,22 +156,22 @@ far_tokenizer_agnostic_system_prompt_cn = """\
 
 
 ## 示例
-### example 1:
+### Example 1:
 USER:
 列举 3 种水果：
 ASSISTANT:
 苹果、土豆、香蕉
-期望的输出: “<|split|>土豆<|split|>0<|split|>西瓜<|split|>”
+期望的输出: <|split|>土豆<|split|>0<|split|>西瓜<|split|>
 
-### example 2:
+### Example 2:
 USER:
 one + two = ?
 ASSISTANT:
 one + two = two
-期望的输出: “<|split|> two<|stop|><|split|>0<|split|> three<|split|>”，解释：
+期望的输出: <|split|> two<|stop|><|split|>0<|split|> three<|split|>
 - ` two` 会定位到两个位置，所以继续生成 stop token <|stop|> 来精确定位到最后一个 ` two` 的位置
 
-### example 3:
+### Example 3:
 USER:
 Just reply 2 times, Using "|" as a separator:
 1;2;3;4;5;6;7;8;9;8;
@@ -187,10 +181,10 @@ USER:
 Reply again
 ASSISTANT:
 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
-
-期望的输出: “<|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>”，解释：
+期望的输出: <|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>
 - “第一个不恰当 token”处和其他 ASSISTANT 的回答有重复，所以会生成完整 20 个 `{location_tokens}`
-- `{location_index}` 用正数表示时为 2， 用负数为 -1，其中， -1 绝对值更加小，所以用了 -1
+- `{location_tokens}` 在第一轮 ASSISTANT 能匹配到一处，第二轮 ASSISTANT 能匹配到两处，所以总共有 3 个位置能匹配上 `{location_tokens}`
+- 对于需要被删掉的那一处 `{location_tokens}`，其 `{location_index}` 用正数表示时为 2， 用负数为 -1，由于 -1 绝对值更加小，所以用了 -1
 - 此处 `{replacement_token}` 为 stop token <|stop|>\
 """
 
