@@ -5,12 +5,13 @@ far_correction_system_prompt_default = """\
 - Your goal is to optimize existing responses by modifying inappropriate tokens
 - Your task is:
     1. Identify the first inappropriate token in the above response, i.e., point out the "position needing modification"
-    2. Replace the "inappropriate token" with a more appropriate token, such that continuing completion based on the "appropriate token" yields the best and most accurate response
+    2. Provide a more appropriate token to replace the inappropriate one, i.e., point out the "better response direction"
+        - The system will delete the inappropriate token and everything after it, replacing it with the more appropriate token so that the best response can be obtained by continuing the completion based on the "appropriate token"
 - Correcting Scope: All spans described by <|correcting_span_description_begin|>
     - Only evaluate content within these described spans that belongs to the model's output, attempting to find the first "inappropriate token" therein
     - If there is no span description starting with <|correcting_span_description_begin|>, evaluate the most recent response by default
 - If there are special instructions within <|special_correcting_instruction_begin|>, you must strictly follow them
-- Since you as an LLM can output text, please output your correction operation in the following defined "Find and Replace" text format:
+- Since you can output text as an LLM, please output your correction operation in the following defined "Find and Replace" text format:
     - `<|split|>{location_tokens}<|split|>{location_index}<|split|>{replacement_token}<|split|>`
     - `<|split|>` is a special token for separating content, and your response must start and end with `<|split|>`
     - `{location_tokens}`: A sequence of tokens used to locate the "modification position"
@@ -29,7 +30,8 @@ far_correction_system_prompt_default = """\
     - `{location_tokens}` and `{location_index}` together uniquely identify a single position across all model outputs, i.e., the position of the "first inappropriate token"
     - The matching scope of `{location_tokens}` and `{location_index}` covers all model-output content, not limited by the "Correcting Scope"
     - `{replacement_token}`: A more appropriate token, expected that after changing to this appropriate token, continuing completion will yield the best and most accurate response
-        - Only one token is needed; the policy model will continue completion afterward
+        - Only one token is needed, but make sure it can be decoded into a complete character by your tokenizer
+        - The system will extract the normal portion of the response that appears before the inappropriate token, then concatenate the `{replacement_token}`, finally let the policy model continue completing the response.
     - Stop token escaping: Each round's response ends with a stop token; use the special token `<|stop|>` to represent the stop token within `{location_tokens}` and `{replacement_token}`
         - For example, to continue writing the last round's response: `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - Rare character tokenizer issues:
@@ -130,7 +132,8 @@ far_correction_system_prompt_cn = """\
 - 你的目标是通过修改不恰当的 token 来优化已有的回答
 - 你的任务是：
     1. 定位上述回答中，第一个不恰当的 token，即指出 “需要修改的位置”
-    2. 将“不恰当 token”修改为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
+    2. 提供更加恰当的 token 来替换不恰当 token，即指出 “更好的回答方向”
+        - 系统将把不恰当 token 及其之后的内容删掉，替换为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
 - Correcting 范围：所有 <|correcting_span_description_begin|> 所描述的范围
     - 只评估这些描述范围内的属于模型输出的内容，尝试找出其中的首个“不恰当 token”
     - 若没有带 <|correcting_span_description_begin|> 的范围描述，则默认评估最后一条回答内容
@@ -154,13 +157,14 @@ far_correction_system_prompt_cn = """\
     - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置。
     - `{location_tokens}` 和 `{location_index}` 的匹配范围为所有模型输出的内容，不被 “Correcting 范围” 所限制
     - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。
-        - 只需要一个 token 即可，后续会由 policy model 继续补全
-    -  stop token 转义: 每一轮答复最后都存在 stop token，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
+        - 只需一个 token 即可，但要确保能被 tokenizer decode 为完整字符
+        - 系统会截取出回答中位于不恰当 token 之前的正常部分，然后拼接上 `{replacement_token}`，再由 policy model 继续补全
+    - stop token 转义: 每一轮答复最后都存在 stop token，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
         - 比如, 要续写最后一轮的答复 `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - 冷门字符 tokenizer 问题：
         - 一个冷门字符可能对应多个 tokens，比如 `🧎`，你需要对此有感知，将这些 tokens 视为一个整体
         - 对于多个 tokens 必须合一起才能正确 decode 的情况，要把多个 token 视为一个整体，不要截断 tokens 导致 decode 出异常字符 “�”
-        - 你需要通过多输出 tokens 或提前输出 tokens 来避免潜在的 tokenizer decode 出不异常文本的问题。
+        - 你需要通过多输出 tokens 或提前输出 tokens 来避免潜在的 tokenizer decode 出异常文本的问题。
     - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|is_good|><|split|>`，表示不需要修改
     - 你输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符
     - 也要注意别忽略了 token 内的不可见字符，比如英语单词往往会和其前面的空格合为一个 token, 比如通常是 [` apple`]，而不是 [` `, `apple`]
@@ -225,12 +229,13 @@ far_tokenizer_agnostic_system_prompt_default = """\
 - Your goal is to optimize existing responses by modifying inappropriate tokens
 - Your task is:
     1. Identify the first inappropriate token in the above response, i.e., point out the "position needing modification"
-    2. Replace the "inappropriate token" with a more appropriate token, such that continuing completion based on the "appropriate token" yields the best and most accurate response
+    2. Provide a more appropriate token to replace the inappropriate one, i.e., point out the "better response direction"
+        - The system will delete the inappropriate token and everything after it, replacing it with the more appropriate token so that the best response can be obtained by continuing the completion based on the "appropriate token"
 - Correcting Scope: All spans described by <|correcting_span_description_begin|>
     - Only evaluate content within these described spans that belongs to the model's output, attempting to find the first "inappropriate token" therein
     - If there is no span description starting with <|correcting_span_description_begin|>, evaluate the most recent response by default
 - If there are special instructions within <|special_correcting_instruction_begin|>, you must strictly follow them
-- Since you as an LLM can output text, please output your correction operation in the following defined "Find and Replace" text format:
+- Since you can output text as an LLM, please output your correction operation in the following defined "Find and Replace" text format:
     - `<|split|>{location_tokens}<|split|>{location_index}<|split|>{replacement_token}<|split|>`
     - `<|split|>` is a special token for separating content, and your response must start and end with `<|split|>`
     - `{location_tokens}`: A sequence of tokens used to locate the "modification position"
@@ -238,6 +243,7 @@ far_tokenizer_agnostic_system_prompt_default = """\
             1. Among all model-output tokens, the first position matched by `{location_tokens}` is exactly the "modification position"
                 - At this point, `{location_index}` should be 0, and stop generating
                 - If the first match is not the "modification position", continue generating the next token for more precise positioning
+                - If you are unsure about `{location_index}`, generate a few extra tokens to guarantee that `{location_tokens}` uniquely identifies the position.
                 - `{location_tokens}` must be an exact copy of the tokens output by the model at the location, with no differences except for the special tokens mentioned in this rule
             2. The length of `{location_tokens}` reaches 20 tokens, then stop generating
                 - If 20 tokens still cannot accurately locate the "modification position", then `{location_index}` must be used together for positioning
@@ -248,8 +254,8 @@ far_tokenizer_agnostic_system_prompt_default = """\
     - `{location_tokens}` and `{location_index}` together uniquely identify a single position across all model outputs, i.e., the position of the "first inappropriate token"
     - The matching scope of `{location_tokens}` and `{location_index}` covers all model-output content, not limited by the "Correcting Scope"
     - `{replacement_token}`: A more appropriate token, expected that after changing to this appropriate token, continuing completion will yield the best and most accurate response
-        - You only need to generate a few tokens to steer the correction; the policy model will continue completion afterward
-        - Feel free to output a couple more tokens, but keep it under 3, just enough for `{replacement_token}` to give a clear direction for the fix.
+        - Feel free to output a couple more tokens, but keep it to no more than 3 tokens, just enough for `{replacement_token}` to give a clear direction for the correction.
+        - The system will extract the normal portion of the response that appears before the inappropriate token, then concatenate the `{replacement_token}`, finally let the policy model continue completing the response.
     - Stop token escaping: Each round's response ends with a stop token; use the special token `<|stop|>` to represent the stop token within `{location_tokens}` and `{replacement_token}`
         - For example, to continue writing the last round's response: `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - If the response within the “Correcting Scope” has no issues, output `<|split|><|is_good|><|split|>` to indicate no modification needed
@@ -314,7 +320,8 @@ far_tokenizer_agnostic_system_prompt_cn = """\
 - 你的目标是通过修改不恰当的 token 来优化已有的回答
 - 你的任务是：
     1. 定位上述回答中，第一个不恰当的 token，即指出 “需要修改的位置”
-    2. 将“不恰当 token”修改为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
+    2. 提供更加恰当的 token 来替换不恰当 token，即指出 “更好的回答方向”
+        - 系统将把不恰当 token 及其之后的内容删掉，替换为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
 - Correcting 范围：所有 <|correcting_span_description_begin|> 所描述的范围
     - 只评估这些描述范围内的属于模型输出的内容，尝试找出其中的首个“不恰当 token”
     - 若没有带 <|correcting_span_description_begin|> 的范围描述，则默认评估最后一条回答内容
@@ -325,8 +332,9 @@ far_tokenizer_agnostic_system_prompt_cn = """\
     - `{location_tokens}`: 用来定位 “修改位置” 的一串 tokens
         - 其内容为从不恰当的 token 开始，持续摘抄并生成，直到触发以下任意情况：
             1. 在所有模型输出的 tokens 中，被 `{location_tokens}` 匹配上的第一处位置正好就是 “修改位置” 
-                - 此时的 `{location_index}` 应该为 0，并停止生成
+                - 此时的 `{location_index}` 应该为 0，便可停止生成
                 - 若第一匹配处不是 “修改位置”，则继续生成下一个 token 来做更加精准的定位
+                - 如果你对 `{location_index}` 把握不够准确，可以多生成几个 token 来确保 `{location_tokens}` 定位的唯一性
                 - `{location_tokens}` 必须是和定位处模型输出的 tokens 完全一致的摘抄，除了本规则提到的 special tokens，不能有任何差异
             2. `{location_tokens}` 长度达到 20 个 token，就该停止生成了
                 - 若 20 个 token 都没法把 “修改位置” 准确定位，那就需要配合 `{location_index}` 来一起定位了
@@ -337,9 +345,9 @@ far_tokenizer_agnostic_system_prompt_cn = """\
     - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置。
     - `{location_tokens}` 和 `{location_index}` 的匹配范围为所有模型输出的内容，不被 “Correcting 范围” 所限制
     - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。
-        - 你只需生成少量 token 引导修正方向即可，后续会由 policy model 继续补全
         - 可以多生成几个 token，但也别太多(别超过 3 个 token)，只要 `{replacement_token}` 能明确指导出修正方向就可以了
-    -  stop token 转义: 每一轮答复最后都存在 stop token，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
+        - 系统会截取出回答中位于不恰当 token 之前的正常部分，然后拼接上 `{replacement_token}`，再由 policy model 继续补全
+    - stop token 转义: 每一轮答复最后都存在 stop token，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
         - 比如, 要续写最后一轮的答复 `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|is_good|><|split|>`，表示不需要修改
     - 你输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符
