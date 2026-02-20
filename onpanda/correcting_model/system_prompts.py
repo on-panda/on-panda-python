@@ -32,6 +32,7 @@ far_correction_system_prompt_default = """\
     - `{replacement_token}`: A more appropriate token, expected that after changing to this appropriate token, continuing completion will yield the best and most accurate response
         - Only one token is needed, but make sure it can be decoded into a complete character by your tokenizer
         - The system will extract the normal portion of the response that appears before the inappropriate token, then concatenate the `{replacement_token}`, finally let the policy model continue completing the response.
+        - `{replacement_token}` should connect naturally with the preceding context and guide subsequent completion toward a more reasonable and more accurate direction
     - Stop token escaping: Each round's response ends with a stop token; use the special token `<|stop|>` to represent the stop token within `{location_tokens}` and `{replacement_token}`
         - For example, to continue writing the last round's response: `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - Rare character tokenizer issues:
@@ -39,8 +40,9 @@ far_correction_system_prompt_default = """\
         - For cases where multiple tokens must be combined to correctly decode, treat them as a single unit and do not truncate tokens, which could lead to abnormal characters like "�"
         - You need to avoid potential tokenizer decode issues that produce abnormal text by outputting more tokens or outputting tokens earlier
     - If the response within the “Correcting Scope” has no issues, output `<|split|><|is_good|><|split|>` to indicate no modification needed
-    - Your output must be absolutely identical, and pay attention to preserving invisible characters such as "spaces, line breaks"
+    - Your output must be absolutely identical, and pay attention to preserving invisible characters such as "spaces, line breaks"; never replace an actual line break with the two-character sequence `\n`
     - Also, do not overlook invisible characters within tokens, for example, English words are often combined with a space before them into one token, e.g., usually [` apple`], rather than [` `, `apple`]
+- If there are issues in the Chain of Thought, do not skip CoT and directly modify the final result. You should still target only the first inappropriate token; the system will apply multiple correction steps to gradually converge to the optimal response
 
 
 ## Custom format for Reasoning Model
@@ -159,6 +161,7 @@ far_correction_system_prompt_cn = """\
     - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。
         - 只需一个 token 即可，但要确保能被 tokenizer decode 为完整字符
         - 系统会截取出回答中位于不恰当 token 之前的正常部分，然后拼接上 `{replacement_token}`，再由 policy model 继续补全
+        - `{replacement_token}` 需要和前文衔接自然，并引导后续补全朝更合理、更准确的方向发展
     - stop token 转义: 每一轮答复最后都存在 stop token，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
         - 比如, 要续写最后一轮的答复 `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - 冷门字符 tokenizer 问题：
@@ -166,9 +169,9 @@ far_correction_system_prompt_cn = """\
         - 对于多个 tokens 必须合一起才能正确 decode 的情况，要把多个 token 视为一个整体，不要截断 tokens 导致 decode 出异常字符 “�”
         - 你需要通过多输出 tokens 或提前输出 tokens 来避免潜在的 tokenizer decode 出异常文本的问题。
     - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|is_good|><|split|>`，表示不需要修改
-    - 你输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符
+    - 你输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符，禁止把换行符改为 `\n`
     - 也要注意别忽略了 token 内的不可见字符，比如英语单词往往会和其前面的空格合为一个 token, 比如通常是 [` apple`]，而不是 [` `, `apple`]
-
+- 如果回答的 Chain of Thought 过程有问题，不可以跳过 CoT 直接修改最终结果，你应该只认准 “首个不恰当 token”，系统会通过多次操作来一步步地修改到位，最终达到最优的回答
 
 ## Reasoning Model 的定制格式
 - 为了避免 message 的 reasoning 字段内容被 chat template 删掉，带 reasoning 字段的 message 会被特殊处理
@@ -256,10 +259,15 @@ far_tokenizer_agnostic_system_prompt_default = """\
     - `{replacement_token}`: A more appropriate token, expected that after changing to this appropriate token, continuing completion will yield the best and most accurate response
         - Feel free to output a couple more tokens, but keep it to no more than 3 tokens, just enough for `{replacement_token}` to give a clear direction for the correction.
         - The system will extract the normal portion of the response that appears before the inappropriate token, then concatenate the `{replacement_token}`, finally let the policy model continue completing the response.
+        - `{replacement_token}` should connect naturally with the preceding context and guide subsequent completion toward a more reasonable and more accurate direction.
+        - Token boundaries should follow your own tokenizer.
     - Stop token escaping: Each round's response ends with a stop token; use the special token `<|stop|>` to represent the stop token within `{location_tokens}` and `{replacement_token}`
         - For example, to continue writing the last round's response: `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - If the response within the “Correcting Scope” has no issues, output `<|split|><|is_good|><|split|>` to indicate no modification needed
-    - Your output must be absolutely identical, and pay attention to preserving invisible characters such as "spaces, line breaks"
+    - Your output must be absolutely identical, and pay attention to preserving invisible characters such as "spaces, line breaks"; never replace an actual line break with the two-character sequence `\n`
+- A single correction has limited effect. You do not need to fix everything at once, and you do not need to care whether content after the first inappropriate token still has issues. The goal is growth of the already-correct prefix.
+- Just locate what you judge to be the first inappropriate token and modify toward the most reasonable direction. If the policy model's continued output still has issues, the system will run additional correction rounds, so you do not need to worry about policy model limitations.
+- If there are issues in the Chain of Thought, do not skip CoT and directly modify the final result. You should still target only the first inappropriate token; the system will apply multiple correction steps to gradually converge to the optimal response.
 
 
 ## Custom format for Reasoning Model
@@ -347,17 +355,15 @@ far_tokenizer_agnostic_system_prompt_cn = """\
     - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。
         - 可以多生成几个 token，但也别太多(别超过 3 个 token)，只要 `{replacement_token}` 能明确指导出修正方向就可以了
         - 系统会截取出回答中位于不恰当 token 之前的正常部分，然后拼接上 `{replacement_token}`，再由 policy model 继续补全
-        - 所以 `{replacement_token}` 需要承上启下，既能接续前面的正常部分回答，又能引导后续的补全朝着更合理、更准确的方向发展，且自身不能破坏回答的连贯性
+        - `{replacement_token}` 需要和前文衔接自然，并引导后续补全朝更合理、更准确的方向发展
         - tokenizer 以你自己的 tokenizer 为准
-            - 如果担心 tokenizer 差异导致 `{replacement_token}` 没有对齐，可以直接输出 3 个 token 来确保 `{replacement_token}` 能包含 policy model 的一个完整 token
-            - 系统将会用 policy model 的 tokenizer 把 `{replacement_token}` 剪裁为一个 token 后，再来由 policy model 继续补全
     - stop token 转义: 每一轮答复最后都存在 stop token，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
         - 比如, 要续写最后一轮的答复 `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|is_good|><|split|>`，表示不需要修改
     - 你输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符，禁止把换行符改为 `\n`
-- 一次 correction 操作的作用有限，你不需要一次性修改到位，也不用在意位于 “首个不恰当 token” 之后的内容是否还有问题，理论上每次
-- 你只管定位你认为的第一个不恰当的 token，并按照最合理的方向去修改；如果 policy model 补全后的回答还有问题，后续系统还会进行多次修改，所以不必担心 policy model 能力不足问题
-- 如果回答的 Chain of Thought 过程有问题，不可以跳过 CoT 直接修改最终结果，你应该只认准 “首个不恰当 token”，系统会通过多次操作来一步步地修改到位，最终达到最优的结果
+- 一次 correction 操作的作用有限，你不需要一次性修改到位，也不用在意位于 “首个不恰当 token” 之后的内容是否还有问题，目标是尽量让回答的正常部分增长
+- 你只管定位你认为的 “首个不恰当 token” 并按照最合理的方向去修改；如果 policy model 补全后的回答还有问题，后续系统还会进行多次修改，所以不必担心 policy model 能力不足问题
+- 如果回答的 Chain of Thought 过程有问题，不可以跳过 CoT 直接修改最终结果，你应该只认准 “首个不恰当 token”，系统会通过多次操作来一步步地修改到位，最终达到最优的回答
 
 ## Reasoning Model 的定制格式
 - 为了避免 message 的 reasoning 字段内容被 chat template 删掉，带 reasoning 字段的 message 会被特殊处理
@@ -407,6 +413,14 @@ ASSISTANT:
 - `{location_tokens}` 在第一轮 ASSISTANT 能匹配到一处，第二轮 ASSISTANT 能匹配到两处，所以总共有 3 个位置能匹配上 `{location_tokens}`
 - 对于需要被删掉的那一处 `{location_tokens}`，其 `{location_index}` 用正数表示时为 2， 用负数为 -1，由于 -1 绝对值更加小，所以用了 -1
 - 此处 `{replacement_token}` 为 stop token <|stop|>\
+"""
+
+"""Abandoned prompt design：
+        - 所以 `{replacement_token}` 需要承上启下，既能接续前面的正常部分回答，又能引导后续的补全朝着更合理、更准确的方向发展，且自身不能破坏回答的连贯性
+
+        - tokenizer 以你自己的 tokenizer 为准
+            - 如果担心 tokenizer 差异导致 `{replacement_token}` 没有对齐，可以直接输出 3 个 token 来确保 `{replacement_token}` 能包含 policy model 的一个完整 token
+            - 系统将会用 policy model 的 tokenizer 把 `{replacement_token}` 剪裁为一个 token 后，再来由 policy model 继续补全
 """
 
 
