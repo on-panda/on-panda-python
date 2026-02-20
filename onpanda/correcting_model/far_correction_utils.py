@@ -236,6 +236,12 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                 replacement_token=replacement_token,
                 is_good=False,
             )
+        find_and_replace["far_text"] = (
+            f"{self.special_tokens['split']}{find_and_replace['location_text']}"
+            f"{self.special_tokens['split']}"
+            f"{find_and_replace['location_index']}{self.special_tokens['split']}"
+            f"{find_and_replace['replacement_token']}{self.special_tokens['split']}"
+        )
         return dict(
             messages_location=messages_location,
             find_and_replace=find_and_replace,
@@ -259,13 +265,14 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                 location_text="",
                 location_index=0,
                 replacement_token="",
-            )
-            is_good_correcting_msg = dict(
-                role="assistant",
-                content=(
+                far_text=(
                     f"{self.special_tokens['split']}{self.special_tokens['is_good']}"
                     f"{self.special_tokens['split']}"
                 ),
+            )
+            is_good_correcting_msg = dict(
+                role="assistant",
+                content=is_good_find_and_replace["far_text"],
                 correcting=dict(
                     messages_location=is_good_messages_location,
                     find_and_replace=is_good_find_and_replace,
@@ -297,15 +304,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         )
         find_and_replace = correction["find_and_replace"]
         messages_location = correction["messages_location"]
-        correcting_content = (
-            f"{self.special_tokens['split']}{find_and_replace['location_text']}"
-            f"{self.special_tokens['split']}"
-            f"{find_and_replace['location_index']}{self.special_tokens['split']}"
-            f"{find_and_replace['replacement_token']}{self.special_tokens['split']}"
-        )
         correcting_msg = dict(
             role="assistant",
-            content=correcting_content,
+            content=find_and_replace["far_text"],
             correcting=dict(
                 messages_location=messages_location,
                 find_and_replace=find_and_replace,

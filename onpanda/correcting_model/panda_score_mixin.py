@@ -80,12 +80,16 @@ class PandaScoreMixin:
                     replacement_score=reward_with_feedback["replacement_reward"],
                     is_good_cls_score=1.0 if gt_is_good == pred_is_good else 0.0,
                 )
+                reward_result["gt_find_and_replace"] = gt_correction["find_and_replace"]
                 reward_result["panda_score"] = panda_score
                 reward_result["info"] = dict(
                     panda_path=json_path,
                     far_correction_data_idx=far_correction_data_idx,
                     onpanda=far_correction_data[0].get("onpanda"),
                 )
+                reward_result["correcting_result"] = {
+                    k: correcting_result[k] for k in ["corrector_response"]
+                }
                 score_results[(json_path, far_correction_data_idx)] = reward_result
 
                 format_scores.append(panda_score["format_score"])

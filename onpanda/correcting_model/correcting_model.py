@@ -38,12 +38,14 @@ class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin, PandaScoreMixin):
 
     def correcting(self, messages):
         correction_prompt = self.adapter.build_correction_prompt(messages)
-        response_dic = self.chat_corrector(
+        corrector_response = self.chat_corrector(
             correction_prompt,
             return_dict=True,
-            max_tokens=self.adapter.max_location_tokens + 20,
+            # max_tokens=self.adapter.max_location_tokens + 20,  # bad for reasoning model
         )
-        far_text = response_dic["choices"][0]["message"]["content"]
+        far_text = corrector_response["choices"][0]["message"]["content"]
+        if "new_messages" in corrector_response:
+            del corrector_response["new_messages"]
         apply_res = self.adapter.apply(messages, far_text)
         correction = apply_res["correction"]
         is_good = correction["find_and_replace"].get("is_good")
@@ -53,6 +55,7 @@ class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin, PandaScoreMixin):
             partial_messages=partial_messages,
             is_good=is_good,
             far_text=far_text,
+            corrector_response=corrector_response,
         )
 
     def generate_and_apply_correction(self, messages, chat_policy):
