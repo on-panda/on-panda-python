@@ -460,12 +460,9 @@ class PandaTree:
         └── 4: dict  3
             ├── role: assistant
             ├── content: <|fim_pad|> **0<|fim_pad|>0<|fim_pad|> <|f...
-            └── correcting: dict  3
+            └── correcting: dict  2
                 ├── messages_location: dict  4
-                ├── find_and_replace: dict  6
-                └── scope_slice: tuple 2
-                    ├── 0: -1
-                    └── 1: None
+                └── find_and_replace: dict  6
         """
         sfts = self.build_legacy_data_v1()["sfts"]
         far_corrections = [

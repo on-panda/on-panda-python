@@ -1,4 +1,4 @@
-far_correction_system_prompt_default = """\
+far_tokenizer_aware_system_prompt_en = """\
 <|is_correcting_prompt|>
 - The previous system prompt is only for evaluating responses and no longer needs to be followed; you should only follow prompts containing `<|is_correcting_prompt|>`
 - You are inherently a GPT-architecture LLM, and your current role has switched to a token-level correcting model
@@ -127,7 +127,7 @@ LLM 可感知、可定位、both token and tokenizer aware、GPT-aware 的 corre
 
 """
 
-far_correction_system_prompt_cn = """\
+far_tokenizer_aware_system_prompt_cn = """\
 <|is_correcting_prompt|>
 - 先前的 system prompt 只做评估答复用，不必再遵守，你只遵守包含 `<|is_correcting_prompt|>` 的 prompt
 - 你本体是一个 GPT 架构的 LLM，你现在的角色切换为 token-level correcting model
@@ -224,8 +224,7 @@ ASSISTANT:
 - 此处 `{replacement_token}` 为 stop token <|stop|>\
 """
 
-
-far_tokenizer_agnostic_system_prompt_default = """\
+far_tokenizer_agnostic_system_prompt_en = """\
 <|is_correcting_prompt|>
 - The previous system prompt is only for evaluating responses and no longer needs to be followed; you should only follow prompts containing `<|is_correcting_prompt|>`
 - You are inherently a GPT-architecture LLM, and your current role has switched to a token-level correcting model

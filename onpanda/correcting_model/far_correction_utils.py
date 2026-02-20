@@ -13,10 +13,7 @@ with mximport.inpkg():
     from ..token_level_supervision_utils import unicode_tokenizer
     from .verifier import FindAndReplaceVerifier
     from ..utils import get_content_by_path_keys
-    from .system_prompts import (
-        far_correction_system_prompt_default,
-        far_correction_system_prompt_cn,
-    )
+    from . import system_prompts
 
 
 def next_decodable_num(tokens, current_num, tokenizer):
@@ -50,7 +47,8 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         tokenizer=None,
         special_tokens=None,
         max_location_tokens=20,
-        scope_slice=(-1, None),
+        tokenizer_aware=False,
+        system_prompt_language=None,
     ):
         self.verifier = FindAndReplaceVerifier(
             special_tokens=special_tokens,
@@ -58,13 +56,27 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         self.special_tokens = self.verifier.special_tokens
         self.tokenizer = tokenizer or unicode_tokenizer
         self.max_location_tokens = max_location_tokens
-        self.scope_slice = scope_slice
+        self.tokenizer_aware = tokenizer_aware
+        self.system_prompt_language = system_prompt_language
 
-    def build_correction_prompt(self, messages, language=None):
-        if language == "cn":
-            prompt = far_correction_system_prompt_cn
+    def build_correction_prompt(self, messages):
+        """
+        Select system prompt by adapter config.
+        - system_prompt_language == "cn": use Chinese prompt by tokenizer_aware.
+        - otherwise: use English prompt by tokenizer_aware.
+        """
+        if self.system_prompt_language == "cn":
+            prompt = (
+                system_prompts.far_tokenizer_aware_system_prompt_cn
+                if self.tokenizer_aware
+                else system_prompts.far_tokenizer_agnostic_system_prompt_cn
+            )
         else:
-            prompt = far_correction_system_prompt_default
+            prompt = (
+                system_prompts.far_tokenizer_aware_system_prompt_en
+                if self.tokenizer_aware
+                else system_prompts.far_tokenizer_agnostic_system_prompt_en
+            )
         system_prompt = (
             prompt.replace("<|split|>", self.special_tokens["split"])
             .replace("<|stop|>", self.special_tokens["stop"])
@@ -257,7 +269,6 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                 correcting=dict(
                     messages_location=is_good_messages_location,
                     find_and_replace=is_good_find_and_replace,
-                    scope_slice=self.scope_slice,
                 ),
             )
             return self.build_correction_prompt(messages) + [is_good_correcting_msg]
@@ -298,7 +309,6 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             correcting=dict(
                 messages_location=messages_location,
                 find_and_replace=find_and_replace,
-                scope_slice=self.scope_slice,
             ),
         )
         far_correction = self.build_correction_prompt(rejected_messages) + [
