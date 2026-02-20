@@ -130,6 +130,20 @@ class FindAndReplaceVerifier:
                 find_and_replace=default_find_and_replace,
                 far_text=far_text,
             )
+        too_long_reason = ""
+        MAX_SINGLE_TOKEN_LEN = 128
+        if len(location_text) > 21 * MAX_SINGLE_TOKEN_LEN:
+            too_long_reason = "location_text is too long"
+        elif len(replacement_token) > 4 * MAX_SINGLE_TOKEN_LEN:
+            too_long_reason = "replacement_token is too long"
+        if too_long_reason:
+            return dict(
+                reward_with_feedback=dict(
+                    parse_reward=0.0,
+                    parse_feedback=f"parse failed: {too_long_reason}",
+                ),
+                find_and_replace=default_find_and_replace,
+            )
 
         return dict(
             reward_with_feedback=dict(parse_reward=0.5, parse_feedback="parse success"),
