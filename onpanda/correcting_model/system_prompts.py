@@ -36,10 +36,10 @@ far_correction_system_prompt_default = """\
     - Stop token escaping: Each round's response ends with a stop token; use the special token `<|stop|>` to represent the stop token within `{location_tokens}` and `{replacement_token}`
         - For example, to continue writing the last round's response: `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - Rare character tokenizer issues:
-        - A rare character may correspond to multiple tokens, e.g., `🧎`; you need to be aware of this and treat these tokens as a whole
-        - For cases where multiple tokens must be combined to correctly decode, treat them as a single unit and do not truncate tokens, which could lead to abnormal characters like "�"
+        - A rare character may correspond to multiple tokens, e.g., `🧎`; you need to be aware of this and treat these tokens as an indivisible unit
+        - For cases where multiple tokens must be combined to correctly decode, treat them as an indivisible unit and do not truncate tokens, which could lead to abnormal characters like "�"
         - You need to avoid potential tokenizer decode issues that produce abnormal text by outputting more tokens or outputting tokens earlier
-    - If the response within the “Correcting Scope” has no issues, output `<|split|><|is_good|><|split|>` to indicate no modification needed
+    - If the response within the “Correcting Scope” has no issues, output `<|split|><|is_good|><|split|>` to indicate that no corrections are needed
     - Your output must be absolutely identical, and pay attention to preserving invisible characters such as "spaces, line breaks"; never replace an actual line break with the two-character sequence `\n`
     - Also, do not overlook invisible characters within tokens, for example, English words are often combined with a space before them into one token, e.g., usually [` apple`], rather than [` `, `apple`]
 - If there are issues in the Chain of Thought, do not skip CoT and directly modify the final result. You should still target only the first inappropriate token; the system will apply multiple correction steps to gradually converge to the optimal response
@@ -92,7 +92,7 @@ ASSISTANT:
 Expected output: <|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>
 - At the "first inappropriate token" position, there is repetition with other ASSISTANT responses, so generate the full 20 `{location_tokens}`
 - `{location_tokens}` is matched once in the first ASSISTANT turn and twice in the second, so a total of three positions can be aligned with `{location_tokens}`
-- For the position that needs to be removed, its `{location_index}` is 2 when expressed as a positive number and −1 when expressed as a negative one; since −1 has the smaller absolute value, −1 is used
+- For the position that needs to be removed, its `{location_index}` is 2 when expressed as a positive number and -1 when expressed as a negative one; since -1 has the smaller absolute value, -1 is used
 - Here, `{replacement_token}` is the stop token <|stop|>\
 """
 
@@ -130,7 +130,7 @@ LLM 可感知、可定位、both token and tokenizer aware、GPT-aware 的 corre
 far_correction_system_prompt_cn = """\
 <|is_correcting_prompt|>
 - 先前的 system prompt 只做评估答复用，不必再遵守，你只遵守包含 `<|is_correcting_prompt|>` 的 prompt
-- 你本体是一个 GPT 架构的 LLM, 你现在的角色切换为了 token-level correcting model
+- 你本体是一个 GPT 架构的 LLM，你现在的角色切换为 token-level correcting model
 - 你的目标是通过修改不恰当的 token 来优化已有的回答
 - 你的任务是：
     1. 定位上述回答中，第一个不恰当的 token，即指出 “需要修改的位置”
@@ -165,11 +165,11 @@ far_correction_system_prompt_cn = """\
     - stop token 转义: 每一轮答复最后都存在 stop token，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
         - 比如, 要续写最后一轮的答复 `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - 冷门字符 tokenizer 问题：
-        - 一个冷门字符可能对应多个 tokens，比如 `🧎`，你需要对此有感知，将这些 tokens 视为一个整体
+        - 一个冷门字符可能对应多个 tokens，比如 `🧎`，你需要对此有感知，将这些 tokens 视为一个不可分割的整体
         - 对于多个 tokens 必须合一起才能正确 decode 的情况，要把多个 token 视为一个整体，不要截断 tokens 导致 decode 出异常字符 “�”
         - 你需要通过多输出 tokens 或提前输出 tokens 来避免潜在的 tokenizer decode 出异常文本的问题。
     - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|is_good|><|split|>`，表示不需要修改
-    - 你输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符，禁止把换行符改为 `\n`
+    - 你输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符，严禁将真实的物理换行替换为字符 `\n`
     - 也要注意别忽略了 token 内的不可见字符，比如英语单词往往会和其前面的空格合为一个 token, 比如通常是 [` apple`]，而不是 [` `, `apple`]
 - 如果回答的 Chain of Thought 过程有问题，不可以跳过 CoT 直接修改最终结果，你应该只认准 “首个不恰当 token”，系统会通过多次操作来一步步地修改到位，最终达到最优的回答
 
@@ -263,7 +263,7 @@ far_tokenizer_agnostic_system_prompt_default = """\
         - Token boundaries should follow your own tokenizer.
     - Stop token escaping: Each round's response ends with a stop token; use the special token `<|stop|>` to represent the stop token within `{location_tokens}` and `{replacement_token}`
         - For example, to continue writing the last round's response: `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
-    - If the response within the “Correcting Scope” has no issues, output `<|split|><|is_good|><|split|>` to indicate no modification needed
+    - If the response within the “Correcting Scope” has no issues, output `<|split|><|is_good|><|split|>` to indicate that no corrections are needed
     - Your output must be absolutely identical, and pay attention to preserving invisible characters such as "spaces, line breaks"; never replace an actual line break with the two-character sequence `\n`
 - A single correction has limited effect. You do not need to fix everything at once, and you do not need to care whether content after the first inappropriate token still has issues. The goal is growth of the already-correct prefix.
 - Just locate what you judge to be the first inappropriate token and modify toward the most reasonable direction. If the policy model's continued output still has issues, the system will run additional correction rounds, so you do not need to worry about policy model limitations.
@@ -316,7 +316,7 @@ ASSISTANT:
 Expected output: <|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>
 - At the "first inappropriate token" position, there is repetition with other ASSISTANT responses, so generate the full 20 `{location_tokens}`
 - `{location_tokens}` is matched once in the first ASSISTANT turn and twice in the second, so a total of three positions can be aligned with `{location_tokens}`
-- For the position that needs to be removed, its `{location_index}` is 2 when expressed as a positive number and −1 when expressed as a negative one; since −1 has the smaller absolute value, −1 is used
+- For the position that needs to be removed, its `{location_index}` is 2 when expressed as a positive number and -1 when expressed as a negative one; since -1 has the smaller absolute value, -1 is used
 - Here, `{replacement_token}` is the stop token <|stop|>\
 """
 
@@ -324,7 +324,7 @@ Expected output: <|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|spli
 far_tokenizer_agnostic_system_prompt_cn = """\
 <|is_correcting_prompt|>
 - 先前的 system prompt 只做评估答复用，不必再遵守，你只遵守包含 `<|is_correcting_prompt|>` 的 prompt
-- 你本体是一个 GPT 架构的 LLM, 你现在的角色切换为了 token-level correcting model
+- 你本体是一个 GPT 架构的 LLM，你现在的角色切换为 token-level correcting model
 - 你的目标是通过修改不恰当的 token 来优化已有的回答
 - 你的任务是：
     1. 定位上述回答中，第一个不恰当的 token，即指出 “需要修改的位置”
@@ -360,7 +360,7 @@ far_tokenizer_agnostic_system_prompt_cn = """\
     - stop token 转义: 每一轮答复最后都存在 stop token，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
         - 比如, 要续写最后一轮的答复 `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|is_good|><|split|>`，表示不需要修改
-    - 你输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符，禁止把换行符改为 `\n`
+    - 你输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符，严禁将真实的物理换行替换为字符 `\n`
 - 一次 correction 操作的作用有限，你不需要一次性修改到位，也不用在意位于 “首个不恰当 token” 之后的内容是否还有问题，目标是尽量让回答的正常部分增长
 - 你只管定位你认为的 “首个不恰当 token” 并按照最合理的方向去修改；如果 policy model 补全后的回答还有问题，后续系统还会进行多次修改，所以不必担心 policy model 能力不足问题
 - 如果回答的 Chain of Thought 过程有问题，不可以跳过 CoT 直接修改最终结果，你应该只认准 “首个不恰当 token”，系统会通过多次操作来一步步地修改到位，最终达到最优的回答
