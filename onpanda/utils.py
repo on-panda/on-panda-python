@@ -52,6 +52,43 @@ def get_content_by_path_keys(data, path_keys):
     return target
 
 
+JSON_TRUNCATE_LIMIT = 64 * 1024
+JSON_TRUNCATE_KEEP = 1024
+JSON_TRUNCATE_PLACEHOLDER = (
+    "\n\n\n.......................\n{reason}\n.................\n\n\n"
+)
+
+
+def slim_json_strings(
+    data,
+    *,
+    limit=JSON_TRUNCATE_LIMIT,
+    keep=JSON_TRUNCATE_KEEP,
+    placeholder=JSON_TRUNCATE_PLACEHOLDER,
+):
+    """Recursively trim strings that exceed ``limit`` characters."""
+    if isinstance(data, dict):
+        return {
+            key: slim_json_strings(
+                value, limit=limit, keep=keep, placeholder=placeholder
+            )
+            for key, value in data.items()
+        }
+    if isinstance(data, list):
+        return [
+            slim_json_strings(value, limit=limit, keep=keep, placeholder=placeholder)
+            for value in data
+        ]
+    if isinstance(data, str):
+        if len(data) <= limit:
+            return data
+        head = data[:keep]
+        tail = data[-keep:]
+        reason = f"omitted {len(data) - 2 * keep} chars"
+        return head + placeholder.format(reason=reason) + tail
+    return data
+
+
 if __name__ == "__main__":
     pass
     image_url_msg_example = [

@@ -9,7 +9,10 @@ import os
 import mximport
 
 with mximport.inpkg():
-    from ..utils import remove_msgs_after_last_response_role
+    from ..utils import (
+        remove_msgs_after_last_response_role,
+        slim_json_strings,
+    )
 
 
 class PandaScoreMixin:
@@ -90,6 +93,9 @@ class PandaScoreMixin:
                 reward_result["correcting_result"] = {
                     k: correcting_result[k] for k in ["corrector_response"]
                 }
+                reward_result["correcting_result"]["trimmed_messages"] = (
+                    slim_json_strings(messages)
+                )
                 score_results[(json_path, far_correction_data_idx)] = reward_result
 
                 format_scores.append(panda_score["format_score"])
