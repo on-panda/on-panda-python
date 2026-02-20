@@ -137,7 +137,7 @@ far_tokenizer_aware_system_prompt_cn = """\
     2. 提供更加恰当的 token 来替换不恰当 token，即指出 “更好的回答方向”
         - 系统将把不恰当 token 及其之后的内容删掉，替换为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
 - Correcting 范围：所有 <|correcting_span_description_begin|> 所描述的范围
-    - 只评估这些描述范围内的属于模型输出的内容，尝试找出其中的“首个不恰当 token”
+    - 只评估这些描述范围内的属于模型输出的内容，尝试找出其中的 “首个不恰当 token”
     - 若没有带 <|correcting_span_description_begin|> 的范围描述，则默认评估最后一条回答内容
 - 如果 <|special_correcting_instruction_begin|> 有特殊指令，请务必遵守
 - 由于你作为 LLM 能输出文本，请按照以下定义的 “Find and Replace” 文本格式来输出你的 correction 操作:
