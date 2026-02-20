@@ -135,7 +135,7 @@ far_correction_system_prompt_cn = """\
     2. 提供更加恰当的 token 来替换不恰当 token，即指出 “更好的回答方向”
         - 系统将把不恰当 token 及其之后的内容删掉，替换为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
 - Correcting 范围：所有 <|correcting_span_description_begin|> 所描述的范围
-    - 只评估这些描述范围内的属于模型输出的内容，尝试找出其中的首个“不恰当 token”
+    - 只评估这些描述范围内的属于模型输出的内容，尝试找出其中的“首个不恰当 token”
     - 若没有带 <|correcting_span_description_begin|> 的范围描述，则默认评估最后一条回答内容
 - 如果 <|special_correcting_instruction_begin|> 有特殊指令，请务必遵守
 - 由于你作为 LLM 能输出文本，请按照以下定义的 “Find and Replace” 文本格式来输出你的 correction 操作:
@@ -154,7 +154,7 @@ far_correction_system_prompt_cn = """\
     - `{location_index}` 表示在所有模型输出的 tokens 中, 能被 `{location_tokens}` 匹配上的所有位置中的第几个位置
         - 是一个 int 数值，从 0 开始计数，支持负数，和 Python list 的 index 一致
         - 当用负数表示 index 时的绝对值比正数 index 更加小的时候，`{location_index}` 就用负数表示
-    - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置。
+    - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “首个不恰当 token” 的位置。
     - `{location_tokens}` 和 `{location_index}` 的匹配范围为所有模型输出的内容，不被 “Correcting 范围” 所限制
     - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。
         - 只需一个 token 即可，但要确保能被 tokenizer decode 为完整字符
@@ -215,7 +215,7 @@ Reply again
 ASSISTANT:
 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
 期望的输出: <|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>
-- “第一个不恰当 token”处和其他 ASSISTANT 的回答有重复，所以会生成完整 20 个 `{location_tokens}`
+- “首个不恰当 token”处和其他 ASSISTANT 的回答有重复，所以会生成完整 20 个 `{location_tokens}`
 - `{location_tokens}` 在第一轮 ASSISTANT 能匹配到一处，第二轮 ASSISTANT 能匹配到两处，所以总共有 3 个位置能匹配上 `{location_tokens}`
 - 对于需要被删掉的那一处 `{location_tokens}`，其 `{location_index}` 用正数表示时为 2， 用负数为 -1，由于 -1 绝对值更加小，所以用了 -1
 - 此处 `{replacement_token}` 为 stop token <|stop|>\
@@ -323,7 +323,7 @@ far_tokenizer_agnostic_system_prompt_cn = """\
     2. 提供更加恰当的 token 来替换不恰当 token，即指出 “更好的回答方向”
         - 系统将把不恰当 token 及其之后的内容删掉，替换为更加恰当的 token，使得基于 “恰当 token” 继续做补全能获得最好、最准确的答复
 - Correcting 范围：所有 <|correcting_span_description_begin|> 所描述的范围
-    - 只评估这些描述范围内的属于模型输出的内容，尝试找出其中的首个“不恰当 token”
+    - 只评估这些描述范围内的属于模型输出的内容，尝试找出其中的 “首个不恰当 token”
     - 若没有带 <|correcting_span_description_begin|> 的范围描述，则默认评估最后一条回答内容
 - 如果 <|special_correcting_instruction_begin|> 有特殊指令，请务必遵守
 - 由于你作为 LLM 能输出文本，请按照以下定义的 “Find and Replace” 文本格式来输出你的 correction 操作:
@@ -342,16 +342,22 @@ far_tokenizer_agnostic_system_prompt_cn = """\
     - `{location_index}` 表示在所有模型输出的 tokens 中, 能被 `{location_tokens}` 匹配上的所有位置中的第几个位置
         - 是一个 int 数值，从 0 开始计数，支持负数，和 Python list 的 index 一致
         - 当用负数表示 index 时的绝对值比正数 index 明显小的时候，`{location_index}` 推荐优先使用负数表示
-    - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “第一个不恰当 token” 的位置。
+    - `{location_tokens}` 和 `{location_index}` 配合后，能在所有答复中共同定位一个唯一的位置，即 “首个不恰当 token” 的位置。
     - `{location_tokens}` 和 `{location_index}` 的匹配范围为所有模型输出的内容，不被 “Correcting 范围” 所限制
     - `{replacement_token}`: 更加恰当的 token，期望改为恰当 token 后，继续做补全能获得最好、最准确的答复。
         - 可以多生成几个 token，但也别太多(别超过 3 个 token)，只要 `{replacement_token}` 能明确指导出修正方向就可以了
         - 系统会截取出回答中位于不恰当 token 之前的正常部分，然后拼接上 `{replacement_token}`，再由 policy model 继续补全
+        - 所以 `{replacement_token}` 需要承上启下，既能接续前面的正常部分回答，又能引导后续的补全朝着更合理、更准确的方向发展，且自身不能破坏回答的连贯性
+        - tokenizer 以你自己的 tokenizer 为准
+            - 如果担心 tokenizer 差异导致 `{replacement_token}` 没有对齐，可以直接输出 3 个 token 来确保 `{replacement_token}` 能包含 policy model 的一个完整 token
+            - 系统将会用 policy model 的 tokenizer 把 `{replacement_token}` 剪裁为一个 token 后，再来由 policy model 继续补全
     - stop token 转义: 每一轮答复最后都存在 stop token，在 `{location_tokens}`,`{replacement_token}` 中使用 special token `<|stop|>` 来表示 stop token
         - 比如, 要续写最后一轮的答复 `<|split|><|stop|><|split|>-1<|split|>{continue token}<|split|>`
     - 如果 Correcting 范围内的回答都没有问题，输出 `<|split|><|is_good|><|split|>`，表示不需要修改
-    - 你输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符
-
+    - 你输出的内容要分毫不差，并注意保留 “空格、换行符” 等不可见字符，禁止把换行符改为 `\n`
+- 一次 correction 操作的作用有限，你不需要一次性修改到位，也不用在意位于 “首个不恰当 token” 之后的内容是否还有问题，理论上每次
+- 你只管定位你认为的第一个不恰当的 token，并按照最合理的方向去修改；如果 policy model 补全后的回答还有问题，后续系统还会进行多次修改，所以不必担心 policy model 能力不足问题
+- 如果回答的 Chain of Thought 过程有问题，不可以跳过 CoT 直接修改最终结果，你应该只认准 “首个不恰当 token”，系统会通过多次操作来一步步地修改到位，最终达到最优的结果
 
 ## Reasoning Model 的定制格式
 - 为了避免 message 的 reasoning 字段内容被 chat template 删掉，带 reasoning 字段的 message 会被特殊处理
@@ -397,7 +403,7 @@ Reply again
 ASSISTANT:
 1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;|1;2;3;4;5;6;7;8;9;8;
 期望的输出: <|split|>|1;2;3;4;5;6;7;8;9;8<|split|>-1<|split|><|stop|><|split|>
-- “第一个不恰当 token”处和其他 ASSISTANT 的回答有重复，所以会生成完整 20 个 `{location_tokens}`
+- “首个不恰当 token”处和其他 ASSISTANT 的回答有重复，所以会生成完整 20 个 `{location_tokens}`
 - `{location_tokens}` 在第一轮 ASSISTANT 能匹配到一处，第二轮 ASSISTANT 能匹配到两处，所以总共有 3 个位置能匹配上 `{location_tokens}`
 - 对于需要被删掉的那一处 `{location_tokens}`，其 `{location_index}` 用正数表示时为 2， 用负数为 -1，由于 -1 绝对值更加小，所以用了 -1
 - 此处 `{replacement_token}` 为 stop token <|stop|>\
