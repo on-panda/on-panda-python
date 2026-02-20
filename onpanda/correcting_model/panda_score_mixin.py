@@ -81,7 +81,11 @@ class PandaScoreMixin:
                     is_good_cls_score=1.0 if gt_is_good == pred_is_good else 0.0,
                 )
                 reward_result["panda_score"] = panda_score
-                reward_result["info"] = dict(panda_path=json_path, far_correction_data_idx=far_correction_data_idx, onpanda=far_correction_data[0].get("onpanda"))
+                reward_result["info"] = dict(
+                    panda_path=json_path,
+                    far_correction_data_idx=far_correction_data_idx,
+                    onpanda=far_correction_data[0].get("onpanda"),
+                )
                 score_results[(json_path, far_correction_data_idx)] = reward_result
 
                 format_scores.append(panda_score["format_score"])
@@ -123,21 +127,26 @@ class PandaScoreMixin:
             panda_json_num=len(panda_json_paths),
             score_results=score_results,
         )
+
     def summary_panda_scores(self, panda_scores):
-        return '\n'.join([
-            f"{k}: {round(panda_scores[k],3)}"
-            for k in (
-                "format_score",
-                "location_score",
-                "replacement_score",
-                "is_good_cls_score",
-                "location_on_not_good_score",
-                "replacement_on_not_good_score",
-                "replacement_on_true_location_score",
-                "not_good_num",
-                "true_location_num","score_result_num","panda_json_num"
-            )
-        ])
+        return "\n".join(
+            [
+                f"{k}: {round(panda_scores[k],3)}"
+                for k in (
+                    "format_score",
+                    "location_score",
+                    "replacement_score",
+                    "is_good_cls_score",
+                    "location_on_not_good_score",
+                    "replacement_on_not_good_score",
+                    "replacement_on_true_location_score",
+                    "not_good_num",
+                    "true_location_num",
+                    "score_result_num",
+                    "panda_json_num",
+                )
+            ]
+        )
 
 
 if __name__ == "__main__":
@@ -158,8 +167,6 @@ if __name__ == "__main__":
     # correcting_model = build_test_correcting_model(tokenizer="/home/yl/audio/asset/tokenizer/step1f/")
     # test_json_paths = sorted(glob("/home/yl/audio/jili_tracelogs_bmk/step1f_tracelogs2_batch5_jili_bmk/*.panda.json"))[:13]
     panda_scores = correcting_model.eval_panda_score(test_json_paths)
-    print(
-        correcting_model.summary_panda_scores(panda_scores)
-    )
+    print(correcting_model.summary_panda_scores(panda_scores))
     score_results = list(panda_scores["score_results"].values())
     tree(score_results[-1])
