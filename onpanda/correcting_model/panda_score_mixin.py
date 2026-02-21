@@ -210,7 +210,11 @@ class PandaScoreMixin:
     def summary_panda_score(self, panda_score):
         return "\n".join(
             [
-                f"{k}: {round(panda_score[k],3)}"
+                (
+                    f"{k}: {(panda_score[k])*100:04.1f}%"
+                    if isinstance(panda_score[k], float)
+                    else f"{k}: {panda_score[k]}"
+                )
                 for k in (
                     "format_score",
                     "location_score",
