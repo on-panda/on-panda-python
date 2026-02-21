@@ -56,7 +56,7 @@ class FindAndReplaceVerifier:
         normalized_replacement_token = replacement_token.split(stop_token, 1)[0]
         return normalized_replacement_token, has_stop_token
 
-    def _build_good_prefix_and_fork_location(self, rejected_content_str, correction):
+    def _build_good_prefix_and_char_location(self, rejected_content_str, correction):
         path_keys = correction["messages_location"]["path_keys"]
         char_index = correction["messages_location"]["char_index"]
         replacement_token = correction["find_and_replace"]["replacement_token"]
@@ -71,10 +71,10 @@ class FindAndReplaceVerifier:
             and rejected_content_str[fork_char_index] == good_prefix[fork_char_index]
         ):
             fork_char_index += 1
-        fork_messages_location = dict(
+        char_messages_location = dict(
             path_keys=list(path_keys), char_index=fork_char_index
         )
-        return good_prefix, fork_messages_location
+        return good_prefix, char_messages_location
 
     def parse(self, far_text):
         default_find_and_replace = dict(
@@ -293,6 +293,25 @@ class FindAndReplaceVerifier:
         )
 
     def compute_reward(self, messages, far_text, gt_correction):
+        """
+        reward computation logic:
+        ```python
+        F = format_reward
+        L = location
+        R = replacement
+
+        if parse_fail:
+            return F0,L0,R0
+        if not_found:
+            return F0.5,L0,R0
+        _build_good_prefix_and_char_fork_location for both pred and gt
+        if pred_location != gt_location:
+            return F1,L0,R0
+        if pred_good_prefix.startswith(gt_good_prefix):
+            return F1,L1,R1
+        return F1,L1,R0
+        ```
+        """
         assert isinstance(messages, list), type(messages)
         if messages and messages[-1]["role"] == "assistant":
             last_content = self._content_to_text(messages[-1].get("content", ""))
@@ -382,14 +401,14 @@ class FindAndReplaceVerifier:
                     rejected_content_str = self._content_to_text(gt_content)
 
                     # using tokenizer-agnostic char level, instead of token level, for fork location index in verifier
-                    gt_good_prefix, gt_fork_messages_location = (
-                        self._build_good_prefix_and_fork_location(
+                    gt_good_prefix, gt_char_messages_location = (
+                        self._build_good_prefix_and_char_location(
                             rejected_content_str=rejected_content_str,
                             correction=gt_correction,
                         )
                     )
-                    pred_good_prefix, pred_fork_messages_location = (
-                        self._build_good_prefix_and_fork_location(
+                    pred_good_prefix, pred_char_messages_location = (
+                        self._build_good_prefix_and_char_location(
                             rejected_content_str=rejected_content_str,
                             correction=correction,
                         )
@@ -397,8 +416,8 @@ class FindAndReplaceVerifier:
                     # tokenizer_agnostic location reward
                     location_reward = float(
                         self._has_same_location(
-                            pred_fork_messages_location,
-                            gt_fork_messages_location,
+                            pred_char_messages_location,
+                            gt_char_messages_location,
                         )
                     )
                     if location_reward:
