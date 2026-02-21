@@ -336,7 +336,7 @@ class FindAndReplaceVerifier:
             format_feedback = "format success: is_good format"
         elif parse_reward == 0.0:
             format_reward = 0.0
-            format_feedback = f"format failed: {parse_feedback}"
+            format_feedback = f'format failed: "{parse_feedback}"'
         else:
             find_format_reward = 0.5 if not pred_location.get("not_found") else 0.0
             format_reward = parse_reward + find_format_reward
@@ -347,7 +347,7 @@ class FindAndReplaceVerifier:
             else:
                 format_feedback = (
                     "format half: find not matched "
-                    f"(reason={find_feedback}, match_num={match_num})"
+                    f'(reason="{find_feedback}", match_num={match_num})'
                 )
 
         gt_is_good = bool(
