@@ -51,7 +51,7 @@ class FindAndReplaceVerifier:
         good_prefix = rejected_content_str[:char_index]
         if replacement_token != self.special_tokens["stop"]:
             good_prefix += replacement_token
-        fork_char_index = 0
+        fork_char_index = char_index
         max_common_len = min(len(rejected_content_str), len(good_prefix))
         while (
             fork_char_index < max_common_len
@@ -382,15 +382,24 @@ class FindAndReplaceVerifier:
                             gt_fork_messages_location,
                         )
                     )
-                    # loose_reward that allow longer replacement_tokens
-                    replacement_reward = float(
-                        pred_good_prefix.startswith(gt_good_prefix)
-                    )
-
                     if location_reward:
                         location_feedback = "location matched: fork"
+                        if (
+                            gt_find_and_replace["replacement_token"]
+                            == self.special_tokens["stop"]
+                        ):
+                            replacement_reward = float(
+                                pred_find_and_replace["replacement_token"]
+                                == self.special_tokens["stop"]
+                            )
+                        else:
+                            # loose_reward that allow longer replacement_tokens
+                            replacement_reward = float(
+                                pred_good_prefix.startswith(gt_good_prefix)
+                            )
                     else:
                         location_feedback = "location mismatch: fork"
+                        replacement_reward = 0.0
 
                     if replacement_reward:
                         replacement_feedback = "replacement matched: prefix"
