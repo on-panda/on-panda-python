@@ -362,6 +362,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         path_keys = messages_location["path_keys"]
         char_index = messages_location["char_index"]
         replacement_token = find_and_replace["replacement_token"]
+        normalized_replacement_token, has_stop_token = (
+            self.verifier._normalize_replacement_token(replacement_token)
+        )
         partial_messages = deepcopy(messages[: path_keys[0] + 1])
 
         field_text = get_content_by_path_keys(partial_messages, path_keys)
@@ -370,14 +373,11 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             field_text = mxlm.get_text_content(field_text)
 
         good_prefix = field_text[:char_index]
-        if self.special_tokens["stop"] == replacement_token:
-            corrected_field_text = good_prefix
-        else:
-            corrected_field_text = good_prefix + replacement_token
+        corrected_field_text = good_prefix + normalized_replacement_token
         self._set_by_path(partial_messages, path_keys, corrected_field_text)
 
         if path_keys[-1] == "content":
-            if self.special_tokens["stop"] == replacement_token:
+            if has_stop_token:
                 partial_messages[-1]["finish_reason"] = "stop"
             elif "finish_reason" in partial_messages[-1]:
                 del partial_messages[-1]["finish_reason"]

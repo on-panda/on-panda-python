@@ -5,11 +5,14 @@ Created on Wed Feb 18 03:15:00 2026
 
 @author: DIYer22
 """
-from copy import deepcopy
-from onpanda.utils import get_content_by_path_keys
 
 
 class FindAndReplaceVerifier:
+    """
+    Tokenizer-agnostic FindAndReplaceVerifier
+    This class can standalone without dependency.
+    """
+
     default_special_tokens = dict(
         split="<|split|>",
         stop="<|stop|>",
@@ -44,13 +47,23 @@ class FindAndReplaceVerifier:
             and location1.get("char_index") == location2.get("char_index")
         )
 
+    def _normalize_replacement_token(self, replacement_token):
+        """
+        Normalize the replacement_token by removing stop token, and return whether it has the stop token.
+        """
+        stop_token = self.special_tokens["stop"]
+        has_stop_token = stop_token in replacement_token
+        normalized_replacement_token = replacement_token.split(stop_token, 1)[0]
+        return normalized_replacement_token, has_stop_token
+
     def _build_good_prefix_and_fork_location(self, rejected_content_str, correction):
         path_keys = correction["messages_location"]["path_keys"]
         char_index = correction["messages_location"]["char_index"]
         replacement_token = correction["find_and_replace"]["replacement_token"]
-        good_prefix = rejected_content_str[:char_index]
-        if replacement_token != self.special_tokens["stop"]:
-            good_prefix += replacement_token
+        normalized_replacement_token, _ = self._normalize_replacement_token(
+            replacement_token
+        )
+        good_prefix = rejected_content_str[:char_index] + normalized_replacement_token
         fork_char_index = char_index
         max_common_len = min(len(rejected_content_str), len(good_prefix))
         while (
@@ -252,7 +265,9 @@ class FindAndReplaceVerifier:
                 start = index + 1
         match_num = len(messages_locations)
         if match_num and -match_num <= location_index < match_num:
-            messages_location = deepcopy(messages_locations[location_index])
+            messages_location = __import__("copy").deepcopy(
+                messages_locations[location_index]
+            )
             messages_location["match_num"] = match_num
             messages_location["patch_length"] = len(location_text)
             messages_location["find_feedback"] = "matched"
@@ -296,6 +311,7 @@ class FindAndReplaceVerifier:
         match_num = pred_location.get("match_num", 0)
         find_feedback = pred_location.get("find_feedback", "")
 
+        # Compute format_reward
         if pred_find_and_replace.get("is_good"):
             format_reward = 1.0 if parse_reward > 0.0 else 0.0
             format_feedback = "format success: is_good format"
@@ -345,17 +361,8 @@ class FindAndReplaceVerifier:
                 replacement_reward = 0.0
                 location_feedback = "location mismatch: pred is_good"
                 replacement_feedback = "replacement mismatch: pred is_good"
-            else:  # using tokenizer_agnostic_loose_reward for location_reward and replacement_reward
+            else:
                 gt_path_keys = gt_messages_location["path_keys"]
-                rejected_content_str = self._content_to_text(
-                    get_content_by_path_keys(messages, gt_path_keys)
-                )
-                gt_good_prefix, gt_fork_messages_location = (
-                    self._build_good_prefix_and_fork_location(
-                        rejected_content_str=rejected_content_str,
-                        correction=gt_correction,
-                    )
-                )
 
                 pred_not_found = pred_location.get("not_found")
                 pred_path_keys = pred_location.get("path_keys")
@@ -368,14 +375,26 @@ class FindAndReplaceVerifier:
                     else:
                         location_feedback = "location mismatch: path_keys mismatch"
                         replacement_feedback = "replacement skipped: path_keys mismatch"
-                else:
+                else:  # using tokenizer_agnostic_loose_reward for location_reward and replacement_reward
+                    gt_content = messages
+                    for key in gt_path_keys:
+                        gt_content = gt_content[key]
+                    rejected_content_str = self._content_to_text(gt_content)
+
+                    # using tokenizer-agnostic char level, instead of token level, for fork location index in verifier
+                    gt_good_prefix, gt_fork_messages_location = (
+                        self._build_good_prefix_and_fork_location(
+                            rejected_content_str=rejected_content_str,
+                            correction=gt_correction,
+                        )
+                    )
                     pred_good_prefix, pred_fork_messages_location = (
                         self._build_good_prefix_and_fork_location(
                             rejected_content_str=rejected_content_str,
                             correction=correction,
                         )
                     )
-                    # tokenizer_agnostic_reward
+                    # tokenizer_agnostic location reward
                     location_reward = float(
                         self._has_same_location(
                             pred_fork_messages_location,
@@ -384,13 +403,16 @@ class FindAndReplaceVerifier:
                     )
                     if location_reward:
                         location_feedback = "location matched: fork"
-                        if (
+                        _, gt_has_stop_token = self._normalize_replacement_token(
                             gt_find_and_replace["replacement_token"]
-                            == self.special_tokens["stop"]
-                        ):
+                        )
+                        _, pred_has_stop_token = self._normalize_replacement_token(
+                            pred_find_and_replace["replacement_token"]
+                        )
+                        if gt_has_stop_token:
                             replacement_reward = float(
-                                pred_find_and_replace["replacement_token"]
-                                == self.special_tokens["stop"]
+                                pred_has_stop_token
+                                and pred_good_prefix == gt_good_prefix
                             )
                         else:
                             # loose_reward that allow longer replacement_tokens

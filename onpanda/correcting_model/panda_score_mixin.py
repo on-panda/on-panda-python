@@ -211,7 +211,7 @@ class PandaScoreMixin:
         return "\n".join(
             [
                 (
-                    f"{k}: {(panda_score[k])*100:04.1f}%"
+                    f"{k}: {(panda_score[k])*100:05.2f}%"
                     if isinstance(panda_score[k], float)
                     else f"{k}: {panda_score[k]}"
                 )
