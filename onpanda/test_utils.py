@@ -33,7 +33,5 @@ def get_test_rejected_msgs1():
             },
         },
     ]
-    far_text_gt1 = (
-        "<|fim_pad|> potato<|fim_pad|>0<|fim_pad|> orange<|fim_pad|>"
-    )
+    far_text_gt1 = "<|fim_pad|> potato<|fim_pad|>0<|fim_pad|> orange<|fim_pad|>"
     return rejected_msgs1, far_text_gt1

@@ -74,12 +74,11 @@ class PandaScoreMixin:
                 gt_correction["find_and_replace"].get("is_good")
                 or gt_correction["messages_location"].get("is_good")
             )
-            pred_is_good = bool(correcting_result.get("is_good"))
             panda_score = dict(
                 format_score=reward_with_feedback["format_reward"],
                 location_score=reward_with_feedback["location_reward"],
                 replacement_score=reward_with_feedback["replacement_reward"],
-                is_good_cls_score=1.0 if gt_is_good == pred_is_good else 0.0,
+                is_good_cls_score=reward_with_feedback["is_good_cls_reward"],
             )
             reward_result["gt_find_and_replace"] = gt_correction["find_and_replace"]
             reward_result["panda_score"] = panda_score

@@ -331,6 +331,15 @@ class FindAndReplaceVerifier:
         pred_location = correction["messages_location"]
         match_num = pred_location.get("match_num", 0)
         find_feedback = pred_location.get("find_feedback", "")
+        gt_is_good = bool(
+            gt_find_and_replace.get("is_good") or gt_messages_location.get("is_good")
+        )
+        pred_is_good = bool(
+            pred_find_and_replace.get("is_good") or pred_location.get("is_good")
+        )
+        is_good_cls_reward = (
+            float(gt_is_good == pred_is_good) if parse_reward > 0.0 else 0.0
+        )
 
         # Compute format_reward
         if pred_find_and_replace.get("is_good"):
@@ -354,9 +363,6 @@ class FindAndReplaceVerifier:
                     f'(reason="{find_feedback}", match_num={match_num})'
                 )
 
-        gt_is_good = bool(
-            gt_find_and_replace.get("is_good") or gt_messages_location.get("is_good")
-        )
         if gt_is_good:
             location_reward = 1.0 if pred_find_and_replace.get("is_good") else 0.0
             replacement_reward = location_reward
@@ -376,9 +382,6 @@ class FindAndReplaceVerifier:
                     messages,
                     gt_messages_location,
                 )
-            pred_is_good = bool(
-                pred_find_and_replace.get("is_good") or pred_location.get("is_good")
-            )
             if pred_is_good:
                 location_reward = 0.0
                 replacement_reward = 0.0
@@ -473,6 +476,7 @@ class FindAndReplaceVerifier:
             format_reward=format_reward,
             location_reward=location_reward,
             replacement_reward=replacement_reward,
+            is_good_cls_reward=is_good_cls_reward,
             format_feedback=format_feedback,
             feedback=feedback,
         )
@@ -512,6 +516,7 @@ if __name__ == "__main__":
                 format_reward=1.0,
                 location_reward=1.0,
                 replacement_reward=1.0,
+                is_good_cls_reward=1.0,
             ),
         ),
         (
@@ -521,6 +526,7 @@ if __name__ == "__main__":
                 format_reward=1.0,
                 location_reward=1.0,
                 replacement_reward=0.0,
+                is_good_cls_reward=1.0,
             ),
         ),
         (
@@ -530,6 +536,7 @@ if __name__ == "__main__":
                 format_reward=1.0,
                 location_reward=0.0,
                 replacement_reward=0.0,
+                is_good_cls_reward=1.0,
             ),
         ),
         (
@@ -539,6 +546,7 @@ if __name__ == "__main__":
                 format_reward=1.0,
                 location_reward=0.0,
                 replacement_reward=0.0,
+                is_good_cls_reward=0.0,
             ),
         ),
         (
@@ -548,6 +556,7 @@ if __name__ == "__main__":
                 format_reward=0.0,
                 location_reward=0.0,
                 replacement_reward=0.0,
+                is_good_cls_reward=0.0,
             ),
         ),
         (
@@ -557,6 +566,7 @@ if __name__ == "__main__":
                 format_reward=0.5,
                 location_reward=0.0,
                 replacement_reward=0.0,
+                is_good_cls_reward=1.0,
             ),
         ),
         (
@@ -566,6 +576,7 @@ if __name__ == "__main__":
                 format_reward=1.0,
                 location_reward=1.0,
                 replacement_reward=1.0,
+                is_good_cls_reward=1.0,
             ),
         ),
     ]
