@@ -338,8 +338,12 @@ class PandaTree:
         ), "token_level_supervision needs to set tokenizer, or you could using onpanda.unicode_tokenizer"
         token_levels = []
         for rejected_key, chosen_key in self.fork_pairs:
-            chosen_msgs = mxlm.normalize_messages(self.data["dialogs"][chosen_key]["messages"])
-            rejected_msgs = mxlm.normalize_messages(self.data["dialogs"][rejected_key]["messages"])
+            chosen_msgs = mxlm.normalize_messages(
+                self.data["dialogs"][chosen_key]["messages"]
+            )
+            rejected_msgs = mxlm.normalize_messages(
+                self.data["dialogs"][rejected_key]["messages"]
+            )
             chosen_content = chosen_msgs[-1]["content"]
             rejected_content = rejected_msgs[-1]["content"]
             token_level_info = compute_token_level_supervision(
