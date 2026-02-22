@@ -33,7 +33,7 @@ def get_test_rejected_msgs1():
             },
         },
     ]
-    ntp_as_correcting_text_gt1 = (
+    far_text_gt1 = (
         "<|fim_pad|> potato<|fim_pad|>0<|fim_pad|> orange<|fim_pad|>"
     )
-    return rejected_msgs1, ntp_as_correcting_text_gt1
+    return rejected_msgs1, far_text_gt1

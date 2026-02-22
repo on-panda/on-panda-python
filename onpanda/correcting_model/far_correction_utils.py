@@ -423,13 +423,13 @@ if __name__ == "__main__":
     assert decodable["next_num"] != 1, decodable
 
     # test sample case
-    rejected_msgs1, ntp_as_correcting_text_gt1 = get_test_rejected_msgs1()[:2]
+    rejected_msgs1, far_text_gt1 = get_test_rejected_msgs1()[:2]
 
     result1 = far_adapter.build_correction_from_rejected_messages(rejected_msgs1)
     assert result1["find_and_replace"]["location_text"] == " potato", result1
     assert result1["find_and_replace"]["location_index"] == 0, result1
 
-    correction1 = far_adapter.apply(rejected_msgs1, ntp_as_correcting_text_gt1)
+    correction1 = far_adapter.apply(rejected_msgs1, far_text_gt1)
     assert correction1["partial_messages"][-1]["content"] == "Apple, orange"
     assert (
         "finish_reason" not in correction1["partial_messages"][-1]
@@ -442,9 +442,9 @@ if __name__ == "__main__":
     panda_tree = build_test_panda_tree(test_json)
     far_correction2 = panda_tree.build_far_correction_data_v1(far_adapter)[-1]
     correcting_content2 = far_correction2[-1]["content"]
-    ntp_as_correcting_text_gt2 = "<|fim_pad|>|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|><|fim_pad|>"
-    assert correcting_content2 == ntp_as_correcting_text_gt2, correcting_content2
-    correction2 = far_adapter.apply(far_correction2[:-2], ntp_as_correcting_text_gt2)
+    far_text_gt2 = "<|fim_pad|>|1;2;3;4;5;6;7;8;9;8<|fim_pad|>-1<|fim_pad|><|fim_suffix|><|fim_pad|>"
+    assert correcting_content2 == far_text_gt2, correcting_content2
+    correction2 = far_adapter.apply(far_correction2[:-2], far_text_gt2)
     assert correction2["partial_messages"][-1]["finish_reason"] == "stop"
 
     # test far_correction extreme cases: chosen continue
