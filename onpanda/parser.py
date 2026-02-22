@@ -247,7 +247,7 @@ class PandaTree:
         sfts = []
         for dense_key in self.dense_keys:
             dialog = dialogs[dense_key]
-            messages = deepcopy(dialog["messages"])
+            messages = mxlm.normalize_messages(dialog["messages"])
             # add onpanda
             onpanda_info = {"dialog_key": dense_key}
             if data.get("uuid"):
@@ -259,7 +259,7 @@ class PandaTree:
             rejected = dialogs[rejected_key]
             chosen = dialogs[chosen_key]
             assert rejected["prompt_hash"] == chosen["prompt_hash"]
-            preference = deepcopy(
+            preference = mxlm.normalize_messages(
                 rejected["messages"][:-1]
                 + [rejected["messages"][-1], chosen["messages"][-1]]
             )
@@ -338,8 +338,8 @@ class PandaTree:
         ), "token_level_supervision needs to set tokenizer, or you could using onpanda.unicode_tokenizer"
         token_levels = []
         for rejected_key, chosen_key in self.fork_pairs:
-            chosen_msgs = self.data["dialogs"][chosen_key]["messages"]
-            rejected_msgs = self.data["dialogs"][rejected_key]["messages"]
+            chosen_msgs = mxlm.normalize_messages(self.data["dialogs"][chosen_key]["messages"])
+            rejected_msgs = mxlm.normalize_messages(self.data["dialogs"][rejected_key]["messages"])
             chosen_content = chosen_msgs[-1]["content"]
             rejected_content = rejected_msgs[-1]["content"]
             token_level_info = compute_token_level_supervision(

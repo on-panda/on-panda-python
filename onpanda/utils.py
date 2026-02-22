@@ -59,6 +59,7 @@ JSON_TRUNCATE_PLACEHOLDER = (
 )
 
 
+# TODO mv to mxdebug or mxcore
 def slim_json_strings(
     data,
     *,
