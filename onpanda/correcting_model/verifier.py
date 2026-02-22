@@ -105,7 +105,7 @@ class FindAndReplaceVerifier:
         ]:
             return dict(
                 reward_with_feedback=dict(
-                    parse_reward=0.5, parse_feedback="parse success: is_good format"
+                    parse_reward=1.0, parse_feedback="parse success: is_good format"
                 ),
                 find_and_replace=dict(
                     is_good=True,
@@ -116,22 +116,24 @@ class FindAndReplaceVerifier:
                 ),
             )
 
-        splits = mid_text.split(self.special_tokens["split"])
-        if len(splits) != 3:
+        split_token = self.special_tokens["split"]
+        split_count = far_text.count(split_token)
+        if split_count != 4:
             return dict(
                 reward_with_feedback=dict(
                     parse_reward=0.0,
                     parse_feedback=(
-                        "parse failed: expect 3 fields split by "
-                        f"`{self.special_tokens['split']}`"
+                        f"parse failed: expect count(`{split_token}`) == 4, "
+                        f"got {split_count}"
                     ),
                 ),
                 find_and_replace=default_find_and_replace,
             )
 
-        location_text = splits[0]
-        location_index_text = splits[1]
-        replacement_token = self.special_tokens["split"].join(splits[2:])
+        location_text, location_index_text, replacement_token = mid_text.split(
+            split_token,
+            2,
+        )
         try:
             location_index = int(location_index_text)
         except ValueError:
@@ -159,7 +161,7 @@ class FindAndReplaceVerifier:
             )
 
         return dict(
-            reward_with_feedback=dict(parse_reward=0.5, parse_feedback="parse success"),
+            reward_with_feedback=dict(parse_reward=1.0, parse_feedback="parse success"),
             find_and_replace=dict(
                 is_good=False,
                 location_text=location_text,
@@ -332,15 +334,17 @@ class FindAndReplaceVerifier:
 
         # Compute format_reward
         if pred_find_and_replace.get("is_good"):
-            format_reward = 1.0 if parse_reward > 0.0 else 0.0
+            find_reward = 1.0 if parse_reward > 0.0 else 0.0
+            format_reward = self._mean([parse_reward, find_reward])
             format_feedback = "format success: is_good format"
         elif parse_reward == 0.0:
+            find_reward = 0.0
             format_reward = 0.0
             format_feedback = f'format failed: "{parse_feedback}"'
         else:
-            find_format_reward = 0.5 if not pred_location.get("not_found") else 0.0
-            format_reward = parse_reward + find_format_reward
-            if find_format_reward:
+            find_reward = 1.0 if not pred_location.get("not_found") else 0.0
+            format_reward = self._mean([parse_reward, find_reward])
+            if find_reward:
                 format_feedback = (
                     f"format success: find matched (match_num={match_num})"
                 )
@@ -451,17 +455,21 @@ class FindAndReplaceVerifier:
         feedback = "\n".join(
             [
                 f"final_reward = {round(final_reward, 3)}",
+                f"parse_reward = {round(parse_reward, 3)}",
+                f"find_reward = {round(find_reward, 3)}",
                 f"format_reward = {round(format_reward, 3)}",
                 f"location_reward = {round(location_reward, 3)}",
                 f"replacement_reward = {round(replacement_reward, 3)}",
                 f"format_feedback: {format_feedback}",
                 f"location_feedback: {location_feedback}",
                 f"replacement_feedback: {replacement_feedback}",
-                "Note: Each reward ∈ [0, 1], and final_reward is the average of the other rewards.",
+                "Note: Each reward ∈ [0, 1], format_reward is avg(parse_reward, find_reward), and final_reward is avg(format_reward, location_reward, replacement_reward).",
             ]
         )
         reward_with_feedback = dict(
             final_reward=final_reward,
+            parse_reward=parse_reward,
+            find_reward=find_reward,
             format_reward=format_reward,
             location_reward=location_reward,
             replacement_reward=replacement_reward,
