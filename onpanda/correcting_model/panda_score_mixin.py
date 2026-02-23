@@ -5,7 +5,10 @@ Created on Wed Feb 18 04:52:00 2026
 
 @author: DIYer22
 """
+import json
 import os
+import tempfile
+from pathlib import Path
 import mximport
 
 with mximport.inpkg():
@@ -13,6 +16,11 @@ with mximport.inpkg():
         remove_msgs_after_last_response_role,
         slim_json_strings,
     )
+
+
+DEFAULT_TMP_PANDA_SCORE_PATH = (
+    Path(tempfile.gettempdir()) / "on-panda-eval-example.panda.score.json"
+)
 
 
 class PandaScoreMixin:
@@ -232,9 +240,6 @@ class PandaScoreMixin:
 
 
 if __name__ == "__main__":
-    from boxx import tree
-    from glob import glob
-
     with mximport.inpkg():
         from .correcting_model import build_test_correcting_model
 
@@ -249,6 +254,13 @@ if __name__ == "__main__":
     # correcting_model = build_test_correcting_model(tokenizer="/home/yl/audio/asset/tokenizer/step1f/")
     # test_json_paths = sorted(glob("/home/yl/audio/jili_tracelogs_bmk/step1f_tracelogs2_batch5_jili_bmk/*.panda.json"))[:13]
     panda_score = correcting_model.eval_panda_score(test_json_paths)
+    save_path = DEFAULT_TMP_PANDA_SCORE_PATH
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    with save_path.open("w", encoding="utf-8") as f:
+        json.dump(panda_score, f, ensure_ascii=False, indent=2)
+    print(f"panda_score saved to: {save_path}")
+    from boxx import tree
+
     score_results = panda_score["score_results"]
     tree(score_results, deep=3)
     print(correcting_model.summary_panda_score(panda_score))
