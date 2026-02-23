@@ -55,6 +55,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         )
         self.special_tokens = self.verifier.special_tokens
         self.tokenizer = tokenizer or unicode_tokenizer
+        self.far_info = dict(
+            tokenizer=dict(name_or_path=getattr(self.tokenizer, "name_or_path", "")),
+            special_tokens=dict(self.special_tokens),
+        )
         self.max_location_tokens = max_location_tokens
         self.tokenizer_aware = tokenizer_aware
         self.system_prompt_language = system_prompt_language
@@ -276,6 +280,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                 correction=dict(
                     messages_location=is_good_messages_location,
                     find_and_replace=is_good_find_and_replace,
+                    far_info=deepcopy(self.far_info),
                 ),
             )
             return self.build_correction_prompt(messages) + [is_good_correction_msg]
@@ -310,6 +315,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             correction=dict(
                 messages_location=messages_location,
                 find_and_replace=find_and_replace,
+                far_info=deepcopy(self.far_info),
             ),
         )
         far_correction = self.build_correction_prompt(rejected_messages) + [

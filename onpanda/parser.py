@@ -308,12 +308,21 @@ class PandaTree:
                 │       ├── text: .
                 │       └── ignore_loss: True
                 ├── finish_reason: stop
-                └── token_level: dict  4
+                └── token_level: dict  12
                     ├── fork_token_idx: 15
                     ├── chosen_token_id: 99473
                     ├── rejected_token_id: 26288
+                    ├── version: 1.0
+                    ├── tokenizer: dict  1
+                    │   └── name_or_path: Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4
                     ├── chosen_dialog_key: 3
                     ├── rejected_dialog_key: 2
+                    ├── rejected_finish_reason: stop
+                    ├── rejected_messages_location: dict  4
+                    │   ├── path_keys: list  2
+                    │   ├── char_index: 4
+                    │   ├── left5: 1+1=
+                    │   └── right5: three
                     ├── chosen_text: two
                     └── rejected_content: list  3
                         ├── 0: dict  3
@@ -352,6 +361,9 @@ class PandaTree:
                 tokenizer=tokenizer,
             )
             token_level_info["version"] = "1.0"
+            token_level_info["tokenizer"] = dict(
+                name_or_path=getattr(tokenizer, "name_or_path", "")
+            )
             token_level_info["chosen_dialog_key"] = chosen_key
             token_level_info["rejected_dialog_key"] = rejected_key
             token_level_info["rejected_finish_reason"] = rejected_msgs[-1].get(
@@ -457,16 +469,19 @@ class PandaTree:
         │   ├── ignore_loss: True
         │   ├── content: To determine how many times the digit 1 ap...
         │   ├── finish_reason: stop
-        │   └── token_level: dict  11
+        │   └── token_level: dict  12
         ├── 3: dict  2
         │   ├── role: system
         │   └── content: {correcting SFT system prompt}...
         └── 4: dict  3
             ├── role: assistant
             ├── content: <|fim_pad|> **0<|fim_pad|>0<|fim_pad|> <|f...
-            └── correction: dict  2
+            └── correction: dict  3
                 ├── messages_location: dict  4
-                └── find_and_replace: dict  6
+                ├── find_and_replace: dict  6
+                └── far_info: dict  2
+                    ├── tokenizer: dict  1
+                    └── special_tokens: dict  4
         """
         sfts = self.build_legacy_data_v1()["sfts"]
         far_corrections = [
