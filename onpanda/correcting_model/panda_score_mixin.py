@@ -69,8 +69,8 @@ class PandaScoreMixin:
             messages = remove_msgs_after_last_response_role(far_correction_data[:-2])
             gt_correction = far_correction_data[-1]["correction"]
 
-            correcting_result = self.correcting(messages)
-            far_text = correcting_result["far_text"]
+            correction_result = self.correct(messages)
+            far_text = correction_result["far_text"]
             reward_result = self.adapter.verifier.compute_reward(
                 messages,
                 far_text,
@@ -95,10 +95,10 @@ class PandaScoreMixin:
                 far_correction_data_idx=far_correction_data_idx,
                 onpanda=far_correction_data[0].get("onpanda"),
             )
-            reward_result["correcting_result"] = {
-                k: correcting_result[k] for k in ["corrector_response"]
+            reward_result["correction_result"] = {
+                k: correction_result[k] for k in ["corrector_response"]
             }
-            reward_result["correcting_result"]["trimmed_messages"] = slim_json_strings(
+            reward_result["correction_result"]["trimmed_messages"] = slim_json_strings(
                 messages
             )
             score_results.append(reward_result)

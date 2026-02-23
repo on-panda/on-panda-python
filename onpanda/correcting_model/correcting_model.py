@@ -36,7 +36,7 @@ class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin, PandaScoreMixin):
         self.chat_corrector = chat_corrector
         self.adapter = adapter
 
-    def correcting(self, messages):
+    def correct(self, messages):
         correction_prompt = self.adapter.build_correction_prompt(messages)
         corrector_response = self.chat_corrector(
             correction_prompt,
@@ -59,15 +59,15 @@ class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin, PandaScoreMixin):
         )
 
     def generate_and_apply_correction(self, messages, chat_policy):
-        corrected = dict(model_policy=chat_policy.model)
+        corrected = dict(policy_model=chat_policy.model)
         if messages[-1]["role"] in ["assistant"]:
-            corrected["model_correcting"] = self.chat_corrector.model
-            correcting_result = self.correcting(messages)
-            corrected["correction"] = correcting_result["correction"]
-            if correcting_result["is_good"]:
+            corrected["corrector_model"] = self.chat_corrector.model
+            correction_result = self.correct(messages)
+            corrected["correction"] = correction_result["correction"]
+            if correction_result["is_good"]:
                 corrected_messages = messages
             else:
-                partial_messages = correcting_result["partial_messages"]
+                partial_messages = correction_result["partial_messages"]
                 if partial_messages[-1].get("finish_reason") == "stop":
                     corrected_messages = partial_messages
                 else:
@@ -81,7 +81,7 @@ class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin, PandaScoreMixin):
                         dict(role="assistant", content=corrected_content)
                     ]
         else:  # make new message
-            # corrected without model_correcting key means new message
+            # corrected without corrector_model key means new message
             corrected_messages = messages + [
                 dict(role="assistant", content=chat_policy(messages))
             ]
@@ -91,23 +91,23 @@ class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin, PandaScoreMixin):
         return corrected
 
     def iterative_correction(self, messages, chat_policy, max_corrections=5):
-        correction_count = 0
+        applied_corrections = 0
         corrected_messages = messages
-        correcteds = []
+        correction_steps = []
         for _correction_idx in range(max_corrections):
             corrected = self.generate_and_apply_correction(
                 corrected_messages, chat_policy
             )
-            correcteds.append(corrected.copy())
+            correction_steps.append(corrected.copy())
             corrected_messages = corrected["corrected_messages"]
-            if "correction" in corrected and corrected["correction"][
-                "find_and_replace"
-            ].get("is_good"):
+            if "correction" not in corrected:
+                continue
+            if corrected["correction"]["find_and_replace"].get("is_good"):
                 break
-            correction_count += 1
-        corrected["correction_count"] = correction_count
+            applied_corrections += 1
+        corrected["applied_corrections"] = applied_corrections
         corrected["max_corrections"] = max_corrections
-        corrected["correcteds"] = correcteds
+        corrected["correction_steps"] = correction_steps
         return corrected
 
 

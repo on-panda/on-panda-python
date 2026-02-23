@@ -129,7 +129,7 @@ def _build_sample(score_result: Dict[str, Any]) -> Dict[str, Any]:
     gt = score_result.get("gt_find_and_replace", {})
     pred = score_result.get("find_and_replace", {})
     info = score_result.get("info", {})
-    corrector_response = score_result.get("correcting_result", {}).get(
+    corrector_response = score_result.get("correction_result", {}).get(
         "corrector_response", {}
     )
     choices = corrector_response.get("choices") or []
@@ -251,7 +251,7 @@ def _build_fuzzy_context(
 def _build_location_context(score_result: Dict[str, Any]) -> str:
     from onpanda.correcting_model.verifier import FindAndReplaceVerifier
 
-    trimmed_messages = score_result.get("correcting_result", {}).get(
+    trimmed_messages = score_result.get("correction_result", {}).get(
         "trimmed_messages", []
     )
     if not trimmed_messages:
