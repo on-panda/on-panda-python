@@ -194,11 +194,15 @@ def _build_context_text(
         patch_end = min(char_index + 1, len(text))
     start = max(0, char_index - context_window)
     end = min(len(text), patch_end + context_window)
-    context = f"{text[start:char_index]}【{text[char_index:patch_end]}】{text[patch_end:end]}"
+    context = (
+        f"{text[start:char_index]}【{text[char_index:patch_end]}】{text[patch_end:end]}"
+    )
     return _short_text(context, limit=160)
 
 
-def _build_fuzzy_context(verifier: Any, messages: List[Dict[str, Any]], location_text: str):
+def _build_fuzzy_context(
+    verifier: Any, messages: List[Dict[str, Any]], location_text: str
+):
     if not location_text:
         return ""
 

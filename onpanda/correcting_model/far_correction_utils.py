@@ -270,15 +270,15 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                     f"{self.special_tokens['split']}"
                 ),
             )
-            is_good_correcting_msg = dict(
+            is_good_correction_msg = dict(
                 role="assistant",
                 content=is_good_find_and_replace["far_text"],
-                correcting=dict(
+                correction=dict(
                     messages_location=is_good_messages_location,
                     find_and_replace=is_good_find_and_replace,
                 ),
             )
-            return self.build_correction_prompt(messages) + [is_good_correcting_msg]
+            return self.build_correction_prompt(messages) + [is_good_correction_msg]
 
         token_level_msg = messages[-1]
         token_level_info = token_level_msg["token_level"]
@@ -304,16 +304,16 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         )
         find_and_replace = correction["find_and_replace"]
         messages_location = correction["messages_location"]
-        correcting_msg = dict(
+        correction_msg = dict(
             role="assistant",
             content=find_and_replace["far_text"],
-            correcting=dict(
+            correction=dict(
                 messages_location=messages_location,
                 find_and_replace=find_and_replace,
             ),
         )
         far_correction = self.build_correction_prompt(rejected_messages) + [
-            correcting_msg
+            correction_msg
         ]
         return far_correction
 

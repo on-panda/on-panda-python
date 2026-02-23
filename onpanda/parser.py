@@ -464,7 +464,7 @@ class PandaTree:
         └── 4: dict  3
             ├── role: assistant
             ├── content: <|fim_pad|> **0<|fim_pad|>0<|fim_pad|> <|f...
-            └── correcting: dict  2
+            └── correction: dict  2
                 ├── messages_location: dict  4
                 └── find_and_replace: dict  6
         """

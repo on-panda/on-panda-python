@@ -67,7 +67,7 @@ class PandaScoreMixin:
             far_correction_datas
         ):
             messages = remove_msgs_after_last_response_role(far_correction_data[:-2])
-            gt_correction = far_correction_data[-1]["correcting"]
+            gt_correction = far_correction_data[-1]["correction"]
 
             correcting_result = self.correcting(messages)
             far_text = correcting_result["far_text"]
