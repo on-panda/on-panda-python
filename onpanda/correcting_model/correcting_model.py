@@ -11,6 +11,7 @@ with mximport.inpkg():
     from .is_good_score_mixin import IsGoodScoreMixin
     from .panda_score_mixin import PandaScoreMixin
     from ..test_utils import build_test_tokenizer
+    from ..utils import RESPONSE_ROLES
 
 
 class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
@@ -46,7 +47,7 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
 
     def generate_and_apply_correction(self, messages, chat_policy):
         corrected = dict(policy_model=chat_policy.model)
-        if messages[-1]["role"] in ["assistant"]:
+        if messages[-1]["role"] in RESPONSE_ROLES:
             corrected["corrector_model"] = self.chat_corrector.model
             correction_result = self.correct(messages)
             corrected["correction"] = correction_result["correction"]
@@ -72,7 +73,7 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
                 dict(role="assistant", content=chat_policy(messages))
             ]
 
-        corrected["corrected_messages"] = corrected_messages
+        corrected["corrected_messages"] = corrected_messages[:]
         # g()
         return corrected
 

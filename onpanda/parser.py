@@ -55,13 +55,6 @@ class PandaTree:
 
     SUPPORT_PANDA_TREE_VERSION = "2.0"
 
-    @property
-    def source_info(self):
-        json_path = getattr(self, "json_path", None)
-        if json_path is not None:
-            return f"path={json_path}"
-        return f"uuid={self.raw_data.get('uuid', None)}"
-
     def __init__(self, data, tokenizer=None):
         if isinstance(data, str):  # path
             data = os.path.expanduser(data)
@@ -73,8 +66,7 @@ class PandaTree:
         self.data = data = self.pre_process(data)
         assert len(data["dialogs"]), (
             "Empty dialogs after preprocessing.\n"
-            f"{self.source_info}\n"
-            + str(data)[:1000]
+            f"{self.source_info}\n" + str(data)[:1000]
         )
         dialogs = data["dialogs"]
         dialog_valid_keys = sorted(dialogs)
@@ -190,16 +182,12 @@ class PandaTree:
         ), f"Invalid data format: missing `dialogs`.\n{self.source_info}"
         data = deepcopy(data)
         data = recover_hash_map(data)
-        assert self.SUPPORT_PANDA_TREE_VERSION >= data.get(
-            "version", "0.0"
-        ), (
+        assert self.SUPPORT_PANDA_TREE_VERSION >= data.get("version", "0.0"), (
             f"Current parser support data version: {self.SUPPORT_PANDA_TREE_VERSION}, "
             f"panda tree data version: {data['version']}. "
             f"Need to update onpanda package.\n{self.source_info}"
         )
-        assert (
-            "update_time" in data
-        ), (
+        assert "update_time" in data, (
             f"Unqualified data: missing `update_time` (likely never saved by Annotator). "
             f"\n{self.source_info}"
         )
@@ -266,6 +254,13 @@ class PandaTree:
         return s
 
     __repr__ = __str__
+
+    @property
+    def source_info(self):
+        json_path = getattr(self, "json_path", None)
+        if json_path is not None:
+            return f"path={json_path}"
+        return f"uuid={self.raw_data.get('uuid', None)}"
 
     def build_legacy_data_v1(self, only_finish_reason_is_stop=False):
         data = self.data
