@@ -35,23 +35,20 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
             del corrector_response["new_messages"]
         apply_res = self.adapter.apply(messages, far_text)
         correction = apply_res["correction"]
-        is_good = correction["find_and_replace"].get("is_good")
         partial_messages = apply_res["partial_messages"]
         return dict(
             correction=correction,
             partial_messages=partial_messages,
-            is_good=is_good,
-            far_text=far_text,
             corrector_response=corrector_response,
         )
 
-    def generate_and_apply_correction(self, messages, chat_policy):
-        corrected = dict(policy_model=chat_policy.model)
+    def correct_and_rollout(self, messages, chat_policy):
+        corrected_result = dict(policy_model=chat_policy.model)
         if messages[-1]["role"] in RESPONSE_ROLES:
-            corrected["corrector_model"] = self.chat_corrector.model
+            corrected_result["corrector_model"] = self.chat_corrector.model
             correction_result = self.correct(messages)
-            corrected["correction"] = correction_result["correction"]
-            if correction_result["is_good"]:
+            corrected_result["correction"] = correction_result["correction"]
+            if corrected_result["correction"]["find_and_replace"].get("is_good"):
                 corrected_messages = messages
             else:
                 partial_messages = correction_result["partial_messages"]
@@ -68,34 +65,34 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
                         dict(role="assistant", content=corrected_content)
                     ]
         else:  # make new message
-            # corrected without corrector_model key means new message
+            # Corrected result without corrector_model key means new message.
             corrected_messages = messages + [
                 dict(role="assistant", content=chat_policy(messages))
             ]
 
-        corrected["corrected_messages"] = corrected_messages[:]
+        corrected_result["corrected_messages"] = corrected_messages[:]
         # g()
-        return corrected
+        return corrected_result
 
-    def iterative_correction(self, messages, chat_policy, max_corrections=5):
+    def iterative_correction(self, messages, chat_policy, max_rollouts=5):
         applied_corrections = 0
         corrected_messages = messages
         correction_steps = []
-        for _correction_idx in range(max_corrections):
-            corrected = self.generate_and_apply_correction(
+        for _rollout_idx in range(max_rollouts):
+            corrected_result = self.correct_and_rollout(
                 corrected_messages, chat_policy
             )
-            correction_steps.append(corrected.copy())
-            corrected_messages = corrected["corrected_messages"]
-            if "correction" not in corrected:
+            correction_steps.append(corrected_result.copy())
+            corrected_messages = corrected_result["corrected_messages"]
+            if "correction" not in corrected_result:
                 continue
-            if corrected["correction"]["find_and_replace"].get("is_good"):
+            if corrected_result["correction"]["find_and_replace"].get("is_good"):
                 break
             applied_corrections += 1
-        corrected["applied_corrections"] = applied_corrections
-        corrected["max_corrections"] = max_corrections
-        corrected["correction_steps"] = correction_steps
-        return corrected
+        corrected_result["applied_corrections"] = applied_corrections
+        corrected_result["max_rollouts"] = max_rollouts
+        corrected_result["correction_steps"] = correction_steps
+        return corrected_result
 
 
 def build_test_correcting_model(
@@ -148,6 +145,6 @@ if __name__ == "__main__":
     chat_policy = deepcopy(correcting_model.chat_corrector)
     chat_policy.default_kwargs["max_tokens"] = 1536
     corrected = correcting_model.iterative_correction(
-        msgs, chat_policy, max_corrections=5
+        msgs, chat_policy, max_rollouts=5
     )
     tree(corrected)

@@ -70,7 +70,7 @@ class PandaScoreMixin:
             gt_correction = far_correction_data[-1]["correction"]
 
             correction_result = self.correct(messages)
-            far_text = correction_result["far_text"]
+            far_text = correction_result["correction"]["find_and_replace"]["far_text"]
             reward_result = self.adapter.verifier.compute_reward(
                 messages,
                 far_text,
