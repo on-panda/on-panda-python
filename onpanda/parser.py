@@ -51,23 +51,40 @@ class PandaTreeParser:
 
 
 class PandaTree:
+    """Parser for qualified, annotated Panda JSON."""
+
     SUPPORT_PANDA_TREE_VERSION = "2.0"
+
+    @property
+    def source_info(self):
+        json_path = getattr(self, "json_path", None)
+        if json_path is not None:
+            return f"path={json_path}"
+        return f"uuid={self.raw_data.get('uuid', None)}"
 
     def __init__(self, data, tokenizer=None):
         if isinstance(data, str):  # path
             data = os.path.expanduser(data)
             assert os.path.exists(data), data
+            self.json_path = data
             data = json.load(open(data))
         self.raw_data = data
         self.tokenizer = tokenizer
         self.data = data = self.pre_process(data)
-        assert len(data["dialogs"]), "Empty dialogs: " + str(data)[:1000]
+        assert len(data["dialogs"]), (
+            "Empty dialogs after preprocessing.\n"
+            f"{self.source_info}\n"
+            + str(data)[:1000]
+        )
         dialogs = data["dialogs"]
-        dialog_valide_keys = sorted(dialogs)
+        dialog_valid_keys = sorted(dialogs)
         dense_keys = [
-            k for k in dialog_valide_keys if dialogs[k]["annotate"].get("is_good")
+            k for k in dialog_valid_keys if dialogs[k]["annotate"].get("is_good")
         ]
-        assert dense_keys, "No any is_good dialog in this data."
+        assert dense_keys, (
+            "Unqualified data: no dialog with annotate.is_good=True.\n"
+            f"{self.source_info}"
+        )
 
         trees = {}
         to_parent = {}
@@ -78,7 +95,7 @@ class PandaTree:
                 parents.append(to_parent[parents[-1]])
             return parents[::-1]
 
-        for dialog_key in dialog_valide_keys:
+        for dialog_key in dialog_valid_keys:
             dialog = data["dialogs"][dialog_key]
             operations = dialog.get("operations", [])
             is_tree_root = self.is_operation_tree_root(operations)
@@ -164,20 +181,29 @@ class PandaTree:
         self.dense_keys = dense_keys
         self.outcome_pairs = outcome_pairs
         self.fork_pairs = fork_pairs
-        self.valid_dialog_keys = dialog_valide_keys
+        self.valid_dialog_keys = dialog_valid_keys
         # g()
 
     def pre_process(self, data):
-        assert "dialogs" in data, "invalid data format."
+        assert (
+            "dialogs" in data
+        ), f"Invalid data format: missing `dialogs`.\n{self.source_info}"
         data = deepcopy(data)
         data = recover_hash_map(data)
         assert self.SUPPORT_PANDA_TREE_VERSION >= data.get(
             "version", "0.0"
-        ), f"Current parser support data version: {self.SUPPORT_PANDA_TREE_VERSION}, panda tree data version: {data['version']} Need to update onpanda package."
+        ), (
+            f"Current parser support data version: {self.SUPPORT_PANDA_TREE_VERSION}, "
+            f"panda tree data version: {data['version']}. "
+            f"Need to update onpanda package.\n{self.source_info}"
+        )
         assert (
             "update_time" in data
-        ), "Never saved data. Which mean may never checked by Annotator."
-        assert len(data["dialogs"]) >= 1, "Empty dialogs!"
+        ), (
+            f"Unqualified data: missing `update_time` (likely never saved by Annotator). "
+            f"\n{self.source_info}"
+        )
+        assert len(data["dialogs"]) >= 1, f"Empty dialogs!\n{self.source_info}"
         data["dialogs"] = {int(k): v for k, v in data["dialogs"].items()}
         # set default is_good
         max_key = max(data["dialogs"])
@@ -188,14 +214,14 @@ class PandaTree:
             if dialog["annotate"].get("is_good") is None:
                 dialog["annotate"]["is_good"] = dialog_key == max_key
 
-        dialog_valide_keys = [
+        dialog_valid_keys = [
             key
             for key in sorted(data["dialogs"].keys())
             if data["dialogs"][key]["messages"][-1]["role"] in RESPONSE_ROLES
         ]
-        data["dialogs"] = {k: data["dialogs"][k] for k in dialog_valide_keys}
+        data["dialogs"] = {k: data["dialogs"][k] for k in dialog_valid_keys}
         self.prompt_hash_to_keys = {}
-        for dialog_key in dialog_valide_keys:
+        for dialog_key in dialog_valid_keys:
             # set prompt_hash
             dialog = data["dialogs"][dialog_key]
             assert "annotate" in dialog, "No annotate in dialog!"

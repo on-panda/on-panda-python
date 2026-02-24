@@ -93,3 +93,11 @@ Launch a proxy API server that return response using iterative_correction
 python -m onpanda.server.iterative_correction_api --help
 ```
 
+## ▮ Data Assumptions
+- `PandaTree` is a parser for qualified, annotated Panda JSON.
+- `PandaTree` preprocessing currently assumes:
+    - Top-level field `dialogs` exists
+    - Top-level field `update_time` exists
+    - At least one dialog ends with an `assistant` message
+    - If `annotate.is_good` is missing, latest dialog is treated as default good
+
