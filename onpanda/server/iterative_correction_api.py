@@ -65,7 +65,8 @@ def create_app(base_url, api_key, cli_config):
 
         req_messages = body.get("messages", [])
         req_model = body.get("model", "")
-        max_rollouts = int(correction_config.get("max_rollouts", 5))
+        rollout_num = int(correction_config.get("rollout_num", 5))
+        mode = correction_config.get("mode", "till_good")
 
         auth_header = headers.get("Authorization", "")
         bearer_token = (
@@ -95,7 +96,8 @@ def create_app(base_url, api_key, cli_config):
         corrected = correct_model.iterative_correction(
             copy.deepcopy(req_messages),
             chat_policy,
-            max_rollouts=max_rollouts,
+            rollout_num=rollout_num,
+            mode=mode,
         )
 
         corrected_messages = corrected.get("corrected_messages", [])

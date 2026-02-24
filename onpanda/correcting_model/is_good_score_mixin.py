@@ -12,8 +12,12 @@ class IsGoodScoreMixin:
         self,
         messages,
     ):
+        messages_clean = [
+            {k: msg[k] for k in msg if k not in ["token_level", "correction"]}
+            for msg in messages
+        ]
         is_good_msgs = self.adapter.build_correction_data_from_token_level(
-            messages, is_good=True
+            messages_clean, is_good=True
         )
         # prefill prmpt_logprobs to get is_good probability
         dic = self.chat_corrector(
@@ -83,6 +87,18 @@ class IsGoodScoreMixin:
             print(is_good_prob)
             import boxx.g
         return is_good_score
+
+    def compute_best_of_n_score(self, correction_till_goods):
+        best_of_n_score = {}
+        for till_goods_idx, correction_till_good in enumerate(correction_till_goods):
+            for step_idx, correction_step in enumerate(
+                correction_till_good["correction_steps"]
+            ):
+                score = self.compute_is_good_score(
+                    correction_step["corrected_messages"]
+                )
+                best_of_n_score[f"{till_goods_idx}/correction_steps/{step_idx}"] = score
+        return best_of_n_score
 
 
 if __name__ == "__main__":
