@@ -13,21 +13,7 @@ with mximport.inpkg():
     from ..test_utils import build_test_tokenizer
 
 
-class CorrectingModelBase:
-    """
-    TODO: using this or delete
-    Base class of different token-level correcting models. e.g.:
-    - CorrectingCopyResponseModel: Using Copy response to get whole context for each generated token, and better computation for each token
-    - CorrectingModel: Find-and-replace correction on token-level supervision
-    - Reasoning for Correcting using JSON output with right prefix
-    - Bidirectional correcting head for location with whole context
-    """
-
-    def __init__(self):
-        pass
-
-
-class CorrectingModel(CorrectingModelBase, IsGoodScoreMixin, PandaScoreMixin):
+class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
     def __init__(
         self,
         chat_corrector,

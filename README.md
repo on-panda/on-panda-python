@@ -13,7 +13,7 @@
 ## ▮ Install
 
 ```bash
-pip install onpanda
+pip install onpanda -U
 
 # Or want to run demos.
 git clone https://github.com/on-panda/onpanda.git

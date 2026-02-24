@@ -19,7 +19,7 @@ with mximport.inpkg():
 
 
 DEFAULT_TMP_PANDA_SCORE_PATH = (
-    Path(tempfile.gettempdir()) / "on-panda-eval-example.panda.score.json"
+    Path(tempfile.gettempdir()) / "on-panda-eval-example.panda_score.json"
 )
 
 

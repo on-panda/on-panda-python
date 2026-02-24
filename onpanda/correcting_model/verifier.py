@@ -485,8 +485,6 @@ class FindAndReplaceVerifier:
 
 
 if __name__ == "__main__":
-    import os
-    import sys
     import onpanda
     from onpanda.test_utils import get_test_rejected_msgs1
 
