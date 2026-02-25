@@ -54,7 +54,14 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             special_tokens=special_tokens,
         )
         self.special_tokens = self.verifier.special_tokens
-        self.tokenizer = tokenizer or unicode_tokenizer
+        if tokenizer is None or tokenizer == "unicode_tokenizer":
+            self.tokenizer = unicode_tokenizer
+        elif isinstance(tokenizer, str):
+            from transformers import AutoTokenizer
+
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
+        else:
+            self.tokenizer = tokenizer
         self.far_info = dict(
             tokenizer=dict(name_or_path=getattr(self.tokenizer, "name_or_path", "")),
             special_tokens=dict(self.special_tokens),

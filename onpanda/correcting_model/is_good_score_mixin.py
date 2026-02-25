@@ -88,7 +88,7 @@ class IsGoodScoreMixin:
             import boxx.g
         return is_good_score
 
-    def compute_best_of_n_score(self, correction_till_goods):
+    def choose_best_of_n(self, correction_till_goods):
         best_of_n_score = {}
         for till_goods_idx, correction_till_good in enumerate(correction_till_goods):
             for step_idx, correction_step in enumerate(
@@ -98,7 +98,18 @@ class IsGoodScoreMixin:
                     correction_step["corrected_messages"]
                 )
                 best_of_n_score[f"{till_goods_idx}/correction_steps/{step_idx}"] = score
-        return best_of_n_score
+
+        best_step_key = max(
+            best_of_n_score, key=lambda key: best_of_n_score[key]["is_good_prob"]
+        )
+        till_goods_idx, step_idx = [
+            int(i) for i in best_step_key.split("/correction_steps/")
+        ]
+        chosen_correction_step = correction_till_goods[till_goods_idx][
+            "correction_steps"
+        ][step_idx]
+        delta_result = {**chosen_correction_step, "best_of_n_score": best_of_n_score}
+        return delta_result
 
 
 if __name__ == "__main__":

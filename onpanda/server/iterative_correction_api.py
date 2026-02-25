@@ -53,7 +53,7 @@ def create_app(base_url, api_key, cli_config):
         - message: dict, contains role/content/tool_calls/reasoning*
         - extra_info: dict, merged into response root
         """
-        if body.get("prompt_logprobs") and int(body.get("max_tokens", 0)) <= 1:
+        if body.get("prompt_logprobs") and int(body.get("max_tokens", 10000)) <= 1:
             return {"direct_forward": True}
 
         correction_config = deep_merge(cli_config, url_config)

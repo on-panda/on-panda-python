@@ -168,7 +168,7 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
         self, messages, chat_policy, rollout_num=5, mode="till_good"
     ):
         """
-        Run iterative correction in one of:
+        Run iterative correction mode in one of:
         - till_good: one iterative_correction_till_good with max_rollouts=rollout_num.
         - best_of_n/pass_at_k: repeatedly call iterative_correction_till_good
           from the same start messages until total consumed steps reaches rollout_num.
@@ -197,20 +197,12 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
             correction_till_goods.append(correction_till_good)
             remaining_rollouts -= len(correction_till_good["correction_steps"])
 
-        aggregated_result = dict(rollout_num=rollout_num)
+        aggregated_result = dict(
+            iterative_correction_mode=mode, rollout_num=rollout_num
+        )
         if mode == "best_of_n":
-            best_of_n_score = self.compute_best_of_n_score(correction_till_goods)
-            aggregated_result["best_of_n_score"] = best_of_n_score
-            best_step_key = max(
-                best_of_n_score, key=lambda key: best_of_n_score[key]["is_good_prob"]
-            )
-            till_goods_idx, step_idx = [
-                int(i) for i in best_step_key.split("/correction_steps/")
-            ]
-            chosen_correction_step = correction_till_goods[till_goods_idx][
-                "correction_steps"
-            ][step_idx]
-            aggregated_result.update(chosen_correction_step)
+            delta_result = self.choose_best_of_n(correction_till_goods)
+            aggregated_result.update(delta_result)
         elif mode == "pass_at_k":
             pass
         else:
