@@ -177,17 +177,11 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
         - best_of_n/pass_at_k: repeatedly call iterative_correction_till_good
           from the same start messages until total consumed steps reaches rollout_num.
         """
-        if mode == "till_good":
-            correction_till_good = self.iterative_correction_till_good(
-                messages, chat_policy, max_rollouts=rollout_num
-            )
-            chosen_correction_step = correction_till_good["correction_steps"][-1]
-            result = dict(rollout_num=rollout_num)
-            result.update(chosen_correction_step)
-            result["correction_till_goods"] = [correction_till_good]
-            return result
-
         correction_till_goods = []
+        if mode not in ("till_good", "best_of_n", "pass_at_k"):
+            raise ValueError(
+                f"Unknown iterative_correction mode: {mode}, expected one of [till_good, best_of_n, pass_at_k]"
+            )
         remaining_rollouts = rollout_num
         while remaining_rollouts > 0:
             till_good_messages = messages
@@ -200,19 +194,18 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
             )
             correction_till_goods.append(correction_till_good)
             remaining_rollouts -= len(correction_till_good["correction_steps"])
+            if mode == "till_good":
+                break
 
         aggregated_result = dict(
             iterative_correction_mode=mode, rollout_num=rollout_num
         )
-        if mode == "best_of_n":
+        if mode == "till_good":
+            chosen_correction_step = correction_till_goods[0]["correction_steps"][-1]
+            aggregated_result.update(chosen_correction_step)
+        elif mode == "best_of_n":
             delta_result = self.choose_best_of_n(correction_till_goods)
             aggregated_result.update(delta_result)
-        elif mode == "pass_at_k":
-            pass
-        else:
-            raise ValueError(
-                f"Unknown iterative_correction mode: {mode}, expected one of [till_good, best_of_n, pass_at_k]"
-            )
         aggregated_result["correction_till_goods"] = correction_till_goods
         return aggregated_result
 
