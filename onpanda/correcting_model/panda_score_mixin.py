@@ -96,7 +96,7 @@ class PandaScoreMixin:
                 onpanda=far_correction_data[0].get("onpanda"),
             )
             reward_result["correction_result"] = {
-                k: correction_result[k] for k in ["corrector_response"]
+                k: correction_result[k] for k in ["correction_response"]
             }
             reward_result["correction_result"]["trimmed_messages"] = slim_json_strings(
                 messages

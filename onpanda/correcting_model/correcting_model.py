@@ -18,31 +18,31 @@ with mximport.inpkg():
 class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
     def __init__(
         self,
-        chat_corrector,
+        chat_correcting,
         adapter,
         max_correction_attempts=5,
     ):
-        self.chat_corrector = chat_corrector
+        self.chat_correcting = chat_correcting
         self.adapter = adapter
         self.max_correction_attempts = max_correction_attempts
 
     def correct(self, messages):
         correction_prompt = self.adapter.build_correction_prompt(messages)
-        corrector_response = self.chat_corrector(
+        correction_response = self.chat_correcting(
             correction_prompt,
             return_dict=True,
             # max_tokens=self.adapter.max_location_tokens + 20,  # bad for reasoning model
         )
-        far_text = corrector_response["choices"][0]["message"]["content"]
-        if "new_messages" in corrector_response:
-            del corrector_response["new_messages"]
+        far_text = correction_response["choices"][0]["message"]["content"]
+        if "new_messages" in correction_response:
+            del correction_response["new_messages"]
         apply_res = self.adapter.apply(messages, far_text)
         correction = apply_res["correction"]
         partial_messages = apply_res["partial_messages"]
         return dict(
             correction=correction,
             partial_messages=partial_messages,
-            corrector_response=corrector_response,
+            correction_response=correction_response,
         )
 
     def correct_and_rollout(self, messages, chat_policy):
@@ -51,13 +51,13 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
 
         If the last message is assistant, retry correction up to max_correction_attempts
         until the correction is not not_found. Failed correction attempts are kept
-        in failed_corrections with only correction and corrector_response.
+        in failed_corrections with only correction and correction_response.
         If the final correction is still not_found, regenerate assistant message
         from messages without the last assistant.
         """
         corrected_result = dict(generate_new=False)
         if messages[-1]["role"] in RESPONSE_ROLES:
-            corrected_result["corrector_model"] = self.chat_corrector.model
+            corrected_result["correcting_model_name"] = self.chat_correcting.model
             failed_corrections = []
             for _try_idx in range(self.max_correction_attempts):
                 correction_result = self.correct(messages)
@@ -66,7 +66,7 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
                 failed_corrections.append(
                     dict(
                         correction=correction_result["correction"],
-                        corrector_response=correction_result["corrector_response"],
+                        correction_response=correction_result["correction_response"],
                     )
                 )
             corrected_result["correction"] = correction_result["correction"]
@@ -78,7 +78,7 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
                 corrected_messages = rollout_messages + [
                     dict(role="assistant", content=chat_policy(rollout_messages))
                 ]
-                corrected_result["policy_model"] = chat_policy.model
+                corrected_result["policy_model_name"] = chat_policy.model
                 corrected_result["generate_new"] = True
             elif corrected_result["correction"]["messages_location"].get("is_good"):
                 corrected_messages = messages
@@ -93,16 +93,16 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
                         add_generation_prompt=False,
                         echo=True,
                     )
-                    corrected_result["policy_model"] = chat_policy.model
+                    corrected_result["policy_model_name"] = chat_policy.model
                     corrected_messages = messages[:-1] + [
                         dict(role="assistant", content=corrected_content)
                     ]
         else:  # make new message
-            # Corrected result without corrector_model key means new message.
+            # Corrected result without correcting_model_name key means new message.
             corrected_messages = messages + [
                 dict(role="assistant", content=chat_policy(messages))
             ]
-            corrected_result["policy_model"] = chat_policy.model
+            corrected_result["policy_model_name"] = chat_policy.model
             corrected_result["generate_new"] = True
 
         corrected_result["corrected_messages"] = corrected_messages[:]
@@ -143,7 +143,11 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
             correction_steps[-1].update(
                 {
                     k: corrected_result.pop(k)
-                    for k in ("correction", "corrector_model", "failed_corrections")
+                    for k in (
+                        "correction",
+                        "correcting_model_name",
+                        "failed_corrections",
+                    )
                     if k in corrected_result
                 }
             )
@@ -223,7 +227,7 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
 
 
 def build_test_correcting_model(
-    chat_corrector=None,
+    chat_correcting=None,
     adapter=None,
     tokenizer="Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
 ):
@@ -231,8 +235,8 @@ def build_test_correcting_model(
     import onpanda
     import transformers
 
-    if chat_corrector is None:
-        chat_corrector = mxlm.ChatAPI(
+    if chat_correcting is None:
+        chat_correcting = mxlm.ChatAPI(
             model="step1f-correct-sft-it1200",
             temperature=0,
             top_p=1.0,
@@ -253,7 +257,7 @@ def build_test_correcting_model(
             ),
         )
     return CorrectingModel(
-        chat_corrector,
+        chat_correcting,
         adapter,
     )
 
@@ -274,7 +278,7 @@ if __name__ == "__main__":
 
     # msgs = [{"role": "user", "content": "How many `1` in result of 652*8596"},]
 
-    chat_policy = deepcopy(correcting_model.chat_corrector)
+    chat_policy = deepcopy(correcting_model.chat_correcting)
     chat_policy.default_kwargs["max_tokens"] = 1536
     corrected = correcting_model.iterative_correction(
         msgs, chat_policy, rollout_num=5, mode="best_of_n"

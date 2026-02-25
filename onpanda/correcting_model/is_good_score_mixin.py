@@ -20,7 +20,7 @@ class IsGoodScoreMixin:
             messages_clean, is_good=True
         )
         # prefill prmpt_logprobs to get is_good probability
-        dic = self.chat_corrector(
+        dic = self.chat_correcting(
             is_good_msgs,
             return_dict=True,
             max_tokens=1,
@@ -78,7 +78,7 @@ class IsGoodScoreMixin:
         is_good_score = dict(is_good_prob=is_good_prob, is_good_logprob=is_good_logprob)
 
         if "using chat_correcting.prefill_logprobs for double check" and 0:
-            prefill_logprobs = self.chat_corrector.prefill_logprobs(is_good_msgs)[-1][
+            prefill_logprobs = self.chat_correcting.prefill_logprobs(is_good_msgs)[-1][
                 "prefill_logprobs"
             ]
             tree - prefill_logprobs

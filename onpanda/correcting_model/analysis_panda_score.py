@@ -129,10 +129,10 @@ def _build_sample(score_result: Dict[str, Any]) -> Dict[str, Any]:
     gt = score_result.get("gt_find_and_replace", {})
     pred = score_result.get("find_and_replace", {})
     info = score_result.get("info", {})
-    corrector_response = score_result.get("correction_result", {}).get(
-        "corrector_response", {}
+    correction_response = score_result.get("correction_result", {}).get(
+        "correction_response", {}
     )
-    choices = corrector_response.get("choices") or []
+    choices = correction_response.get("choices") or []
     message = choices[0].get("message", {}) if choices else {}
     reasoning = message.get("reasoning")
     if reasoning is None:
