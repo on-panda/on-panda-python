@@ -14,7 +14,7 @@ Supported keys include:
 
 url_config-path examples:
 - rollout_num@3,chat.model@step1f-correct-sft-it1200
-- rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@unicode_tokenizer
+- rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@utf8_tokenizer
 """
 
 from flask import Flask
@@ -215,7 +215,7 @@ if __name__ == "__main__":
         help=(
             "Default URL config in url_config-path format. "
             "Example: rollout_num@3,chat.model@step1f-correct-sft-it1200,"
-            "far.tokenizer@unicode_tokenizer"
+            "far.tokenizer@utf8_tokenizer"
         ),
     )
     parser.add_argument(
@@ -256,13 +256,13 @@ if __name__ == "__main__":
         f"  - curl http://{args.host}:{args.port}/iterative_correction/chat.model@model_name/v1/models"
     )
     print(
-        f"  - curl http://{args.host}:{args.port}/iterative_correction/rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@unicode_tokenizer/v1/models"
+        f"  - curl http://{args.host}:{args.port}/iterative_correction/rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@utf8_tokenizer/v1/models"
     )
     print(
         "  - python -m onpanda.server.iterative_correction_api "
         "--base_url http://127.0.0.1:9200/v1 "
         "--api_key key1 "
-        "--default_url_config rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@unicode_tokenizer "
+        "--default_url_config rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@utf8_tokenizer "
         "--model model_name"
     )
 

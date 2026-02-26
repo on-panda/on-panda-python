@@ -10,7 +10,7 @@ import mximport
 from copy import deepcopy
 
 with mximport.inpkg():
-    from ..token_level_supervision_utils import unicode_tokenizer
+    from ..token_level_supervision_utils import build_tokenizer
     from .verifier import FindAndReplaceVerifier
     from ..utils import get_content_by_path_keys
     from . import system_prompts
@@ -47,6 +47,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         tokenizer=None,
         special_tokens=None,
         max_location_tokens=20,
+        max_replacement_tokens=1,
         tokenizer_aware=False,
         system_prompt_language=None,
     ):
@@ -54,19 +55,15 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             special_tokens=special_tokens,
         )
         self.special_tokens = self.verifier.special_tokens
-        if not tokenizer or tokenizer == "unicode_tokenizer":
-            self.tokenizer = unicode_tokenizer
-        elif isinstance(tokenizer, str):
-            from transformers import AutoTokenizer
-
-            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
-        else:
-            self.tokenizer = tokenizer
+        self.tokenizer = build_tokenizer(tokenizer)
         self.far_info = dict(
             tokenizer=dict(name_or_path=getattr(self.tokenizer, "name_or_path", "")),
             special_tokens=dict(self.special_tokens),
+            max_location_tokens=max_location_tokens,
+            max_replacement_tokens=max_replacement_tokens,
         )
         self.max_location_tokens = max_location_tokens
+        self.max_replacement_tokens = max_replacement_tokens
         self.tokenizer_aware = tokenizer_aware
         self.system_prompt_language = system_prompt_language
 
@@ -106,6 +103,19 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         for key in path_keys[:-1]:
             target = target[key]
         target[path_keys[-1]] = value
+
+    def truncate_replacement_token(self, replacement_token):
+        replacement_tokens = self.tokenizer.encode(
+            replacement_token, add_special_tokens=False
+        )
+        if len(replacement_tokens) <= self.max_replacement_tokens:
+            return replacement_token
+        if self.max_replacement_tokens <= 0:
+            return ""
+        decodable_res = next_decodable_num(
+            replacement_tokens, self.max_replacement_tokens - 1, self.tokenizer
+        )
+        return decodable_res["decoded_text"]
 
     def convert_token_level_to_messages_location(self, rejected_messages):
         """
@@ -386,7 +396,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             field_text = mxlm.get_text_content(field_text)
 
         good_prefix = field_text[:char_index]
-        corrected_field_text = good_prefix + normalized_replacement_token
+        corrected_field_text = good_prefix + self.truncate_replacement_token(
+            normalized_replacement_token
+        )
         self._set_by_path(partial_messages, path_keys, corrected_field_text)
 
         if path_keys[-1] == "content":

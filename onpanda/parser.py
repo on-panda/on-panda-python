@@ -8,7 +8,7 @@ import json
 with mximport.inpkg():
     from .token_level_supervision_utils import (
         compute_token_level_supervision,
-        unicode_tokenizer,
+        utf8_tokenizer,
         apply_ignore_unicode_loss_mask_to_content,
     )
     from .correcting_model.far_correction_utils import (
@@ -365,7 +365,7 @@ class PandaTree:
         tokenizer = tokenizer or self.tokenizer
         assert (
             tokenizer
-        ), "token_level_supervision needs to set tokenizer, or you could using onpanda.unicode_tokenizer"
+        ), "token_level_supervision needs to set tokenizer, or you could using onpanda.utf8_tokenizer"
         token_levels = []
         for rejected_key, chosen_key in self.fork_pairs:
             chosen_msgs = mxlm.normalize_messages(
@@ -539,7 +539,7 @@ if __name__ == "__main__":
     )
     # %%
 
-    # tokenizer = unicode_tokenizer
+    # tokenizer = utf8_tokenizer
     # test_json = "../../asset/on-panda-example/shape-of-V-test-hash.panda.json"
     # test_json = "../../asset/on-panda-example/how-many-1s.panda.json"
     # test_json = "../../on-panda-example-data/panda_json/2025-04-12_Chinese_acrostic_poem_藏头诗_tokenizer-step2.panda.json"

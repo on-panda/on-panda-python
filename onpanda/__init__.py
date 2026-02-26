@@ -6,7 +6,9 @@ from .parser import *
 from .arena.panda_battle import build_panda_battle
 from .token_level_supervision_utils import (
     compute_token_level_supervision,
+    build_tokenizer,
     unicode_tokenizer,
+    utf8_tokenizer,
 )
 from .correcting_model.far_correction_utils import (
     CorrectionAdapter,

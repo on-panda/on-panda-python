@@ -41,8 +41,8 @@ panda_path = (
     "../on-panda-example-data/panda_json/"
     "2025-08-19_how-many-1s_tokenizer-Qwen2.5.panda.json"
 )
-tokenizer=onpanda.unicode_tokenizer
-# Use built-in unicode_tokenizer for a minimal runnable flow.
+tokenizer=onpanda.utf8_tokenizer
+# Use built-in utf8_tokenizer for a minimal runnable flow.
 tree = onpanda.PandaTree(panda_path, tokenizer)
 
 # 1) SFT + preference pairs
@@ -100,4 +100,3 @@ python -m onpanda.server.iterative_correction_api --help
     - Top-level field `update_time` exists
     - At least one dialog ends with an `assistant` message
     - If `annotate.is_good` is missing, latest dialog is treated as default good
-

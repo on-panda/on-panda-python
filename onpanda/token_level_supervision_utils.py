@@ -77,10 +77,7 @@ def compute_token_level_supervision(
               it is a *single* token.  When the patch spans > 1 token we set ``ignore_loss=True`` for
               safety, because a many‑token rejected is harmful.
     """
-    from transformers import AutoTokenizer
-
-    if tokenizer is None:
-        tokenizer = UnicodeTokenizer()
+    tokenizer = build_tokenizer(tokenizer)
 
     tok_ch = tokenizer.encode(chosen_content, add_special_tokens=False)
     tok_rj = tokenizer.encode(rejected_content, add_special_tokens=False)
@@ -216,6 +213,40 @@ class UnicodeTokenizer:
 
 
 unicode_tokenizer = UnicodeTokenizer()
+
+
+class UTF8Tokenizer:
+    def __init__(self):
+        self.name_or_path = "onpanda.UTF8Tokenizer"
+
+    def encode(self, string, **kwargs):
+        return list(str(string).encode("utf-8"))
+
+    def decode(self, tokens, **kwargs):
+        return bytes(tokens).decode("utf-8")
+
+    def apply_chat_template(self, messages, tokenize=True, **kwargs):
+        import json
+
+        chatml = json.dumps(messages, indent=2, ensure_ascii=False)
+        if tokenize:
+            return self.encode(chatml)
+        return chatml
+
+
+utf8_tokenizer = UTF8Tokenizer()
+
+
+def build_tokenizer(tokenizer=None):
+    if not tokenizer or tokenizer == "utf8_tokenizer":
+        return utf8_tokenizer
+    if tokenizer == "unicode_tokenizer":
+        return unicode_tokenizer
+    if isinstance(tokenizer, str):
+        from transformers import AutoTokenizer
+
+        return AutoTokenizer.from_pretrained(tokenizer)
+    return tokenizer
 
 # ----------------------------------------------------------------------
 # ------------------------------ TESTS ---------------------------------
