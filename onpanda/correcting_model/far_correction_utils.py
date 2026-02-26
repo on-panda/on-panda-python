@@ -54,7 +54,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             special_tokens=special_tokens,
         )
         self.special_tokens = self.verifier.special_tokens
-        if tokenizer is None or tokenizer == "unicode_tokenizer":
+        if not tokenizer or tokenizer == "unicode_tokenizer":
             self.tokenizer = unicode_tokenizer
         elif isinstance(tokenizer, str):
             from transformers import AutoTokenizer
