@@ -16,21 +16,15 @@
 pip install onpanda -U
 
 # Or want to run demos.
-git clone https://github.com/on-panda/onpanda.git
-cd onpanda
-pip install -e .
+git clone https://github.com/on-panda/on-panda-python.git
+pip install -e ./on-panda-python
+
+# Example Data for demo
+git clone https://github.com/on-panda/on-panda-example-data.git
+ls on-panda-example-data/panda_json/
 ```
 
 If you want to use tokenizers, install `transformers` separately.
-
-**Example Data**
-
-`on-panda-example-data` is the example dataset repo for this project:
-
-```bash
-git clone https://github.com/on-panda/on-panda-example-data.git ../on-panda-example-data
-ls ../on-panda-example-data/panda_json/
-```
 
 ## ▮ Quick Start
 
