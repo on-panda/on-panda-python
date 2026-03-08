@@ -26,11 +26,17 @@ DEFAULT_TMP_PANDA_SCORE_PATH = (
 class PandaScoreMixin:
     @staticmethod
     def _mean(nums):
-        return sum(nums) / len(nums)
+        return sum(nums) / len(nums) if nums else 0.0
 
-    def eval_panda_score(self, panda_json_path):
+    def eval_panda_score(self, panda_json_path, sample_mode=None):
         """
         Evaluate correcting quality on panda json file(s).
+
+        sample_mode:
+        - None/"all": evaluate on all FAR samples, including gt is_good samples
+          and correction samples
+        - "correction_only": evaluate only correction samples, excluding gt
+          is_good samples
 
         Returned summary metrics:
         - format_score: mean format reward on all samples
@@ -45,10 +51,18 @@ class PandaScoreMixin:
         - true_location_num: number of not_good samples with correct location
         """
         from onpanda import PandaTree
+        if not sample_mode:
+            sample_mode = "all"
+        assert sample_mode in ("all", "correction_only"), sample_mode
 
         if isinstance(panda_json_path, (list, tuple)):
-            panda_score_list = [self.eval_panda_score(path) for path in panda_json_path]
-            return self.aggregation_panda_score(panda_score_list)
+            panda_score_list = [
+                self.eval_panda_score(path, sample_mode=sample_mode)
+                for path in panda_json_path
+            ]
+            return self.aggregation_panda_score(
+                panda_score_list
+            )
 
         format_scores = []
         location_scores = []
@@ -68,6 +82,12 @@ class PandaScoreMixin:
         ):
             messages = remove_msgs_after_last_response_role(far_correction_data[:-2])
             gt_correction = far_correction_data[-1]["correction"]
+            gt_is_good = bool(
+                gt_correction["find_and_replace"].get("is_good")
+                or gt_correction["messages_location"].get("is_good")
+            )
+            if sample_mode == "correction_only" and gt_is_good:
+                continue
 
             correction_result = self.correct(messages)
             far_text = correction_result["correction"]["find_and_replace"]["far_text"]
@@ -78,10 +98,6 @@ class PandaScoreMixin:
             )
             reward_with_feedback = reward_result["reward_with_feedback"]
 
-            gt_is_good = bool(
-                gt_correction["find_and_replace"].get("is_good")
-                or gt_correction["messages_location"].get("is_good")
-            )
             panda_score = dict(
                 format_score=reward_with_feedback["format_reward"],
                 location_score=reward_with_feedback["location_reward"],
@@ -138,6 +154,7 @@ class PandaScoreMixin:
             true_location_num=true_location_num,
             score_result_num=len(score_results),
             panda_json_num=1,
+            sample_mode=sample_mode,
             score_results=score_results,
         )
         return panda_score
@@ -189,10 +206,10 @@ class PandaScoreMixin:
             score_results.extend(panda_score["score_results"])
 
         panda_score = dict(
-            format_score=format_score_sum / score_result_num,
-            location_score=location_score_sum / score_result_num,
-            replacement_score=replacement_score_sum / score_result_num,
-            is_good_cls_score=is_good_cls_score_sum / score_result_num,
+            format_score=0.0,
+            location_score=0.0,
+            replacement_score=0.0,
+            is_good_cls_score=0.0,
             location_on_not_good_score=(
                 location_on_not_good_score_sum / not_good_num if not_good_num else 0.0
             ),
@@ -212,6 +229,11 @@ class PandaScoreMixin:
             panda_json_num=panda_json_num,
             score_results=score_results,
         )
+        num = float(score_result_num)
+        panda_score["format_score"] = num and (format_score_sum / num)
+        panda_score["location_score"] = num and (location_score_sum / num)
+        panda_score["replacement_score"] = num and (replacement_score_sum / num)
+        panda_score["is_good_cls_score"] = num and (is_good_cls_score_sum / num)
         return panda_score
 
     def summary_panda_score(self, panda_score):
