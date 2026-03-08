@@ -223,7 +223,7 @@ class UTF8Tokenizer:
         return list(str(string).encode("utf-8"))
 
     def decode(self, tokens, **kwargs):
-        return bytes(tokens).decode("utf-8")
+        return bytes(tokens).decode("utf-8", errors="replace")
 
     def apply_chat_template(self, messages, tokenize=True, **kwargs):
         import json
@@ -247,6 +247,7 @@ def build_tokenizer(tokenizer=None):
 
         return AutoTokenizer.from_pretrained(tokenizer)
     return tokenizer
+
 
 # ----------------------------------------------------------------------
 # ------------------------------ TESTS ---------------------------------
