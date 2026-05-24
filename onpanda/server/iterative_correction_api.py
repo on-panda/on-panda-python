@@ -74,28 +74,13 @@ def create_onpanda_app(base_url, api_key, cli_config):
 
                 def reasoning_parser(message):
                     content = message["content"]
-                    # splitter = correcting_config.get(
-                    #     "reasoning_end_splitter", "\n</think>\n"
-                    # )
-                    # idx = content.rfind(splitter)
-                    # if idx != -1:
-                    #     message["content"] = content[idx + len(splitter) :]
-                    #     message["reasoning"] = content[:idx]
-
-                    splitter = correcting_config.get("reasoning_end_splitter")
-                    splitters = [splitter] if splitter else [
-                        "\n</think>\n",
-                        "</think>\n",
-                        "\n</think>\n\n",
-                        "</think>\n\n",
-                    ]
-                    for splitter in splitters:
-                        idx = content.rfind(splitter)
-                        if idx != -1:
-                            message["content"] = content[idx + len(splitter):]
-                            message["reasoning"] = content[:idx]
-                            return message
-
+                    splitter = correcting_config.get(
+                        "reasoning_end_splitter", "</think>"
+                    )
+                    idx = content.rfind(splitter)
+                    if idx != -1:
+                        message["reasoning"] = content[:idx].rstrip()
+                        message["content"] = content[idx + len(splitter):].lstrip()
                     return message
 
                 chat.setdefault("parser", reasoning_parser)
