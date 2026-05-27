@@ -9,14 +9,12 @@ Iterative correction proxy API.
 Supported keys include:
 - `rollout_num` (int): iterative correction rollouts, default 5.
 - `mode` (str): iterative correction mode, default "till_good".
-- `reasoning_effort` (str): reasoning effort for GPT correcting models, default "medium".
 - `chat` (dict): kwargs for `mxlm.ChatAPI` used by correcting model.
 - `far` (dict): kwargs for `onpanda.FindAndReplaceCorrectionAdapter`.
 
 url_config-path examples:
 - rollout_num@3,chat.model@step1f-correct-sft-it1200
 - rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@utf8_tokenizer
-- rollout_num@3,chat.model@gpt-5.5,chat.reasoning_effort@xhigh
 """
 
 from flask import Flask
@@ -25,7 +23,6 @@ import mxlm
 
 UPSTREAM_TIMEOUT = (10, 4 * 60 * 60)
 HEARTBEAT_INTERVAL_SECONDS = 600
-DEFAULT_GPT_REASONING_EFFORT = "medium"
 
 
 def deep_merge(base, override):
@@ -49,26 +46,6 @@ def parse_url_config(value):
     return mxlm.decode_url_config_path(s)
 
 
-def is_gpt_model(model):
-    return isinstance(model, str) and model.strip().lower().startswith("gpt")
-
-
-def prepare_correcting_chat_config(correcting_config):
-    chat = correcting_config.get("chat")
-    if chat is None:
-        return None
-
-    chat = dict(chat)
-    if is_gpt_model(chat.get("model")):
-        if "reasoning_effort" not in chat:
-            chat["reasoning_effort"] = correcting_config.get(
-                "reasoning_effort", DEFAULT_GPT_REASONING_EFFORT
-            )
-    else:
-        chat.pop("reasoning_effort", None)
-    return chat
-
-
 def create_onpanda_app(base_url, api_key, cli_config):
     app = Flask(__name__)
     default_base_url = base_url
@@ -83,7 +60,7 @@ def create_onpanda_app(base_url, api_key, cli_config):
 
         model_config = {
             "far": correcting_config.get("far"),
-            "chat": prepare_correcting_chat_config(correcting_config),
+            "chat": correcting_config.get("chat"),
         }
         model_key = json.dumps(model_config, sort_keys=True, ensure_ascii=False)
         correcting_model = correcting_model_holder.get(model_key)
@@ -123,7 +100,6 @@ def create_onpanda_app(base_url, api_key, cli_config):
         `correcting_config` keys used here:
         - rollout_num: correction rollouts, default 5
         - mode: iterative mode, default till_good
-        - reasoning_effort: GPT correcting model reasoning effort, default medium
         - chat: used to build correcting chat, mxlm.ChatAPI(**chat)
         - far: used to build correcting adapter, FindAndReplaceCorrectionAdapter(**far)
 
@@ -269,9 +245,7 @@ if __name__ == "__main__":
     print(
         "  - Merge in process_func: correcting_config = deep_merge(cli_config, url_config)"
     )
-    print(
-        "  - Common correcting_config keys: rollout_num, mode, reasoning_effort, chat.*, far.*"
-    )
+    print("  - Common correcting_config keys: rollout_num, mode, chat.*, far.*")
     print(
         "  - chat.* -> mxlm.ChatAPI(**chat), far.* -> onpanda.FindAndReplaceCorrectionAdapter(**far)"
     )
