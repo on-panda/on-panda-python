@@ -16,7 +16,7 @@ Supported keys include:
 url_config-path examples:
 - rollout_num@3,chat.model@step1f-correct-sft-it1200
 - rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@utf8_tokenizer
-- rollout_num@3,chat.model@gpt-5.5,reasoning_effort@xhigh
+- rollout_num@3,chat.model@gpt-5.5,chat.reasoning_effort@xhigh
 """
 
 from flask import Flask

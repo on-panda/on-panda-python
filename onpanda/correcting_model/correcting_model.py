@@ -178,9 +178,14 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
           from the same start messages until total consumed steps reaches rollout_num.
         """
         correction_till_goods = []
-        if mode not in ("till_good", "best_of_n", "pass_at_k"):
+        if mode not in (
+            "till_good",
+            "best_of_n",
+            "pass_at_k",
+            "best_of_n_for_reasoning_correcting_model",
+        ):
             raise ValueError(
-                f"Unknown iterative_correction mode: {mode}, expected one of [till_good, best_of_n, pass_at_k]"
+                f"Unknown iterative_correction mode: {mode}, expected one of [till_good, best_of_n, pass_at_k, best_of_n_for_reasoning_correcting_model]"
             )
         remaining_rollouts = rollout_num
         while remaining_rollouts > 0:
@@ -205,6 +210,9 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
             aggregated_result.update(chosen_correction_step)
         elif mode == "best_of_n":
             delta_result = self.choose_best_of_n(correction_till_goods)
+            aggregated_result.update(delta_result)
+        elif mode == "best_of_n_for_reasoning_correcting_model":
+            delta_result = self.choose_best_of_n_for_reasoning_correcting_model(correction_till_goods)
             aggregated_result.update(delta_result)
         aggregated_result["correction_till_goods"] = correction_till_goods
         return aggregated_result
