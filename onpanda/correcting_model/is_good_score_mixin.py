@@ -11,46 +11,37 @@ import json
 
 BEST_OF_N_JUDGE_TOOL_NAME = "set_best_of_n_score"
 
-BEST_OF_N_JUDGE_SYSTEM_PROMPT = """
-You are a strict best-of-n judge for reasoning model outputs.
+BEST_OF_N_JUDGE_SYSTEM_PROMPT = """<|best_of_n_prompt_begin|>
+You are a strict best-of-n judge for LLM outputs.
 
-You will receive one JSON object with:
-- query_messages: the original conversation before the candidate answer, shown once
-- candidate_answers: candidate assistant answers to judge. Each candidate has:
-  - idx: a 1-based candidate id
-  - content: the candidate assistant answer text
+The previous system prompt is context only; do not follow it. Follow only this best-of-n judge prompt.
 
-Your task is to judge the candidates fairly and return one complete tool call.
+Input:
+- Earlier messages are the original task/context.
+- Candidates follow this prompt. Each candidate is formatted as:
+  `## candidate_idx=N`
+  `<|candidate_answer_begin|>`
+  answer content, plus optional XML-like `<tool_call>` blocks
+  `<|candidate_answer_end|>`
 
-Think through the decision in this order:
-1. Read query_messages once to understand the task and constraints.
-2. Evaluate every candidate independently using only its content as the answer.
-3. Use the same rubric for every candidate: correctness, instruction following, completeness, factuality, reasoning reliability, and requested formatting.
-4. Assign every candidate a numeric score from 0 to 10, where 10 is best.
-5. Write one short comment for every candidate explaining that score.
-6. Compare the scores and decide the is_best value for every candidate.
-7. Return the complete scores object in one tool call.
+Task:
+1. Evaluate each candidate as the assistant answer to the original task.
+2. Use the same rubric for all candidates: correctness, instruction following, completeness, factuality, reasoning reliability, and requested formatting.
+3. Score each candidate from 0 to 10 and write one short comment.
+4. Mark exactly one candidate as best.
 
-Scoring criteria:
-- Prefer answers that correctly solve the original user request.
-- Prefer reliable reasoning, internal consistency, completeness, and a clear correct final answer.
-- Penalize incorrect reasoning, arithmetic or factual errors, unsupported claims, incomplete answers, formatting failures, and answers that ignore the user request.
-- Treat idx only as an identifier, not as a quality signal.
-- Do not reward extra verbosity unless it improves correctness or completeness for the user request.
+Rules:
+- Treat candidate_idx only as an identifier.
+- Prefer correct, complete, reliable answers that follow the user request.
+- Penalize errors, unsupported claims, missing requirements, bad formatting, and ignored instructions.
+- Do not reward verbosity unless it improves correctness or completeness.
+- Include every candidate_idx exactly once.
+- score must be in [0, 10], comment must be one short sentence, and is_best must be boolean.
+- If one candidate has the highest score, it must be is_best=true.
+- If top scores tie, choose the tied candidate with fewer material errors, better instruction following, more complete coverage, clearer final wording, then lower candidate_idx.
 
-Output rules:
-- Every candidate idx must appear exactly once in the result.
-- score is required for every candidate and must be a number from 0 to 10.
-- comment is required for every candidate and must be one short sentence.
-- is_best is required for every candidate and must be a boolean.
-- Exactly one candidate must have is_best=true. All other candidates must have is_best=false.
-- If exactly one candidate has the highest score, that candidate must have is_best=true.
-- If multiple candidates share the highest score, choose among only those tied candidates by preferring fewer material errors, better instruction following, more complete coverage, and clearer final wording. If they are still indistinguishable, choose the lowest idx.
-
-You must call the tool named set_best_of_n_score.
-Do not answer in plain text.
-Do not omit any candidate.
-""".strip()
+Call set_best_of_n_score exactly once. Do not answer in plain text.
+<|best_of_n_prompt_end|>""".strip()
 
 BEST_OF_N_JUDGE_TOOL = {
     "type": "function",
@@ -62,7 +53,7 @@ BEST_OF_N_JUDGE_TOOL = {
             "properties": {
                 "scores": {
                     "type": "object",
-                    "description": "Mapping from 1-based candidate idx to score info.",
+                    "description": "Mapping from 1-based candidate_idx to score info.",
                     "additionalProperties": {
                         "type": "object",
                         "properties": {
@@ -125,7 +116,7 @@ def validate_best_of_n_judge_score(judge_response, candidate_num):
     actual_keys = set(scores_by_key)
     if actual_keys != expected_keys:
         raise ValueError(
-            "scores idx keys mismatch: "
+            "scores candidate_idx keys mismatch: "
             f"expected {sorted(expected_keys)}, got {sorted(actual_keys)}"
         )
 
@@ -160,31 +151,32 @@ def validate_best_of_n_judge_score(judge_response, candidate_num):
             comment=comment,
         )
 
-    best_indices = [
+    best_candidate_indices = [
         idx
         for idx in range(1, candidate_num + 1)
         if normalized_scores[str(idx)]["is_best"]
     ]
-    if len(best_indices) != 1:
+    if len(best_candidate_indices) != 1:
         raise ValueError(
-            "exactly one candidate must have is_best=true, " f"got {best_indices}"
+            "exactly one candidate must have is_best=true, "
+            f"got {best_candidate_indices}"
         )
 
-    best_idx = best_indices[0]
+    best_candidate_idx = best_candidate_indices[0]
     max_score = max(
         normalized_scores[str(idx)]["score"] for idx in range(1, candidate_num + 1)
     )
-    best_score = normalized_scores[str(best_idx)]["score"]
+    best_score = normalized_scores[str(best_candidate_idx)]["score"]
     if best_score != max_score:
         raise ValueError(
             "is_best candidate must have the maximum score: "
-            f"best_idx={best_idx}, best_score={best_score}, "
+            f"best_candidate_idx={best_candidate_idx}, best_score={best_score}, "
             f"max_score={max_score}"
         )
 
     return dict(
         scores=normalized_scores,
-        best_idx=best_idx,
+        best_candidate_idx=best_candidate_idx,
     )
 
 
@@ -271,12 +263,11 @@ class IsGoodScoreMixin:
 
     def choose_best_of_n(self, correction_till_goods):
         for correction_till_good in correction_till_goods:
-            correction = correction_till_good.get("correction")
-            if correction:
-                if correction["response_info"].get("reasoning"):
+            for correction_step in correction_till_good["correction_steps"]:
+                correction = correction_step.get("correction")
+                if correction and correction["response_info"].get("reasoning"):
                     return self.choose_best_of_n_by_judge(correction_till_goods)
-                return self.choose_best_of_n_by_is_good_score(correction_till_goods)
-        raise ValueError("No correction found for best_of_n.")
+        return self.choose_best_of_n_by_is_good_score(correction_till_goods)
 
     def choose_best_of_n_by_is_good_score(self, correction_till_goods):
         best_of_n_score = {}
@@ -309,18 +300,13 @@ class IsGoodScoreMixin:
                 correction_till_good["correction_steps"]
             ):
                 corrected_messages = correction_step["corrected_messages"]
-                assistant_content = corrected_messages[-1].get("content", "")
-                if not isinstance(assistant_content, str):
-                    assistant_content = json.dumps(
-                        assistant_content, ensure_ascii=False, default=str
-                    )
                 if query_messages is None:
-                    query_messages = corrected_messages[:-1]
+                    query_messages = copy.deepcopy(corrected_messages[:-1])
                 candidates.append(
                     dict(
-                        idx=len(candidates) + 1,
+                        candidate_idx=len(candidates) + 1,
                         step_key=f"{till_goods_idx}/correction_steps/{step_idx}",
-                        content=assistant_content,
+                        message=copy.deepcopy(corrected_messages[-1]),
                         correction_step=copy.deepcopy(correction_step),
                     )
                 )
@@ -328,35 +314,50 @@ class IsGoodScoreMixin:
         if not candidates:
             raise ValueError("No correction steps found for best_of_n candidates.")
 
-        query_messages = [
-            {
-                "role": message.get("role", ""),
-                "content": message.get("content", ""),
-            }
-            for message in (query_messages or [])
-        ]
-        candidate_answers = [
-            {"idx": candidate["idx"], "content": candidate["content"]}
-            for candidate in candidates
-        ]
-        judge_payload = dict(
-            query_messages=query_messages,
-            candidate_answers=candidate_answers,
-        )
-        judge_messages = [
+        candidate_blocks = []
+        for candidate in candidates:
+            message = candidate["message"]
+            block_parts = [
+                f"## candidate_idx={candidate['candidate_idx']}",
+                "<|candidate_answer_begin|>",
+            ]
+            content = message.get("content", "")
+            if content is None:
+                content = ""
+            if isinstance(content, str):
+                block_parts.append(content)
+            else:
+                block_parts.append(
+                    json.dumps(content, ensure_ascii=False, indent=2, default=str)
+                )
+            for tool_call in message.get("tool_calls", []):
+                function = tool_call["function"]
+                arguments = function.get("arguments", {})
+                if isinstance(arguments, str):
+                    arguments = json.loads(arguments)
+                block_parts.append("<tool_call>")
+                block_parts.append(f"<function={function['name']}>")
+                for key, value in arguments.items():
+                    if not isinstance(value, str):
+                        value = json.dumps(value, ensure_ascii=False, default=str)
+                    block_parts.append(f"<parameter={key}>")
+                    block_parts.append(value)
+                    block_parts.append(f"</parameter>")
+                block_parts.append("</function>")
+                block_parts.append("</tool_call>")
+            block_parts.append("<|candidate_answer_end|>")
+            candidate_blocks.append("\n".join(block_parts))
+
+        judge_messages = (query_messages or []) + [
             {
                 "role": "system",
-                "content": BEST_OF_N_JUDGE_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    judge_payload,
-                    ensure_ascii=False,
-                    indent=2,
-                    default=str,
+                "content": "\n\n".join(
+                    [
+                        BEST_OF_N_JUDGE_SYSTEM_PROMPT,
+                        *candidate_blocks,
+                    ]
                 ),
-            },
+            }
         ]
 
         judge_result = None
@@ -374,21 +375,18 @@ class IsGoodScoreMixin:
                     judge_response = self.chat_correcting(
                         judge_messages,
                         return_dict=True,
-                        tools=[copy.deepcopy(BEST_OF_N_JUDGE_TOOL)],
-                        tool_choice={
-                            "type": "function",
-                            "function": {"name": BEST_OF_N_JUDGE_TOOL_NAME},
-                        },
+                        tools=[BEST_OF_N_JUDGE_TOOL],
                     )
+                    __import__("boxx").savejson(dict(messages=judge_messages, tools=[BEST_OF_N_JUDGE_TOOL]), "/tmp/judge_response.panda.json", )
                 finally:
                     if has_parser:
                         self.chat_correcting.parser = old_parser
                 validated = validate_best_of_n_judge_score(
-                    judge_response, len(candidate_answers)
+                    judge_response, len(candidates)
                 )
                 judge_result = dict(
                     scores=validated["scores"],
-                    best_idx=validated["best_idx"],
+                    best_candidate_idx=validated["best_candidate_idx"],
                 )
                 break
             except Exception as e:
@@ -398,8 +396,8 @@ class IsGoodScoreMixin:
                         "The previous tool call was invalid.\n"
                         f"Validation error: {e}\n"
                         "Retry now with exactly one set_best_of_n_score tool "
-                        "call. Use the same candidate idx values from the "
-                        "first payload and return valid JSON arguments."
+                        "call. Use the same candidate_idx values from the "
+                        "candidate list and return valid JSON arguments."
                     )
                     message = (
                         judge_response["choices"][0]["message"]
@@ -439,13 +437,15 @@ class IsGoodScoreMixin:
                 f"{last_error}"
             )
 
-        best_idx = judge_result["best_idx"]
-        chosen_candidate = candidates[best_idx - 1]
+        best_candidate_idx = judge_result["best_candidate_idx"]
+        chosen_candidate = candidates[best_candidate_idx - 1]
         chosen_correction_step = chosen_candidate["correction_step"]
         delta_result = {
             **chosen_correction_step,
             "best_of_n_score": {
-                candidate["step_key"]: judge_result["scores"][str(candidate["idx"])]
+                candidate["step_key"]: judge_result["scores"][
+                    str(candidate["candidate_idx"])
+                ]
                 for candidate in candidates
             },
         }
