@@ -20,16 +20,28 @@ You will receive a JSON array of candidate rollout records. Each candidate has:
 - assistant_content: the final assistant answer for that candidate
 - correction_step: the full raw correction step metadata
 
-Your task is to evaluate every candidate independently and assign a quality score.
+Your task is to judge the candidates step by step and return one complete tool call.
 
-Scoring rules:
-- Give every candidate an integer score from 0 to 10, where 10 is best.
+Think through the decision in this order:
+1. Evaluate every candidate independently.
+2. Assign every candidate an integer score from 0 to 10, where 10 is best.
+3. Write one short comment for every candidate explaining that score.
+4. Compare the scores and decide the is_best value for every candidate.
+5. Return the complete scores object in one tool call.
+
+Scoring criteria:
 - Prefer answers that correctly solve the original user request.
 - Prefer reliable reasoning, internal consistency, completeness, and a clear correct final answer.
 - Penalize incorrect reasoning, arithmetic or factual errors, unsupported claims, incomplete answers, formatting failures, and answers that ignore the user request.
+
+Output rules:
 - Every candidate idx must appear exactly once in the result.
-- comment is required for every candidate and should be one short sentence explaining the score.
-- Do not output is_best. The caller will choose the best candidate by score.
+- score is required for every candidate and must be an integer from 0 to 10.
+- comment is required for every candidate and must be one short sentence.
+- is_best is required for every candidate and must be a boolean.
+- Exactly one candidate must have is_best=true. All other candidates must have is_best=false.
+- If exactly one candidate has the highest score, that candidate must have is_best=true.
+- If multiple candidates share the highest score, choose the best one among only those tied candidates and mark only it as is_best=true.
 
 You must call the tool named set_best_of_n_score.
 Do not answer in plain text.
@@ -52,8 +64,9 @@ BEST_OF_N_for_REASONING_CORRECTING_MODEL_TOOL = {
                         "properties": {
                             "score": {"type": "number"},
                             "comment": {"type": "string"},
+                            "is_best": {"type": "boolean"},
                         },
-                        "required": ["score", "comment"],
+                        "required": ["score", "comment", "is_best"],
                     },
                 }
             },
@@ -231,21 +244,42 @@ class IsGoodScoreMixin:
                     if not isinstance(comment, str):
                         raise ValueError(f"scores[{key}].comment must be string")
 
+                    if "is_best" not in score_info:
+                        raise ValueError(f"scores[{key}].is_best is required")
+                    is_best = score_info["is_best"]
+                    if not isinstance(is_best, bool):
+                        raise ValueError(f"scores[{key}].is_best must be boolean")
+
                     normalized_score = dict(
-                        is_best=False,
+                        is_best=is_best,
                         score=score,
                         comment=comment,
                     )
                     normalized_scores[key] = normalized_score
 
-                best_idx = max(
-                    range(1, candidate_num + 1),
-                    key=lambda idx: (
-                        normalized_scores[str(idx)]["score"],
-                        -idx,
-                    ),
+                best_indices = [
+                    idx
+                    for idx in range(1, candidate_num + 1)
+                    if normalized_scores[str(idx)]["is_best"]
+                ]
+                if len(best_indices) != 1:
+                    raise ValueError(
+                        "exactly one candidate must have is_best=true, "
+                        f"got {best_indices}"
+                    )
+
+                best_idx = best_indices[0]
+                max_score = max(
+                    normalized_scores[str(idx)]["score"]
+                    for idx in range(1, candidate_num + 1)
                 )
-                normalized_scores[str(best_idx)]["is_best"] = True
+                best_score = normalized_scores[str(best_idx)]["score"]
+                if best_score != max_score:
+                    raise ValueError(
+                        "is_best candidate must have the maximum score: "
+                        f"best_idx={best_idx}, best_score={best_score}, "
+                        f"max_score={max_score}"
+                    )
 
                 return dict(
                     scores=normalized_scores,
