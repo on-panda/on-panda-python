@@ -5,6 +5,8 @@ Created on Tue Sep 23 16:56:53 2025
 
 @author: DIYer22
 """
+import os
+from copy import deepcopy
 import mxlm
 import mximport
 
@@ -33,11 +35,17 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
             return_dict=True,
             # max_tokens=self.adapter.max_location_tokens + 20,  # bad for reasoning model
         )
-        far_text = correction_response["choices"][0]["message"]["content"]
+        message = correction_response["choices"][0]["message"]
+        far_text = message["content"]
         if "new_messages" in correction_response:
             del correction_response["new_messages"]
         apply_res = self.adapter.apply(messages, far_text)
         correction = apply_res["correction"]
+        correction["response_info"] = dict(
+            model=correction_response.get("model"),
+            reasoning=message.get("reasoning", message.get("reasoning_content")),
+            finish_reason=correction_response["choices"][0].get("finish_reason"),
+        )
         partial_messages = apply_res["partial_messages"]
         return dict(
             correction=correction,
@@ -70,6 +78,7 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
                     )
                 )
             corrected_result["correction"] = correction_result["correction"]
+            # corrected_result["correction_response"] = correction_result["correction_response"]
             if failed_corrections:
                 corrected_result["failed_corrections"] = failed_corrections
             if self._is_not_found_correction(corrected_result["correction"]):
@@ -182,10 +191,10 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
             "till_good",
             "best_of_n",
             "pass_at_k",
-            "best_of_n_for_reasoning_correcting_model",
         ):
             raise ValueError(
-                f"Unknown iterative_correction mode: {mode}, expected one of [till_good, best_of_n, pass_at_k, best_of_n_for_reasoning_correcting_model]"
+                f"Unknown iterative_correction mode: {mode}, "
+                "expected one of [till_good, best_of_n, pass_at_k]"
             )
         remaining_rollouts = rollout_num
         while remaining_rollouts > 0:
@@ -211,9 +220,6 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
         elif mode == "best_of_n":
             delta_result = self.choose_best_of_n(correction_till_goods)
             aggregated_result.update(delta_result)
-        elif mode == "best_of_n_for_reasoning_correcting_model":
-            delta_result = self.choose_best_of_n_for_reasoning_correcting_model(correction_till_goods)
-            aggregated_result.update(delta_result)
         aggregated_result["correction_till_goods"] = correction_till_goods
         return aggregated_result
 
@@ -232,9 +238,7 @@ def build_test_correcting_model(
     adapter=None,
     tokenizer="Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
 ):
-    import mxlm
     import onpanda
-    import transformers
 
     if chat_correcting is None:
         chat_correcting = mxlm.ChatAPI(
@@ -263,12 +267,57 @@ def build_test_correcting_model(
     )
 
 
+def build_reasoning_correcting_model(
+    chat_correcting=None,
+    adapter=None,
+    tokenizer="Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
+):
+    import os
+    import onpanda
+
+    if chat_correcting is None:
+        chat_correcting = mxlm.ChatAPI(
+            base_url=os.environ.get(
+                "REASONING_CM_BASE_URL", "https://api.stepfun.com/v1"
+            ),
+            api_key=os.environ.get(
+                "REASONING_CM_API_KEY", os.environ.get("STEPFUN_API_KEY")
+            ),
+            model=os.environ.get("REASONING_CM_CORRECTING_MODEL", "step-3.7-flash"),
+            temperature=1,
+            top_p=0.95,
+            max_tokens=1024 * 10,
+        )
+    if adapter is None:
+        adapter = onpanda.FindAndReplaceCorrectionAdapter(
+            tokenizer=tokenizer,
+        )
+    return CorrectingModel(
+        chat_correcting,
+        adapter,
+    )
+
+
+def build_correcting_model_with_policy(reasoning=True):
+    new_kwargs = dict(max_tokens=1536, temperature=0.8)
+    if reasoning:
+        correcting_model = build_reasoning_correcting_model()
+        new_kwargs["model"] = os.environ.get(
+            "REASONING_CORRECTING_MODEL_POLICY_MODEL", "step-1v-32k"
+        )  # should support continue_final_message
+    else:
+        correcting_model = build_test_correcting_model()
+    chat_policy = deepcopy(correcting_model.chat_correcting)
+    chat_policy.default_kwargs.update(new_kwargs)
+    return dict(correcting_model=correcting_model, chat_policy=chat_policy)
+
+
 if __name__ == "__main__":
     from boxx import *
     from onpanda.test_utils import get_test_rejected_msgs1
-    from copy import deepcopy
 
-    correcting_model = build_test_correcting_model()
+    _d = build_correcting_model_with_policy()
+    correcting_model, chat_policy = _d["correcting_model"], _d["chat_policy"]
 
     msgs = [
         {"role": "user", "content": "5+7="},
@@ -279,9 +328,7 @@ if __name__ == "__main__":
 
     # msgs = [{"role": "user", "content": "How many `1` in result of 652*8596"},]
 
-    chat_policy = deepcopy(correcting_model.chat_correcting)
-    chat_policy.default_kwargs["max_tokens"] = 1536
     corrected = correcting_model.iterative_correction(
-        msgs, chat_policy, rollout_num=5, mode="best_of_n"
+        msgs, chat_policy, rollout_num=3, mode="best_of_n"
     )
     tree(corrected)

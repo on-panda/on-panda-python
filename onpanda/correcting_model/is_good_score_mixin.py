@@ -9,49 +9,53 @@ import copy
 import json
 
 
-BEST_OF_N_for_REASONING_CORRECTING_MODEL_TOOL_NAME = "set_best_of_n_score"
+BEST_OF_N_JUDGE_TOOL_NAME = "set_best_of_n_score"
 
-BEST_OF_N_for_REASONING_CORRECTING_MODEL_SYSTEM_PROMPT = """
+BEST_OF_N_JUDGE_SYSTEM_PROMPT = """
 You are a strict best-of-n judge for reasoning model outputs.
 
-You will receive a JSON array of candidate rollout records. Each candidate has:
-- idx: a 1-based candidate id
-- corrected_messages: the full conversation messages after that rollout/correction step
-- assistant_content: the final assistant answer for that candidate
-- correction_step: the full raw correction step metadata
+You will receive one JSON object with:
+- query_messages: the original conversation before the candidate answer, shown once
+- candidate_answers: candidate assistant answers to judge. Each candidate has:
+  - idx: a 1-based candidate id
+  - content: the candidate assistant answer text
 
-Your task is to judge the candidates step by step and return one complete tool call.
+Your task is to judge the candidates fairly and return one complete tool call.
 
 Think through the decision in this order:
-1. Evaluate every candidate independently.
-2. Assign every candidate an integer score from 0 to 10, where 10 is best.
-3. Write one short comment for every candidate explaining that score.
-4. Compare the scores and decide the is_best value for every candidate.
-5. Return the complete scores object in one tool call.
+1. Read query_messages once to understand the task and constraints.
+2. Evaluate every candidate independently using only its content as the answer.
+3. Use the same rubric for every candidate: correctness, instruction following, completeness, factuality, reasoning reliability, and requested formatting.
+4. Assign every candidate a numeric score from 0 to 10, where 10 is best.
+5. Write one short comment for every candidate explaining that score.
+6. Compare the scores and decide the is_best value for every candidate.
+7. Return the complete scores object in one tool call.
 
 Scoring criteria:
 - Prefer answers that correctly solve the original user request.
 - Prefer reliable reasoning, internal consistency, completeness, and a clear correct final answer.
 - Penalize incorrect reasoning, arithmetic or factual errors, unsupported claims, incomplete answers, formatting failures, and answers that ignore the user request.
+- Treat idx only as an identifier, not as a quality signal.
+- Do not reward extra verbosity unless it improves correctness or completeness for the user request.
 
 Output rules:
 - Every candidate idx must appear exactly once in the result.
-- score is required for every candidate and must be an integer from 0 to 10.
+- score is required for every candidate and must be a number from 0 to 10.
 - comment is required for every candidate and must be one short sentence.
 - is_best is required for every candidate and must be a boolean.
 - Exactly one candidate must have is_best=true. All other candidates must have is_best=false.
 - If exactly one candidate has the highest score, that candidate must have is_best=true.
-- If multiple candidates share the highest score, choose the best one among only those tied candidates and mark only it as is_best=true.
+- If multiple candidates share the highest score, choose among only those tied candidates by preferring fewer material errors, better instruction following, more complete coverage, and clearer final wording. If they are still indistinguishable, choose the lowest idx.
 
 You must call the tool named set_best_of_n_score.
 Do not answer in plain text.
 Do not omit any candidate.
 """.strip()
 
-BEST_OF_N_for_REASONING_CORRECTING_MODEL_TOOL = {
+BEST_OF_N_JUDGE_TOOL = {
     "type": "function",
     "function": {
-        "name": BEST_OF_N_for_REASONING_CORRECTING_MODEL_TOOL_NAME,
+        "name": BEST_OF_N_JUDGE_TOOL_NAME,
         "description": "Set best-of-n scores for all candidate rollout answers.",
         "parameters": {
             "type": "object",
@@ -62,7 +66,7 @@ BEST_OF_N_for_REASONING_CORRECTING_MODEL_TOOL = {
                     "additionalProperties": {
                         "type": "object",
                         "properties": {
-                            "score": {"type": "number"},
+                            "score": {"type": "number", "minimum": 0, "maximum": 10},
                             "comment": {"type": "string"},
                             "is_best": {"type": "boolean"},
                         },
@@ -74,6 +78,114 @@ BEST_OF_N_for_REASONING_CORRECTING_MODEL_TOOL = {
         },
     },
 }
+
+
+def validate_best_of_n_judge_score(judge_response, candidate_num):
+    try:
+        message = judge_response["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise ValueError(f"judge_response missing choices[0].message: {repr(e)}")
+
+    tool_calls = message.get("tool_calls")
+    if not tool_calls:
+        raise ValueError("judge_response has no tool_calls")
+    if not isinstance(tool_calls, list):
+        raise ValueError("judge_response.tool_calls must be a list")
+    if len(tool_calls) != 1:
+        raise ValueError(
+            f"judge_response must have exactly one tool_call, got {len(tool_calls)}"
+        )
+
+    tool_call = tool_calls[0]
+    function = tool_call.get("function", {})
+    tool_name = function.get("name")
+    if tool_name != BEST_OF_N_JUDGE_TOOL_NAME:
+        raise ValueError(
+            "judge_response tool_call name must be "
+            f"{BEST_OF_N_JUDGE_TOOL_NAME}, got {tool_name}"
+        )
+
+    arguments = function.get("arguments", "")
+    if isinstance(arguments, str):
+        parsed_arguments = json.loads(arguments)
+    elif isinstance(arguments, dict):
+        parsed_arguments = arguments
+    else:
+        raise ValueError(f"tool arguments must be str or dict, got {type(arguments)}")
+
+    if not isinstance(parsed_arguments, dict):
+        raise ValueError("tool arguments JSON must be an object")
+
+    scores_obj = parsed_arguments.get("scores", parsed_arguments)
+    if not isinstance(scores_obj, dict):
+        raise ValueError("scores must be an object")
+
+    scores_by_key = {str(k): v for k, v in scores_obj.items()}
+    expected_keys = {str(i) for i in range(1, candidate_num + 1)}
+    actual_keys = set(scores_by_key)
+    if actual_keys != expected_keys:
+        raise ValueError(
+            "scores idx keys mismatch: "
+            f"expected {sorted(expected_keys)}, got {sorted(actual_keys)}"
+        )
+
+    normalized_scores = {}
+    for idx in range(1, candidate_num + 1):
+        key = str(idx)
+        score_info = scores_by_key[key]
+        if not isinstance(score_info, dict):
+            raise ValueError(f"scores[{key}] must be an object")
+
+        score = score_info.get("score")
+        if isinstance(score, bool) or not isinstance(score, (int, float)):
+            raise ValueError(f"scores[{key}].score must be number")
+        if not 0 <= score <= 10:
+            raise ValueError(f"scores[{key}].score must be in [0, 10]")
+
+        if "comment" not in score_info:
+            raise ValueError(f"scores[{key}].comment is required")
+        comment = score_info["comment"]
+        if not isinstance(comment, str):
+            raise ValueError(f"scores[{key}].comment must be string")
+
+        if "is_best" not in score_info:
+            raise ValueError(f"scores[{key}].is_best is required")
+        is_best = score_info["is_best"]
+        if not isinstance(is_best, bool):
+            raise ValueError(f"scores[{key}].is_best must be boolean")
+
+        normalized_scores[key] = dict(
+            is_best=is_best,
+            score=score,
+            comment=comment,
+        )
+
+    best_indices = [
+        idx
+        for idx in range(1, candidate_num + 1)
+        if normalized_scores[str(idx)]["is_best"]
+    ]
+    if len(best_indices) != 1:
+        raise ValueError(
+            "exactly one candidate must have is_best=true, " f"got {best_indices}"
+        )
+
+    best_idx = best_indices[0]
+    max_score = max(
+        normalized_scores[str(idx)]["score"] for idx in range(1, candidate_num + 1)
+    )
+    best_score = normalized_scores[str(best_idx)]["score"]
+    if best_score != max_score:
+        raise ValueError(
+            "is_best candidate must have the maximum score: "
+            f"best_idx={best_idx}, best_score={best_score}, "
+            f"max_score={max_score}"
+        )
+
+    return dict(
+        scores=normalized_scores,
+        best_idx=best_idx,
+    )
 
 
 class IsGoodScoreMixin:
@@ -158,6 +270,15 @@ class IsGoodScoreMixin:
         return is_good_score
 
     def choose_best_of_n(self, correction_till_goods):
+        for correction_till_good in correction_till_goods:
+            correction = correction_till_good.get("correction")
+            if correction:
+                if correction["response_info"].get("reasoning"):
+                    return self.choose_best_of_n_by_judge(correction_till_goods)
+                return self.choose_best_of_n_by_is_good_score(correction_till_goods)
+        raise ValueError("No correction found for best_of_n.")
+
+    def choose_best_of_n_by_is_good_score(self, correction_till_goods):
         best_of_n_score = {}
         for till_goods_idx, correction_till_good in enumerate(correction_till_goods):
             for step_idx, correction_step in enumerate(
@@ -180,208 +301,26 @@ class IsGoodScoreMixin:
         delta_result = {**chosen_correction_step, "best_of_n_score": best_of_n_score}
         return delta_result
 
-    def validate_best_of_n_for_reasoning_score(self, judge_response, candidate_num):
-        try:
-            message = judge_response["choices"][0]["message"]
-        except (KeyError, IndexError, TypeError) as e:
-            raise ValueError(
-                f"judge_response missing choices[0].message: {repr(e)}"
-            )
-
-        tool_calls = message.get("tool_calls")
-        if not tool_calls:
-            raise ValueError("judge_response has no tool_calls")
-
-        last_error = None
-        for tool_call in tool_calls:
-            function = tool_call.get("function", {})
-            tool_name = function.get("name")
-            if tool_name != BEST_OF_N_for_REASONING_CORRECTING_MODEL_TOOL_NAME:
-                continue
-            try:
-                arguments = function.get("arguments", "")
-                if isinstance(arguments, str):
-                    parsed_arguments = json.loads(arguments)
-                elif isinstance(arguments, dict):
-                    parsed_arguments = arguments
-                else:
-                    raise ValueError(
-                        f"tool arguments must be str or dict, got {type(arguments)}"
-                    )
-
-                if not isinstance(parsed_arguments, dict):
-                    raise ValueError("tool arguments JSON must be an object")
-
-                scores_obj = parsed_arguments.get("scores", parsed_arguments)
-                if not isinstance(scores_obj, dict):
-                    raise ValueError("scores must be an object")
-
-                scores_by_key = {str(k): v for k, v in scores_obj.items()}
-                expected_keys = {str(i) for i in range(1, candidate_num + 1)}
-                actual_keys = set(scores_by_key)
-                if actual_keys != expected_keys:
-                    raise ValueError(
-                        "scores idx keys mismatch: "
-                        f"expected {sorted(expected_keys)}, got {sorted(actual_keys)}"
-                    )
-
-                normalized_scores = {}
-                for idx in range(1, candidate_num + 1):
-                    key = str(idx)
-                    score_info = scores_by_key[key]
-                    if not isinstance(score_info, dict):
-                        raise ValueError(f"scores[{key}] must be an object")
-
-                    score = score_info.get("score")
-                    if isinstance(score, bool) or not isinstance(score, (int, float)):
-                        raise ValueError(f"scores[{key}].score must be number")
-                    if not 0 <= score <= 10:
-                        raise ValueError(f"scores[{key}].score must be in [0, 10]")
-
-                    if "comment" not in score_info:
-                        raise ValueError(f"scores[{key}].comment is required")
-                    comment = score_info["comment"]
-                    if not isinstance(comment, str):
-                        raise ValueError(f"scores[{key}].comment must be string")
-
-                    if "is_best" not in score_info:
-                        raise ValueError(f"scores[{key}].is_best is required")
-                    is_best = score_info["is_best"]
-                    if not isinstance(is_best, bool):
-                        raise ValueError(f"scores[{key}].is_best must be boolean")
-
-                    normalized_score = dict(
-                        is_best=is_best,
-                        score=score,
-                        comment=comment,
-                    )
-                    normalized_scores[key] = normalized_score
-
-                best_indices = [
-                    idx
-                    for idx in range(1, candidate_num + 1)
-                    if normalized_scores[str(idx)]["is_best"]
-                ]
-                if len(best_indices) != 1:
-                    raise ValueError(
-                        "exactly one candidate must have is_best=true, "
-                        f"got {best_indices}"
-                    )
-
-                best_idx = best_indices[0]
-                max_score = max(
-                    normalized_scores[str(idx)]["score"]
-                    for idx in range(1, candidate_num + 1)
-                )
-                best_score = normalized_scores[str(best_idx)]["score"]
-                if best_score != max_score:
-                    raise ValueError(
-                        "is_best candidate must have the maximum score: "
-                        f"best_idx={best_idx}, best_score={best_score}, "
-                        f"max_score={max_score}"
-                    )
-
-                return dict(
-                    scores=normalized_scores,
-                    best_idx=best_idx,
-                    tool_call=tool_call,
-                )
-            except Exception as e:
-                last_error = e
-
-        if last_error is not None:
-            raise ValueError(
-                "invalid set_best_of_n_score tool call: " + str(last_error)
-            )
-        raise ValueError(
-            "judge_response has no tool_call named "
-            f"{BEST_OF_N_for_REASONING_CORRECTING_MODEL_TOOL_NAME}"
-        )
-
-    def compute_is_good_score_for_reasoning_correcting_model(self, messages):
+    def choose_best_of_n_by_judge(self, correction_till_goods):
         candidates = []
-        for candidate in messages:
-            candidates.append(
-                dict(
-                    idx=candidate["idx"],
-                    step_key=candidate.get("step_key", ""),
-                    corrected_messages=candidate.get("corrected_messages", []),
-                    assistant_message=candidate.get("assistant_message", {}),
-                    assistant_content=candidate.get("assistant_content", ""),
-                    correction_step=candidate.get("correction_step", {}),
-                )
-            )
-
-        judge_messages = [
-            {
-                "role": "system",
-                "content": BEST_OF_N_for_REASONING_CORRECTING_MODEL_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {"candidates": candidates},
-                    ensure_ascii=False,
-                    indent=2,
-                    default=str,
-                ),
-            },
-        ]
-        old_parser = getattr(self.chat_correcting, "parser", None)
-        has_parser = hasattr(self.chat_correcting, "parser")
-        if has_parser:
-            self.chat_correcting.parser = None
-        try:
-            judge_response = self.chat_correcting(
-                judge_messages,
-                return_dict=True,
-                tools=[copy.deepcopy(BEST_OF_N_for_REASONING_CORRECTING_MODEL_TOOL)],
-                tool_choice={
-                    "type": "function",
-                    "function": {
-                        "name": BEST_OF_N_for_REASONING_CORRECTING_MODEL_TOOL_NAME
-                    },
-                },
-            )
-        finally:
-            if has_parser:
-                self.chat_correcting.parser = old_parser
-        validated = self.validate_best_of_n_for_reasoning_score(
-            judge_response, len(candidates)
-        )
-        return dict(
-            scores=validated["scores"],
-            best_idx=validated["best_idx"],
-            tool_call=validated["tool_call"],
-            judge_response=judge_response,
-        )
-
-    def choose_best_of_n_for_reasoning_correcting_model(self, correction_till_goods):
-        candidates = []
+        query_messages = None
         for till_goods_idx, correction_till_good in enumerate(correction_till_goods):
             for step_idx, correction_step in enumerate(
                 correction_till_good["correction_steps"]
             ):
-                corrected_messages = copy.deepcopy(
-                    correction_step.get("corrected_messages", [])
-                )
-                assistant_message = (
-                    copy.deepcopy(corrected_messages[-1])
-                    if corrected_messages
-                    else {}
-                )
-                assistant_content = assistant_message.get("content", "")
+                corrected_messages = correction_step["corrected_messages"]
+                assistant_content = corrected_messages[-1].get("content", "")
                 if not isinstance(assistant_content, str):
                     assistant_content = json.dumps(
                         assistant_content, ensure_ascii=False, default=str
                     )
+                if query_messages is None:
+                    query_messages = corrected_messages[:-1]
                 candidates.append(
                     dict(
                         idx=len(candidates) + 1,
                         step_key=f"{till_goods_idx}/correction_steps/{step_idx}",
-                        corrected_messages=corrected_messages,
-                        assistant_message=assistant_message,
-                        assistant_content=assistant_content,
+                        content=assistant_content,
                         correction_step=copy.deepcopy(correction_step),
                     )
                 )
@@ -389,28 +328,115 @@ class IsGoodScoreMixin:
         if not candidates:
             raise ValueError("No correction steps found for best_of_n candidates.")
 
-        attempts = []
+        query_messages = [
+            {
+                "role": message.get("role", ""),
+                "content": message.get("content", ""),
+            }
+            for message in (query_messages or [])
+        ]
+        candidate_answers = [
+            {"idx": candidate["idx"], "content": candidate["content"]}
+            for candidate in candidates
+        ]
+        judge_payload = dict(
+            query_messages=query_messages,
+            candidate_answers=candidate_answers,
+        )
+        judge_messages = [
+            {
+                "role": "system",
+                "content": BEST_OF_N_JUDGE_SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    judge_payload,
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                ),
+            },
+        ]
+
         judge_result = None
         last_error = None
-        max_attempts = 5
+        max_attempts = 3
 
         for attempt_idx in range(1, max_attempts + 1):
+            judge_response = None
             try:
-                judge_result = self.compute_is_good_score_for_reasoning_correcting_model(
-                    candidates
+                old_parser = getattr(self.chat_correcting, "parser", None)
+                has_parser = hasattr(self.chat_correcting, "parser")
+                if has_parser:
+                    self.chat_correcting.parser = None
+                try:
+                    judge_response = self.chat_correcting(
+                        judge_messages,
+                        return_dict=True,
+                        tools=[copy.deepcopy(BEST_OF_N_JUDGE_TOOL)],
+                        tool_choice={
+                            "type": "function",
+                            "function": {"name": BEST_OF_N_JUDGE_TOOL_NAME},
+                        },
+                    )
+                finally:
+                    if has_parser:
+                        self.chat_correcting.parser = old_parser
+                validated = validate_best_of_n_judge_score(
+                    judge_response, len(candidate_answers)
                 )
-                attempts.append(dict(attempt=attempt_idx, ok=True))
+                judge_result = dict(
+                    scores=validated["scores"],
+                    best_idx=validated["best_idx"],
+                )
                 break
             except Exception as e:
                 last_error = e
-                attempts.append(
-                    dict(attempt=attempt_idx, ok=False, error=str(e))
-                )
+                if attempt_idx < max_attempts:
+                    retry_content = (
+                        "The previous tool call was invalid.\n"
+                        f"Validation error: {e}\n"
+                        "Retry now with exactly one set_best_of_n_score tool "
+                        "call. Use the same candidate idx values from the "
+                        "first payload and return valid JSON arguments."
+                    )
+                    message = (
+                        judge_response["choices"][0]["message"]
+                        if judge_response
+                        else None
+                    )
+                    tool_calls = message.get("tool_calls") if message else None
+                    if tool_calls and all(
+                        tool_call.get("id") for tool_call in tool_calls
+                    ):
+                        judge_messages.append(
+                            {
+                                "role": "assistant",
+                                "content": message.get("content") or "",
+                                "tool_calls": tool_calls,
+                            }
+                        )
+                        for tool_call in tool_calls:
+                            judge_messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_call["id"],
+                                    "content": retry_content,
+                                }
+                            )
+                    else:
+                        judge_messages.append(
+                            {
+                                "role": "user",
+                                "content": retry_content,
+                            }
+                        )
 
         if judge_result is None:
             raise ValueError(
-                "best_of_n_for_reasoning_correcting_model failed after "
-                f"{max_attempts} attempts: {last_error}"
+                f"best_of_n judge failed after {max_attempts} attempts: "
+                f"{last_error}"
             )
 
         best_idx = judge_result["best_idx"]
@@ -418,16 +444,10 @@ class IsGoodScoreMixin:
         chosen_correction_step = chosen_candidate["correction_step"]
         delta_result = {
             **chosen_correction_step,
-            "best_of_n_for_reasoning_correcting_model_score": judge_result["scores"],
-            "best_of_n_for_reasoning_correcting_model_best_idx": best_idx,
-            "best_of_n_for_reasoning_correcting_model_best_key": chosen_candidate[
-                "step_key"
-            ],
-            "best_of_n_for_reasoning_correcting_model_candidates": candidates,
-            "best_of_n_for_reasoning_correcting_model_judge_response": judge_result[
-                "judge_response"
-            ],
-            "best_of_n_for_reasoning_correcting_model_attempts": attempts,
+            "best_of_n_score": {
+                candidate["step_key"]: judge_result["scores"][str(candidate["idx"])]
+                for candidate in candidates
+            },
         }
         return delta_result
 

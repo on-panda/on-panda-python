@@ -51,6 +51,7 @@ class PandaScoreMixin:
         - true_location_num: number of not_good samples with correct location
         """
         from onpanda import PandaTree
+
         if not sample_mode:
             sample_mode = "all"
         assert sample_mode in ("all", "correction_only"), sample_mode
@@ -60,9 +61,7 @@ class PandaScoreMixin:
                 self.eval_panda_score(path, sample_mode=sample_mode)
                 for path in panda_json_path
             ]
-            return self.aggregation_panda_score(
-                panda_score_list
-            )
+            return self.aggregation_panda_score(panda_score_list)
 
         format_scores = []
         location_scores = []

@@ -80,7 +80,7 @@ def create_onpanda_app(base_url, api_key, cli_config):
                     idx = content.rfind(splitter)
                     if idx != -1:
                         message["reasoning"] = content[:idx].rstrip()
-                        message["content"] = content[idx + len(splitter):].lstrip()
+                        message["content"] = content[idx + len(splitter) :].lstrip()
                     return message
 
                 chat.setdefault("parser", reasoning_parser)
