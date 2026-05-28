@@ -1,17 +1,10 @@
 def build_test_tokenizer(name_or_path="Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4"):
-    from transformers import AutoTokenizer
-
     try:
-        tokenizer = AutoTokenizer.from_pretrained(
-            name_or_path,
-            use_fast=True,
-            local_files_only=True,
-        )
-    except (OSError, ValueError):
-        # Smaller model that ships with Transformers – guarantees the
-        # example runs even without the Llama‑3 files.
-        tokenizer = AutoTokenizer.from_pretrained(name_or_path, use_fast=True)
-    return tokenizer
+        from .token_level_supervision_utils import _from_pretrained_local_first
+    except ImportError:
+        from token_level_supervision_utils import _from_pretrained_local_first
+
+    return _from_pretrained_local_first(name_or_path, use_fast=True)
 
 
 def get_test_rejected_msgs1():

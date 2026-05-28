@@ -237,15 +237,23 @@ class UTF8Tokenizer:
 utf8_tokenizer = UTF8Tokenizer()
 
 
+def _from_pretrained_local_first(name_or_path, **kwargs):
+    from transformers import AutoTokenizer
+
+    try:
+        local_kwargs = dict(kwargs, local_files_only=True)
+        return AutoTokenizer.from_pretrained(name_or_path, **local_kwargs)
+    except (OSError, ValueError):
+        return AutoTokenizer.from_pretrained(name_or_path, **kwargs)
+
+
 def build_tokenizer(tokenizer=None):
     if not tokenizer or tokenizer == "utf8_tokenizer":
         return utf8_tokenizer
     if tokenizer == "unicode_tokenizer":
         return unicode_tokenizer
     if isinstance(tokenizer, str):
-        from transformers import AutoTokenizer
-
-        return AutoTokenizer.from_pretrained(tokenizer)
+        return _from_pretrained_local_first(tokenizer)
     return tokenizer
 
 
