@@ -211,6 +211,19 @@ class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
         elif mode == "best_of_n":
             delta_result = self.choose_best_of_n(correction_till_goods)
             aggregated_result.update(delta_result)
+        elif mode == "pass_at_k":
+            pass_at_k_candidates = []
+            first_correction_step = None
+            for correction_till_good in correction_till_goods:
+                for correction_step in correction_till_good["correction_steps"]:
+                    if first_correction_step is None:
+                        first_correction_step = correction_step
+                    corrected_messages = correction_step.get("corrected_messages", [])
+                    final_message = corrected_messages[-1] if corrected_messages else {}
+                    pass_at_k_candidates.append(final_message.get("content", ""))
+            if first_correction_step is not None:
+                aggregated_result.update(first_correction_step)
+            aggregated_result["pass_at_k_candidates"] = pass_at_k_candidates
         elif mode == "best_of_n_for_reasoning_correcting_model":
             delta_result = self.choose_best_of_n_for_reasoning_correcting_model(correction_till_goods)
             aggregated_result.update(delta_result)

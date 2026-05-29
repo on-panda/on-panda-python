@@ -1,6 +1,8 @@
 import argparse
 import copy
+import hashlib
 import json
+import threading
 
 """
 Iterative correction proxy API.
@@ -9,12 +11,14 @@ Iterative correction proxy API.
 Supported keys include:
 - `rollout_num` (int): iterative correction rollouts, default 5.
 - `mode` (str): iterative correction mode, default "till_good".
+- `reasoning_effort` (str): reasoning effort for GPT correcting models, default "medium".
 - `chat` (dict): kwargs for `mxlm.ChatAPI` used by correcting model.
 - `far` (dict): kwargs for `onpanda.FindAndReplaceCorrectionAdapter`.
 
 url_config-path examples:
 - rollout_num@3,chat.model@step1f-correct-sft-it1200
 - rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@utf8_tokenizer
+- rollout_num@3,chat.model@gpt-5.5,chat.reasoning_effort@xhigh
 """
 
 from flask import Flask
@@ -23,6 +27,9 @@ import mxlm
 
 UPSTREAM_TIMEOUT = (10, 4 * 60 * 60)
 HEARTBEAT_INTERVAL_SECONDS = 600
+DEFAULT_GPT_REASONING_EFFORT = "medium"
+All_Tasks_Info = {}
+ALL_TASKS_INFO_LOCK = threading.Lock()
 
 
 def deep_merge(base, override):
@@ -46,11 +53,93 @@ def parse_url_config(value):
     return mxlm.decode_url_config_path(s)
 
 
+def is_gpt_model(model):
+    return isinstance(model, str) and model.strip().lower().startswith("gpt")
+
+
+def prepare_correcting_chat_config(correcting_config):
+    chat = correcting_config.get("chat")
+    if chat is None:
+        return None
+
+    chat = dict(chat)
+    if is_gpt_model(chat.get("model")):
+        if "reasoning_effort" not in chat:
+            chat["reasoning_effort"] = correcting_config.get(
+                "reasoning_effort", DEFAULT_GPT_REASONING_EFFORT
+            )
+    else:
+        chat.pop("reasoning_effort", None)
+    return chat
+
+
+def hash_prompt(prompt: str) -> str:
+    return hashlib.sha256(prompt.strip().encode("utf-8")).hexdigest()
+
+
+def get_request_prompt(body):
+    prompt = body.get("prompt")
+    if isinstance(prompt, str):
+        return prompt
+    return json.dumps(
+        body.get("messages", []),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def normalize_assistant_content(content):
+    if isinstance(content, str):
+        return content
+    return json.dumps(content, ensure_ascii=False, default=str)
+
+
 def create_onpanda_app(base_url, api_key, cli_config):
     app = Flask(__name__)
     default_base_url = base_url
     default_api_key = api_key
     correcting_model_holder = {}
+
+    def get_pass_at_k_task_info(save_name, k):
+        with ALL_TASKS_INFO_LOCK:
+            if save_name not in All_Tasks_Info:
+                All_Tasks_Info[save_name] = {
+                    "k": k,
+                    "hash_to_prompt": {},
+                    "failed": False,
+                }
+            task_info = All_Tasks_Info[save_name]
+            if task_info["failed"] is True:
+                raise ValueError(
+                    f"pass_at_k save_name already failed or cannot continue: {save_name}"
+                )
+            if int(task_info["k"]) != int(k):
+                raise ValueError(
+                    "pass_at_k k mismatch for save_name "
+                    f"{save_name}: existing={task_info['k']}, current={k}"
+                )
+            return task_info
+
+    def get_pass_at_k_prompt_info(hash_to_prompt, prompt_hash, prompt):
+        with ALL_TASKS_INFO_LOCK:
+            if prompt_hash not in hash_to_prompt:
+                hash_to_prompt[prompt_hash] = {
+                    "lock": threading.Lock(),
+                    "prompt": prompt,
+                    "times": 0,
+                    "response_pass_at_k": [],
+                }
+            return hash_to_prompt[prompt_hash]
+
+    def extract_pass_at_k_candidates(corrected, k):
+        candidates = corrected.get("pass_at_k_candidates", [])
+        contents = [normalize_assistant_content(content) for content in candidates]
+        if len(contents) < k:
+            raise ValueError(
+                f"pass_at_k generated {len(contents)} candidates, expected at least {k}"
+            )
+        return contents[:k]
 
     def get_correcting_model(correcting_config, chat_policy):
         from onpanda.correcting_model.correcting_model import (
@@ -60,7 +149,7 @@ def create_onpanda_app(base_url, api_key, cli_config):
 
         model_config = {
             "far": correcting_config.get("far"),
-            "chat": correcting_config.get("chat"),
+            "chat": prepare_correcting_chat_config(correcting_config),
         }
         model_key = json.dumps(model_config, sort_keys=True, ensure_ascii=False)
         correcting_model = correcting_model_holder.get(model_key)
@@ -100,6 +189,7 @@ def create_onpanda_app(base_url, api_key, cli_config):
         `correcting_config` keys used here:
         - rollout_num: correction rollouts, default 5
         - mode: iterative mode, default till_good
+        - reasoning_effort: GPT correcting model reasoning effort, default medium
         - chat: used to build correcting chat, mxlm.ChatAPI(**chat)
         - far: used to build correcting adapter, FindAndReplaceCorrectionAdapter(**far)
 
@@ -122,6 +212,16 @@ def create_onpanda_app(base_url, api_key, cli_config):
         req_model = body.get("model", "")
         rollout_num = int(correcting_config.get("rollout_num", 5))
         mode = correcting_config.get("mode", "till_good")
+        pass_at_k_save_name = None
+        pass_at_k_task_info = None
+        if mode == "pass_at_k":
+            pass_at_k_save_name = correcting_config.get("save_name")
+            if not pass_at_k_save_name:
+                raise ValueError("pass_at_k mode requires save_name in url config")
+            pass_at_k_save_name = str(pass_at_k_save_name)
+            pass_at_k_task_info = get_pass_at_k_task_info(
+                pass_at_k_save_name, rollout_num
+            )
 
         auth_header = headers.get("Authorization", "")
         bearer_token = (
@@ -148,6 +248,52 @@ def create_onpanda_app(base_url, api_key, cli_config):
 
         chat_policy = mxlm.ChatAPI(**policy_kwargs)
         correcting_model = get_correcting_model(correcting_config, chat_policy)
+
+        if mode == "pass_at_k":
+            save_name = pass_at_k_save_name
+            task_info = pass_at_k_task_info
+            hash_to_prompt = task_info["hash_to_prompt"]
+            prompt = get_request_prompt(body)
+            prompt_hash = hash_prompt(prompt)
+            prompt_info = get_pass_at_k_prompt_info(
+                hash_to_prompt, prompt_hash, prompt
+            )
+
+            with prompt_info["lock"]:
+                if int(prompt_info["times"]) >= rollout_num:
+                    raise ValueError(
+                        "pass_at_k prompt request times exceeded k: "
+                        f"save_name={save_name}, prompt_hash={prompt_hash}, "
+                        f"times={prompt_info['times']}, k={rollout_num}"
+                    )
+                if (
+                    int(prompt_info["times"]) == 0
+                    and not prompt_info["response_pass_at_k"]
+                ):
+                    corrected = correcting_model.iterative_correction(
+                        copy.deepcopy(req_messages),
+                        chat_policy,
+                        rollout_num=rollout_num,
+                        mode=mode,
+                    )
+                    prompt_info["response_pass_at_k"] = extract_pass_at_k_candidates(
+                        corrected, rollout_num
+                    )
+
+                if not prompt_info["response_pass_at_k"]:
+                    raise ValueError(
+                        "pass_at_k response_pass_at_k is empty before k responses: "
+                        f"save_name={save_name}, prompt_hash={prompt_hash}, "
+                        f"times={prompt_info['times']}, k={rollout_num}"
+                    )
+                selected_content = prompt_info["response_pass_at_k"].pop(0)
+                prompt_info["times"] += 1
+
+            return {
+                "direct_forward": False,
+                "message": {"role": "assistant", "content": selected_content},
+            }
+
         # print("chat_policy created:", chat_policy, correcting_model.chat_correcting, flush=True)
         corrected = correcting_model.iterative_correction(
             copy.deepcopy(req_messages),
@@ -245,7 +391,9 @@ if __name__ == "__main__":
     print(
         "  - Merge in process_func: correcting_config = deep_merge(cli_config, url_config)"
     )
-    print("  - Common correcting_config keys: rollout_num, mode, chat.*, far.*")
+    print(
+        "  - Common correcting_config keys: rollout_num, mode, reasoning_effort, chat.*, far.*"
+    )
     print(
         "  - chat.* -> mxlm.ChatAPI(**chat), far.* -> onpanda.FindAndReplaceCorrectionAdapter(**far)"
     )
