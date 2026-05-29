@@ -5,11 +5,11 @@ Created on Tue Sep 23 16:56:53 2025
 
 @author: DIYer22
 """
+
 import copy
 import json
 
-
-BEST_OF_N_JUDGE_TOOL_NAME = "set_best_of_n_score"
+BEST_OF_N_JUDGE_TOOL_NAME = "set_best_of_n_scores"
 
 BEST_OF_N_JUDGE_SYSTEM_PROMPT = """<|best_of_n_prompt_begin|>
 - You are a strict best-of-n judge for LLM outputs.
@@ -34,7 +34,7 @@ Rules:
 - score must be in [0, 10], comment must be one short sentence, and is_best must be boolean.
 - If one candidate has the highest score, it must be is_best=true.
 - If top scores tie, choose only one among the tied candidates.
-- Call set_best_of_n_score exactly once. Do not answer in plain text.
+- Call set_best_of_n_scores exactly once. Do not answer in plain text.
 <|best_of_n_prompt_end|>""".strip()
 
 BEST_OF_N_JUDGE_TOOL = {
@@ -280,19 +280,24 @@ class BestOfNMixin:
             )
         return {
             **correction_steps[choice_result["best_idx"]],
-            "best_of_n_score": dict(zip(step_keys, choice_result["best_of_n_scores"])),
+            "best_of_n_scores": dict(zip(step_keys, choice_result["best_of_n_scores"])),
+            "best_of_n_info": choice_result["best_of_n_info"],
         }
 
     def choose_best_of_n_by_is_good_score(self, candidate_messages_list):
-        best_of_n_scores = [
+        scores = [
             self.compute_is_good_score(candidate_messages)
             for candidate_messages in candidate_messages_list
         ]
         best_idx = max(
-            range(len(best_of_n_scores)),
-            key=lambda idx: best_of_n_scores[idx]["is_good_prob"],
+            range(len(scores)),
+            key=lambda idx: scores[idx]["is_good_prob"],
         )
-        return dict(best_of_n_scores=best_of_n_scores, best_idx=best_idx)
+        return dict(
+            best_of_n_scores=scores,
+            best_of_n_info={},
+            best_idx=best_idx,
+        )
 
     def choose_best_of_n_by_judge(self, candidate_messages_list):
         candidates = []
@@ -380,9 +385,13 @@ class BestOfNMixin:
                 validated = validate_best_of_n_judge_score(
                     judge_response, len(candidates)
                 )
+                judge_message = judge_response["choices"][0]["message"].copy()
+                judge_message.pop("tool_calls", None)
                 judge_result = dict(
                     scores=validated["scores"],
                     best_candidate_index=validated["best_candidate_index"],
+                    attempts=attempt_idx,
+                    judge_message=judge_message,
                 )
                 break
             except Exception as e:
@@ -391,7 +400,7 @@ class BestOfNMixin:
                     retry_content = (
                         "The previous tool call was invalid.\n"
                         f"Validation error: {e}\n"
-                        "Retry now with exactly one set_best_of_n_score tool "
+                        "Retry now with exactly one set_best_of_n_scores tool "
                         "call. Use the same candidate_index values from the "
                         "candidate list and return valid JSON arguments."
                     )
@@ -433,12 +442,16 @@ class BestOfNMixin:
                 f"{last_error}"
             )
 
-        best_of_n_scores = [
+        scores = [
             judge_result["scores"][str(candidate["candidate_index"])]
             for candidate in candidates
         ]
         return dict(
-            best_of_n_scores=best_of_n_scores,
+            best_of_n_scores=scores,
+            best_of_n_info=dict(
+                judge_attempts=judge_result["attempts"],
+                judge_message=judge_result["judge_message"],
+            ),
             best_idx=judge_result["best_candidate_index"] - 1,
         )
 
