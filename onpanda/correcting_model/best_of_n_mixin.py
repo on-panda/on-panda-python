@@ -180,7 +180,7 @@ def validate_best_of_n_judge_score(judge_response, candidate_num):
     )
 
 
-class IsGoodScoreMixin:
+class BestOfNMixin:
     def compute_is_good_score(
         self,
         messages,
@@ -262,57 +262,60 @@ class IsGoodScoreMixin:
         return is_good_score
 
     def choose_best_of_n(self, correction_till_goods):
-        for correction_till_good in correction_till_goods:
-            for correction_step in correction_till_good["correction_steps"]:
-                correction = correction_step.get("correction")
-                if correction and correction["response_info"].get("reasoning"):
-                    return self.choose_best_of_n_by_judge(correction_till_goods)
-        return self.choose_best_of_n_by_is_good_score(correction_till_goods)
-
-    def choose_best_of_n_by_is_good_score(self, correction_till_goods):
-        best_of_n_score = {}
+        correction_steps = []
+        step_keys = []
         for till_goods_idx, correction_till_good in enumerate(correction_till_goods):
             for step_idx, correction_step in enumerate(
                 correction_till_good["correction_steps"]
             ):
-                score = self.compute_is_good_score(
-                    correction_step["corrected_messages"]
-                )
-                best_of_n_score[f"{till_goods_idx}/correction_steps/{step_idx}"] = score
+                correction_steps.append(correction_step)
+                step_keys.append(f"{till_goods_idx}/correction_steps/{step_idx}")
 
-        best_step_key = max(
-            best_of_n_score, key=lambda key: best_of_n_score[key]["is_good_prob"]
-        )
-        till_goods_idx, step_idx = [
-            int(i) for i in best_step_key.split("/correction_steps/")
+        candidate_messages_list = [
+            correction_step["corrected_messages"] for correction_step in correction_steps
         ]
-        chosen_correction_step = correction_till_goods[till_goods_idx][
-            "correction_steps"
-        ][step_idx]
-        delta_result = {**chosen_correction_step, "best_of_n_score": best_of_n_score}
-        return delta_result
+        use_judge = any(
+            correction_step.get("correction")
+            and correction_step["correction"]["response_info"].get("reasoning")
+            for correction_step in correction_steps
+        )
+        if use_judge:
+            choice_result = self.choose_best_of_n_by_judge(candidate_messages_list)
+        else:
+            choice_result = self.choose_best_of_n_by_is_good_score(
+                candidate_messages_list
+            )
+        return {
+            **correction_steps[choice_result["best_idx"]],
+            "best_of_n_score": dict(zip(step_keys, choice_result["best_of_n_scores"])),
+        }
 
-    def choose_best_of_n_by_judge(self, correction_till_goods):
+    def choose_best_of_n_by_is_good_score(self, candidate_messages_list):
+        best_of_n_scores = [
+            self.compute_is_good_score(candidate_messages)
+            for candidate_messages in candidate_messages_list
+        ]
+        best_idx = max(
+            range(len(best_of_n_scores)),
+            key=lambda idx: best_of_n_scores[idx]["is_good_prob"],
+        )
+        return dict(best_of_n_scores=best_of_n_scores, best_idx=best_idx)
+
+    def choose_best_of_n_by_judge(self, candidate_messages_list):
         candidates = []
         query_messages = None
-        for till_goods_idx, correction_till_good in enumerate(correction_till_goods):
-            for step_idx, correction_step in enumerate(
-                correction_till_good["correction_steps"]
-            ):
-                corrected_messages = correction_step["corrected_messages"]
-                if query_messages is None:
-                    query_messages = copy.deepcopy(corrected_messages[:-1])
-                candidates.append(
-                    dict(
-                        candidate_idx=len(candidates) + 1,
-                        step_key=f"{till_goods_idx}/correction_steps/{step_idx}",
-                        message=copy.deepcopy(corrected_messages[-1]),
-                        correction_step=copy.deepcopy(correction_step),
-                    )
+        for candidate_messages in candidate_messages_list:
+            if query_messages is None:
+                query_messages = copy.deepcopy(candidate_messages[:-1])
+            candidates.append(
+                dict(
+                    candidate_idx=len(candidates) + 1,
+                    message=copy.deepcopy(candidate_messages[-1]),
                 )
+            )
 
         if not candidates:
-            raise ValueError("No correction steps found for best_of_n candidates.")
+            raise ValueError("No corrected messages found for best_of_n candidates.")
 
         candidate_blocks = []
         for candidate in candidates:
@@ -437,19 +440,14 @@ class IsGoodScoreMixin:
                 f"{last_error}"
             )
 
-        best_candidate_idx = judge_result["best_candidate_idx"]
-        chosen_candidate = candidates[best_candidate_idx - 1]
-        chosen_correction_step = chosen_candidate["correction_step"]
-        delta_result = {
-            **chosen_correction_step,
-            "best_of_n_score": {
-                candidate["step_key"]: judge_result["scores"][
-                    str(candidate["candidate_idx"])
-                ]
-                for candidate in candidates
-            },
-        }
-        return delta_result
+        best_of_n_scores = [
+            judge_result["scores"][str(candidate["candidate_idx"])]
+            for candidate in candidates
+        ]
+        return dict(
+            best_of_n_scores=best_of_n_scores,
+            best_idx=judge_result["best_candidate_idx"] - 1,
+        )
 
 
 if __name__ == "__main__":

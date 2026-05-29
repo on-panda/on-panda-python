@@ -11,13 +11,13 @@ import mxlm
 import mximport
 
 with mximport.inpkg():
-    from .is_good_score_mixin import IsGoodScoreMixin
+    from .best_of_n_mixin import BestOfNMixin
     from .panda_score_mixin import PandaScoreMixin
     from ..test_utils import build_test_tokenizer
     from ..utils import RESPONSE_ROLES
 
 
-class CorrectingModel(IsGoodScoreMixin, PandaScoreMixin):
+class CorrectingModel(BestOfNMixin, PandaScoreMixin):
     def __init__(
         self,
         chat_correcting,
