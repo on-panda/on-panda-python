@@ -1,2 +1,2 @@
-mxlm>=0.2.1
+mxlm>=0.2.8
 mximport

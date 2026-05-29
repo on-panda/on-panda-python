@@ -53,7 +53,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
             correction_response=correction_response,
         )
 
-    def correct_and_rollout(self, messages, chat_policy):
+    def correct_and_rollout(self, messages, chat_policy, iid_sampling=False):
         """
         Run one correction step.
 
@@ -62,22 +62,37 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         in failed_corrections with only correction and correction_response.
         If the final correction is still not_found, regenerate assistant message
         from messages without the last assistant.
+        When iid_sampling is True, skip correction and keep the sampled assistant.
         """
         corrected_result = dict(generate_new=False)
         if messages[-1]["role"] in RESPONSE_ROLES:
-            corrected_result["correcting_model_name"] = self.chat_correcting.model
             failed_corrections = []
-            for _try_idx in range(self.max_correction_attempts):
-                correction_result = self.correct(messages)
-                if not self._is_not_found_correction(correction_result["correction"]):
-                    break
-                failed_corrections.append(
-                    dict(
-                        correction=correction_result["correction"],
-                        correction_response=correction_result["correction_response"],
+            if iid_sampling:
+                corrected_result["correction"] = dict(
+                    messages_location=dict(
+                        not_found=True,
+                        is_good=True,
+                        match_num=0,
+                        find_feedback="iid_sampling: skip correction",
                     )
                 )
-            corrected_result["correction"] = correction_result["correction"]
+            else:
+                corrected_result["correcting_model_name"] = self.chat_correcting.model
+                for _try_idx in range(self.max_correction_attempts):
+                    correction_result = self.correct(messages)
+                    if not self._is_not_found_correction(
+                        correction_result["correction"]
+                    ):
+                        break
+                    failed_corrections.append(
+                        dict(
+                            correction=correction_result["correction"],
+                            correction_response=correction_result[
+                                "correction_response"
+                            ],
+                        )
+                    )
+                corrected_result["correction"] = correction_result["correction"]
             # corrected_result["correction_response"] = correction_result["correction_response"]
             if failed_corrections:
                 corrected_result["failed_corrections"] = failed_corrections
@@ -118,7 +133,9 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         # g()
         return corrected_result
 
-    def iterative_correction_till_good(self, messages, chat_policy, max_rollouts=5):
+    def iterative_correction_till_good(
+        self, messages, chat_policy, max_rollouts=5, iid_sampling=False
+    ):
         """
         Run iterative correction for max_rollouts steps.
 
@@ -142,13 +159,17 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
 
         while len(correction_steps) < max_rollouts:
             if not correction_steps:
-                first_result = self.correct_and_rollout(messages, chat_policy)
+                first_result = self.correct_and_rollout(
+                    messages, chat_policy, iid_sampling=iid_sampling
+                )
                 first_result["applied_corrections"] = applied_corrections
                 correction_steps.append(first_result.copy())
                 continue
 
             current_messages = correction_steps[-1]["corrected_messages"]
-            corrected_result = self.correct_and_rollout(current_messages, chat_policy)
+            corrected_result = self.correct_and_rollout(
+                current_messages, chat_policy, iid_sampling=iid_sampling
+            )
             correction_steps[-1].update(
                 {
                     k: corrected_result.pop(k)
@@ -178,7 +199,12 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         return result
 
     def iterative_correction(
-        self, messages, chat_policy, rollout_num=5, mode="till_good"
+        self,
+        messages,
+        chat_policy,
+        rollout_num=5,
+        mode="till_good",
+        iid_sampling=False,
     ):
         """
         Run iterative correction mode in one of:
@@ -204,7 +230,10 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
             ):  # if already has assistant response, remove it for second round correction
                 till_good_messages = mxlm.remove_last_assistant(messages)
             correction_till_good = self.iterative_correction_till_good(
-                till_good_messages, chat_policy, max_rollouts=remaining_rollouts
+                till_good_messages,
+                chat_policy,
+                max_rollouts=remaining_rollouts,
+                iid_sampling=iid_sampling,
             )
             correction_till_goods.append(correction_till_good)
             remaining_rollouts -= len(correction_till_good["correction_steps"])
@@ -212,7 +241,9 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                 break
 
         aggregated_result = dict(
-            iterative_correction_mode=mode, rollout_num=rollout_num
+            iterative_correction_mode=mode,
+            rollout_num=rollout_num,
+            adapter_info=getattr(self.adapter, "info", None),
         )
         if mode == "till_good":
             chosen_correction_step = correction_till_goods[0]["correction_steps"][-1]
@@ -242,12 +273,13 @@ def build_test_correcting_model(
 
     if chat_correcting is None:
         chat_correcting = mxlm.ChatAPI(
-            model="step1f-correct-sft-it1200",
+            model="peqwen3-sft-cm-it1000",
             temperature=0,
             top_p=1.0,
             max_tokens=40,
             logprobs=True,
             return_dict=True,
+            is_reasoning=False,
         )
     if isinstance(tokenizer, str):
         tokenizer = build_test_tokenizer(tokenizer)
@@ -287,6 +319,7 @@ def build_reasoning_correcting_model(
             temperature=1,
             top_p=0.95,
             max_tokens=1024 * 10,
+            is_reasoning=True,
         )
     if adapter is None:
         adapter = onpanda.FindAndReplaceCorrectionAdapter(
@@ -329,6 +362,10 @@ if __name__ == "__main__":
     # msgs = [{"role": "user", "content": "How many `1` in result of 652*8596"},]
 
     corrected = correcting_model.iterative_correction(
-        msgs, chat_policy, rollout_num=3, mode="best_of_n"
+        msgs,
+        chat_policy,
+        rollout_num=3,
+        mode="best_of_n",
+        # iid_sampling=True,
     )
     tree(corrected)

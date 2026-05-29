@@ -38,7 +38,14 @@ def next_decodable_num(tokens, current_num, tokenizer):
 
 
 class CorrectionAdapter:
-    pass
+    def __str__(self):
+        if hasattr(self, "info"):
+            from pprint import pformat
+
+            return pformat(self.info)
+        return object.__str__(self)
+
+    __repr__ = __str__
 
 
 class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
@@ -56,7 +63,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         )
         self.special_tokens = self.verifier.special_tokens
         self.tokenizer = build_tokenizer(tokenizer)
-        self.far_info = dict(
+        self.info = self.far_info = dict(
             tokenizer=dict(name_or_path=getattr(self.tokenizer, "name_or_path", "")),
             special_tokens=dict(self.special_tokens),
             max_location_tokens=max_location_tokens,

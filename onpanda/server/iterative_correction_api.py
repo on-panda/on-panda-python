@@ -1,21 +1,28 @@
-import argparse
-import copy
-import json
-
 """
 Iterative correction proxy API.
 
 `correcting_config` is merged from CLI `--default_url_config` and route `url_config`.
 Supported keys include:
+- `model` (str): default policy model if request body omits `model`.
 - `rollout_num` (int): iterative correction rollouts, default 5.
 - `mode` (str): iterative correction mode, default "till_good".
+- `iid_sampling` (bool): sample each rollout independently, default False.
 - `chat` (dict): kwargs for `mxlm.ChatAPI` used by correcting model.
 - `far` (dict): kwargs for `onpanda.FindAndReplaceCorrectionAdapter`.
 
 url_config-path examples:
-- rollout_num@3,chat.model@step1f-correct-sft-it1200
-- rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@utf8_tokenizer
+- SFT correcting model for best_of_n mode:
+    - rollout_num@4,mode@best_of_n,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false
+- reasoning model as correcting model:
+    - rollout_num@3,chat.model@step-3.7-flash,far.max_replacement_tokens@1,chat.is_reasoning@true
+- correcting model as reward model:
+    - rollout_num@3,mode@best_of_n,iid_sampling@true,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false
 """
+
+import argparse
+import copy
+import json
+import textwrap
 
 from flask import Flask
 import mxlm
@@ -58,22 +65,31 @@ def create_onpanda_app(base_url, api_key, cli_config):
         )
         import onpanda
 
+        far = copy.deepcopy(correcting_config.get("far"))
+        chat = copy.deepcopy(correcting_config.get("chat"))
+        if chat is not None:
+            # chat_correcting uses the same upstream by default, while still
+            # allowing chat.base_url/chat.api_key overrides in correcting_config.
+            chat.setdefault("base_url", chat_policy.base_url)
+            chat.setdefault("api_key", chat_policy.api_key)
         model_config = {
-            "far": correcting_config.get("far"),
-            "chat": correcting_config.get("chat"),
+            "far": far,
+            "chat": chat,
         }
-        model_key = json.dumps(model_config, sort_keys=True, ensure_ascii=False)
+        model_key = json.dumps(
+            model_config, sort_keys=True, ensure_ascii=False, default=repr
+        )
         correcting_model = correcting_model_holder.get(model_key)
         if correcting_model is None:
-            far = model_config["far"]
-            chat = model_config["chat"]
             chat_correcting = None
             if far is not None:
                 far = onpanda.FindAndReplaceCorrectionAdapter(**far)
             if chat is not None:
 
                 def reasoning_parser(message):
-                    content = message["content"]
+                    content = message.get("content")
+                    if not isinstance(content, str):
+                        return message
                     splitter = correcting_config.get(
                         "reasoning_end_splitter", "</think>"
                     )
@@ -84,9 +100,6 @@ def create_onpanda_app(base_url, api_key, cli_config):
                     return message
 
                 chat.setdefault("parser", reasoning_parser)
-                # chat_correcting using same base_url and api_key as chat_policy
-                chat.setdefault("base_url", chat_policy.base_url)
-                chat.setdefault("api_key", chat_policy.api_key)
                 chat_correcting = mxlm.ChatAPI(**chat)
             correcting_model = build_test_correcting_model(
                 chat_correcting=chat_correcting,
@@ -98,8 +111,10 @@ def create_onpanda_app(base_url, api_key, cli_config):
     def iterative_correction_process_func(body, headers, url_config):
         """
         `correcting_config` keys used here:
+        - model: default policy model if the request body omits model
         - rollout_num: correction rollouts, default 5
         - mode: iterative mode, default till_good
+        - iid_sampling: sample each rollout independently, default False
         - chat: used to build correcting chat, mxlm.ChatAPI(**chat)
         - far: used to build correcting adapter, FindAndReplaceCorrectionAdapter(**far)
 
@@ -119,9 +134,12 @@ def create_onpanda_app(base_url, api_key, cli_config):
         )
 
         req_messages = body.get("messages", [])
-        req_model = body.get("model", "")
+        req_model = body.get("model") or correcting_config.get("model", "")
         rollout_num = int(correcting_config.get("rollout_num", 5))
         mode = correcting_config.get("mode", "till_good")
+        iid_sampling = correcting_config.get("iid_sampling", False)
+        # TODO: support tool calls and structured response_format in iterative correction.
+        assert "tools" not in body, "iterative_correction does not support tools yet"
 
         auth_header = headers.get("Authorization", "")
         bearer_token = (
@@ -133,7 +151,7 @@ def create_onpanda_app(base_url, api_key, cli_config):
 
         policy_kwargs = dict(
             base_url=selected_base_url,
-            api_key=bearer_token or "no-key",
+            api_key=bearer_token or default_api_key or "no-key",
             model=req_model,
         )
         for k in (
@@ -154,6 +172,7 @@ def create_onpanda_app(base_url, api_key, cli_config):
             chat_policy,
             rollout_num=rollout_num,
             mode=mode,
+            iid_sampling=iid_sampling,
         )
         try:
             __import__("boxx").tree(corrected)
@@ -198,7 +217,10 @@ def create_onpanda_app(base_url, api_key, cli_config):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=__doc__.strip(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--base_url",
         required=True,
@@ -213,13 +235,13 @@ if __name__ == "__main__":
         "--default_url_config",
         default="",
         help=(
-            "Default URL config in url_config-path format. "
-            "Example: rollout_num@3,chat.model@step1f-correct-sft-it1200,"
-            "far.tokenizer@utf8_tokenizer"
+            "Default correcting config in url_config-path format. "
+            "Example: rollout_num@3,chat.model@peqwen3-sft-cm-it1000,"
+            "chat.is_reasoning@false"
         ),
     )
     parser.add_argument(
-        "--model", default="", help="Default model, merged into cli_config"
+        "--model", default="", help="Default policy model if request body omits model"
     )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9300)
@@ -235,36 +257,28 @@ if __name__ == "__main__":
     if args.model:
         cli_config["model"] = args.model
 
-    print(f"[iterative_correction_api] listening on http://{args.host}:{args.port}")
-    print("[iterative_correction_api] routes:")
-    print("  - /iterative_correction/v1/* (empty url_config)")
-    print("  - /iterative_correction/{url_config}/v1/*")
-    print("[iterative_correction_api] config:")
-    print("  - CLI config: from --default_url_config and --model")
-    print("  - URL config: url_config in /iterative_correction/{url_config}/v1/*")
-    print(
-        "  - Merge in process_func: correcting_config = deep_merge(cli_config, url_config)"
-    )
-    print("  - Common correcting_config keys: rollout_num, mode, chat.*, far.*")
-    print(
-        "  - chat.* -> mxlm.ChatAPI(**chat), far.* -> onpanda.FindAndReplaceCorrectionAdapter(**far)"
-    )
-    print("  - URL config overrides CLI config")
-    print("  - Aggregation moved to: python -m mxlm.aggregate_apis")
-    print("[iterative_correction_api] examples:")
-    print(
-        f"  - curl http://{args.host}:{args.port}/iterative_correction/chat.model@model_name/v1/models"
-    )
-    print(
-        f"  - curl http://{args.host}:{args.port}/iterative_correction/rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@utf8_tokenizer/v1/models"
-    )
-    print(
-        "  - python -m onpanda.server.iterative_correction_api "
-        "--base_url http://127.0.0.1:9200/v1 "
-        "--api_key key1 "
-        "--default_url_config rollout_num@3,chat.model@step1f-correct-sft-it1200,far.tokenizer@utf8_tokenizer "
-        "--model model_name"
-    )
+    startup_message = textwrap.dedent(
+        f"""
+        [iterative_correction_api] listening on http://{args.host}:{args.port}
+        [iterative_correction_api] routes:
+          - /iterative_correction/v1/* (empty url_config)
+          - /iterative_correction/{{url_config}}/v1/*
+        [iterative_correction_api] config:
+          - CLI config: from --default_url_config and --model
+          - URL config: url_config in /iterative_correction/{{url_config}}/v1/*
+          - Merge in process_func: correcting_config = deep_merge(cli_config, url_config)
+          - Common correcting_config keys: rollout_num, mode, iid_sampling, chat.*, far.*
+          - chat.* -> mxlm.ChatAPI(**chat), far.* -> onpanda.FindAndReplaceCorrectionAdapter(**far)
+          - URL config overrides CLI config
+          - Aggregation moved to: python -m mxlm.aggregate_apis
+          - If using reasoning model as correcting model i.e. `chat.is_reasoning@true` and non-utf8 tokenizer, set `far.max_replacement_tokens` to a small number like 1, otherwise the replacement token may inject too much information.
+        [iterative_correction_api] examples:
+          - curl http://{args.host}:{args.port}/iterative_correction/chat.model@model_name,chat.is_reasoning@false/v1/models
+          - curl http://{args.host}:{args.port}/iterative_correction/rollout_num@3,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false,far.tokenizer@utf8_tokenizer/v1/models
+          - python -m onpanda.server.iterative_correction_api --base_url http://127.0.0.1:9200/v1 --api_key key1 --default_url_config rollout_num@3,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false,far.tokenizer@utf8_tokenizer --model model_name
+        """
+    ).strip()
+    print(startup_message)
 
     app = create_onpanda_app(base_url=base_url, api_key=api_key, cli_config=cli_config)
     app.run(
