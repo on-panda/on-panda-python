@@ -27,7 +27,6 @@ import textwrap
 from flask import Flask
 import mxlm
 
-
 UPSTREAM_TIMEOUT = (10, 4 * 60 * 60)
 HEARTBEAT_INTERVAL_SECONDS = 600
 
@@ -257,8 +256,7 @@ if __name__ == "__main__":
     if args.model:
         cli_config["model"] = args.model
 
-    startup_message = textwrap.dedent(
-        f"""
+    startup_message = textwrap.dedent(f"""
         [iterative_correction_api] listening on http://{args.host}:{args.port}
         [iterative_correction_api] routes:
           - /iterative_correction/v1/* (empty url_config)
@@ -276,8 +274,7 @@ if __name__ == "__main__":
           - curl http://{args.host}:{args.port}/iterative_correction/chat.model@model_name,chat.is_reasoning@false/v1/models
           - curl http://{args.host}:{args.port}/iterative_correction/rollout_num@3,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false,far.tokenizer@utf8_tokenizer/v1/models
           - python -m onpanda.server.iterative_correction_api --base_url http://127.0.0.1:9200/v1 --api_key key1 --default_url_config rollout_num@3,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false,far.tokenizer@utf8_tokenizer --model model_name
-        """
-    ).strip()
+        """).strip()
     print(startup_message)
 
     app = create_onpanda_app(base_url=base_url, api_key=api_key, cli_config=cli_config)
