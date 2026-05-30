@@ -7,6 +7,7 @@ Supported keys include:
 - `rollout_num` (int): iterative correction rollouts, default 5.
 - `mode` (str): iterative correction mode, default "till_good".
 - `iid_sampling` (bool): sample each rollout independently, default False.
+- `eval_name` (str): in-memory cache namespace for pass_at_k mode.
 - `chat` (dict): kwargs for `mxlm.ChatAPI` used by correcting model.
 - `far` (dict): kwargs for `onpanda.FindAndReplaceCorrectionAdapter`.
 
@@ -21,7 +22,9 @@ url_config-path examples:
 
 import argparse
 import copy
+import hashlib
 import json
+import threading
 import textwrap
 
 from flask import Flask
@@ -29,6 +32,8 @@ import mxlm
 
 UPSTREAM_TIMEOUT = (10, 4 * 60 * 60)
 HEARTBEAT_INTERVAL_SECONDS = 600
+PASS_AT_K_TASKS = {}
+PASS_AT_K_TASKS_LOCK = threading.Lock()
 
 
 def deep_merge(base, override):
@@ -52,7 +57,7 @@ def parse_url_config(value):
     return mxlm.decode_url_config_path(s)
 
 
-def create_onpanda_app(base_url, api_key, cli_config):
+def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False):
     app = Flask(__name__)
     default_base_url = base_url
     default_api_key = api_key
@@ -137,6 +142,11 @@ def create_onpanda_app(base_url, api_key, cli_config):
         rollout_num = int(correcting_config.get("rollout_num", 5))
         mode = correcting_config.get("mode", "till_good")
         iid_sampling = correcting_config.get("iid_sampling", False)
+        eval_name = correcting_config.get("eval_name")
+        if mode == "pass_at_k":
+            if not eval_name:
+                raise ValueError("pass_at_k mode requires eval_name in url config")
+            eval_name = str(eval_name)
         # TODO: support tool calls and structured response_format in iterative correction.
         assert "tools" not in body, "iterative_correction does not support tools yet"
 
@@ -150,7 +160,7 @@ def create_onpanda_app(base_url, api_key, cli_config):
 
         policy_kwargs = dict(
             base_url=selected_base_url,
-            api_key=bearer_token or default_api_key or "no-key",
+            api_key=(default_api_key if disable_auth else bearer_token) or "no-key",
             model=req_model,
         )
         for k in (
@@ -165,6 +175,70 @@ def create_onpanda_app(base_url, api_key, cli_config):
 
         chat_policy = mxlm.ChatAPI(**policy_kwargs)
         correcting_model = get_correcting_model(correcting_config, chat_policy)
+
+        if mode == "pass_at_k":
+            prompt_hash = hashlib.sha256(
+                json.dumps(
+                    {"messages": req_messages, "tools": body.get("tools", [])},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+            with PASS_AT_K_TASKS_LOCK:
+                task_state = PASS_AT_K_TASKS.setdefault(
+                    eval_name,
+                    {"k": rollout_num, "prompt_states": {}},
+                )
+                if int(task_state["k"]) != rollout_num:
+                    raise ValueError(
+                        "pass_at_k k mismatch for eval_name "
+                        f"{eval_name}: existing={task_state['k']}, current={rollout_num}"
+                    )
+                prompt_state = task_state["prompt_states"].setdefault(
+                    prompt_hash,
+                    {"lock": threading.Lock(), "times": 0, "candidates": []},
+                )
+
+            with prompt_state["lock"]:
+                if int(prompt_state["times"]) >= rollout_num:
+                    raise ValueError(
+                        "pass_at_k prompt request times exceeded k: "
+                        f"eval_name={eval_name}, prompt_hash={prompt_hash}, "
+                        f"times={prompt_state['times']}, k={rollout_num}"
+                    )
+                if prompt_state["candidates"]:
+                    extra_info = (
+                        f"{prompt_state['times'] + 1}/{rollout_num} of "
+                        "iterative_correction cached pass@k candidates"
+                    )
+                else:
+                    extra_info = corrected = correcting_model.iterative_correction(
+                        copy.deepcopy(req_messages),
+                        chat_policy,
+                        rollout_num=rollout_num,
+                        mode=mode,
+                        iid_sampling=iid_sampling,
+                    )
+                    try:
+                        __import__("boxx").tree([eval_name, prompt_hash, corrected])
+                    except ModuleNotFoundError:
+                        pass
+                    prompt_state["candidates"] = [
+                        correction_step["corrected_messages"][-1]
+                        for correction_till_good in corrected["correction_till_goods"]
+                        for correction_step in correction_till_good["correction_steps"]
+                    ]
+                    assert len(prompt_state["candidates"]) == rollout_num
+
+                selected_message = prompt_state["candidates"].pop(0)
+                prompt_state["times"] += 1
+
+            return {
+                "direct_forward": False,
+                "message": selected_message,
+                "extra_info": {"iterative_correction": extra_info},
+            }
+
         # print("chat_policy created:", chat_policy, correcting_model.chat_correcting, flush=True)
         corrected = correcting_model.iterative_correction(
             copy.deepcopy(req_messages),
@@ -206,7 +280,7 @@ def create_onpanda_app(base_url, api_key, cli_config):
         hijack_path="iterative_correction",
         process_func=iterative_correction_process_func,
         base_url=default_base_url,
-        api_key=default_api_key,
+        api_key=default_api_key if disable_auth else None,
         heartbeat_interval_seconds=HEARTBEAT_INTERVAL_SECONDS,
         upstream_timeout=UPSTREAM_TIMEOUT,
         enable_cors=True,
@@ -228,7 +302,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--api_key",
         default="",
-        help="Optional single API key",
+        help="Optional upstream API key used when --disable_auth is set",
+    )
+    parser.add_argument(
+        "--disable_auth",
+        action="store_true",
+        help="Ignore request Bearer tokens when calling the upstream API",
     )
     parser.add_argument(
         "--default_url_config",
@@ -255,6 +334,9 @@ if __name__ == "__main__":
     cli_config = parse_url_config(args.default_url_config)
     if args.model:
         cli_config["model"] = args.model
+    request_bearer_status = (
+        "ignored" if args.disable_auth else "forwarded to upstream when present"
+    )
 
     startup_message = textwrap.dedent(f"""
         [iterative_correction_api] listening on http://{args.host}:{args.port}
@@ -266,6 +348,7 @@ if __name__ == "__main__":
           - URL config: url_config in /iterative_correction/{{url_config}}/v1/*
           - Merge in process_func: correcting_config = deep_merge(cli_config, url_config)
           - Common correcting_config keys: rollout_num, mode, iid_sampling, chat.*, far.*
+          - Request Bearer: {request_bearer_status}
           - chat.* -> mxlm.ChatAPI(**chat), far.* -> onpanda.FindAndReplaceCorrectionAdapter(**far)
           - URL config overrides CLI config
           - Aggregation moved to: python -m mxlm.aggregate_apis
@@ -277,7 +360,12 @@ if __name__ == "__main__":
         """).strip()
     print(startup_message)
 
-    app = create_onpanda_app(base_url=base_url, api_key=api_key, cli_config=cli_config)
+    app = create_onpanda_app(
+        base_url=base_url,
+        api_key=api_key,
+        cli_config=cli_config,
+        disable_auth=args.disable_auth,
+    )
     app.run(
         host=args.host,
         port=args.port,
