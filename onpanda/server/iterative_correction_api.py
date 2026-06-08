@@ -175,7 +175,10 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False):
 
         chat_policy = mxlm.ChatAPI(**policy_kwargs)
         correcting_model = get_correcting_model(correcting_config, chat_policy)
-
+        print("correcting_model.chat_correcting:")
+        print(correcting_model.chat_correcting)
+        print("chat_policy:")
+        print(chat_policy)
         if mode == "pass_at_k":
             prompt_hash = hashlib.sha256(
                 json.dumps(
