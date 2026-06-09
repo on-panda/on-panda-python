@@ -37,25 +37,25 @@ HEARTBEAT_INTERVAL_SECONDS = 600
 PASS_AT_K_TASKS = {}
 PASS_AT_K_TASKS_LOCK = threading.Lock()
 
-_DUMP_FILE_LOCKS = {}
-_DUMP_FILE_LOCKS_GUARD = threading.Lock()
+DUMP_FILE_LOCKS = {}
+DUMP_FILE_LOCKS_GUARD = threading.Lock()
 
 
-def _dump_corrected_log(corrected, *, log_dir, messages):
+def dump_corrected_log(corrected, *, log_dir, messages):
     if not log_dir:
         return
     prompt_hash = mxlm.hash_object_sha256_base64(mxlm.remove_last_assistant(messages))
     os.makedirs(log_dir, exist_ok=True)
-    target_path = os.path.join(log_dir, f"{quote(prompt_hash, safe='+=')}.json")
-    with _DUMP_FILE_LOCKS_GUARD:
-        lock = _DUMP_FILE_LOCKS.setdefault(target_path, threading.Lock())
+    target_path = os.path.join(log_dir, f"{quote(prompt_hash, safe='')}.json")
+    with DUMP_FILE_LOCKS_GUARD:
+        lock = DUMP_FILE_LOCKS.setdefault(target_path, threading.Lock())
     with lock:
         entries = []
         if os.path.exists(target_path):
             with open(target_path, "r", encoding="utf-8") as f:
                 entries = json.load(f)
         entries.append(corrected)
-        tmp_path = f"{target_path}.tmp"
+        tmp_path = f"{target_path}.json"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(entries, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, target_path)
@@ -251,7 +251,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
                         __import__("boxx").tree([eval_name, prompt_hash, corrected])
                     except ModuleNotFoundError:
                         pass
-                    _dump_corrected_log(
+                    dump_corrected_log(
                         corrected,
                         log_dir=log_dir,
                         messages=req_messages,
@@ -284,7 +284,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             __import__("boxx").tree(corrected)
         except ModuleNotFoundError:
             pass
-        _dump_corrected_log(
+        dump_corrected_log(
             corrected,
             log_dir=log_dir,
             messages=req_messages,
@@ -360,7 +360,7 @@ if __name__ == "__main__":
         "--model", default="", help="Default policy model if request body omits model"
     )
     parser.add_argument(
-        "--log-dir",
+        "--log_dir",
         default="",
         help="Root directory for eval logs. If omitted, eval logs are not written.",
     )
