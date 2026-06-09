@@ -24,8 +24,10 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import threading
 import textwrap
+from urllib.parse import quote
 
 from flask import Flask
 import mxlm
@@ -34,6 +36,29 @@ UPSTREAM_TIMEOUT = (10, 4 * 60 * 60)
 HEARTBEAT_INTERVAL_SECONDS = 600
 PASS_AT_K_TASKS = {}
 PASS_AT_K_TASKS_LOCK = threading.Lock()
+
+DUMP_FILE_LOCKS = {}
+DUMP_FILE_LOCKS_GUARD = threading.Lock()
+
+
+def dump_corrected_log(corrected, *, log_dir, messages):
+    if not log_dir:
+        return
+    prompt_hash = mxlm.hash_object_sha256_base64(mxlm.remove_last_assistant(messages))
+    os.makedirs(log_dir, exist_ok=True)
+    target_path = os.path.join(log_dir, f"{quote(prompt_hash, safe='')}.json")
+    with DUMP_FILE_LOCKS_GUARD:
+        lock = DUMP_FILE_LOCKS.setdefault(target_path, threading.Lock())
+    with lock:
+        entries = []
+        if os.path.exists(target_path):
+            with open(target_path, "r", encoding="utf-8") as f:
+                entries = json.load(f)
+        entries.append(corrected)
+        tmp_path = f"{target_path}.json"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(entries, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, target_path)
 
 
 def deep_merge(base, override):
@@ -57,7 +82,7 @@ def parse_url_config(value):
     return mxlm.decode_url_config_path(s)
 
 
-def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False):
+def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_dir=None):
     app = Flask(__name__)
     default_base_url = base_url
     default_api_key = api_key
@@ -226,6 +251,11 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False):
                         __import__("boxx").tree([eval_name, prompt_hash, corrected])
                     except ModuleNotFoundError:
                         pass
+                    dump_corrected_log(
+                        corrected,
+                        log_dir=log_dir,
+                        messages=req_messages,
+                    )
                     prompt_state["candidates"] = [
                         correction_step["corrected_messages"][-1]
                         for correction_till_good in corrected["correction_till_goods"]
@@ -254,6 +284,11 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False):
             __import__("boxx").tree(corrected)
         except ModuleNotFoundError:
             pass
+        dump_corrected_log(
+            corrected,
+            log_dir=log_dir,
+            messages=req_messages,
+        )
 
         corrected_messages = corrected.get("corrected_messages", [])
         final_message = (
@@ -324,6 +359,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model", default="", help="Default policy model if request body omits model"
     )
+    parser.add_argument(
+        "--log_dir",
+        default="",
+        help="Root directory for eval logs. If omitted, eval logs are not written.",
+    )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9300)
     parser.add_argument(
@@ -333,6 +373,7 @@ if __name__ == "__main__":
 
     base_url = args.base_url.strip()
     api_key = args.api_key.strip() if args.api_key else None
+    log_dir = args.log_dir.strip() or None
 
     cli_config = parse_url_config(args.default_url_config)
     if args.model:
@@ -351,6 +392,7 @@ if __name__ == "__main__":
           - URL config: url_config in /iterative_correction/{{url_config}}/v1/*
           - Merge in process_func: correcting_config = deep_merge(cli_config, url_config)
           - Common correcting_config keys: rollout_num, mode, iid_sampling, chat.*, far.*
+          - Eval logs: {log_dir or "disabled"}; filenames use Panda prompt_hash
           - Request Bearer: {request_bearer_status}
           - chat.* -> mxlm.ChatAPI(**chat), far.* -> onpanda.FindAndReplaceCorrectionAdapter(**far)
           - URL config overrides CLI config
@@ -368,6 +410,7 @@ if __name__ == "__main__":
         api_key=api_key,
         cli_config=cli_config,
         disable_auth=args.disable_auth,
+        log_dir=log_dir,
     )
     app.run(
         host=args.host,
