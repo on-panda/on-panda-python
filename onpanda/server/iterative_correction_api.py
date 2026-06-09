@@ -22,7 +22,6 @@ url_config-path examples:
 
 import argparse
 import copy
-import hashlib
 import json
 import os
 import threading
@@ -41,12 +40,11 @@ DUMP_FILE_LOCKS = {}
 DUMP_FILE_LOCKS_GUARD = threading.Lock()
 
 
-def dump_corrected_log(corrected, *, log_dir, messages):
+def dump_corrected_log(corrected, *, log_dir, prompt_hash):
     if not log_dir:
         return
-    prompt_hash = mxlm.hash_object_sha256_base64(mxlm.remove_last_assistant(messages))
     os.makedirs(log_dir, exist_ok=True)
-    target_path = os.path.join(log_dir, f"{quote(prompt_hash, safe='')}.json")
+    target_path = os.path.join(log_dir, f"{quote(prompt_hash, safe='%')}.json")
     with DUMP_FILE_LOCKS_GUARD:
         lock = DUMP_FILE_LOCKS.setdefault(target_path, threading.Lock())
     with lock:
@@ -174,6 +172,9 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             eval_name = str(eval_name)
         # TODO: support tool calls and structured response_format in iterative correction.
         assert "tools" not in body, "iterative_correction does not support tools yet"
+        prompt_hash = mxlm.hash_object_sha256_base64(
+            mxlm.remove_last_assistant(req_messages)
+        )
 
         auth_header = headers.get("Authorization", "")
         bearer_token = (
@@ -205,13 +206,6 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
         print("chat_policy:")
         print(chat_policy)
         if mode == "pass_at_k":
-            prompt_hash = hashlib.sha256(
-                json.dumps(
-                    {"messages": req_messages, "tools": body.get("tools", [])},
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ).encode("utf-8")
-            ).hexdigest()
             with PASS_AT_K_TASKS_LOCK:
                 task_state = PASS_AT_K_TASKS.setdefault(
                     eval_name,
@@ -254,7 +248,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
                     dump_corrected_log(
                         corrected,
                         log_dir=log_dir,
-                        messages=req_messages,
+                        prompt_hash=prompt_hash,
                     )
                     prompt_state["candidates"] = [
                         correction_step["corrected_messages"][-1]
@@ -287,7 +281,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
         dump_corrected_log(
             corrected,
             log_dir=log_dir,
-            messages=req_messages,
+            prompt_hash=prompt_hash,
         )
 
         corrected_messages = corrected.get("corrected_messages", [])
