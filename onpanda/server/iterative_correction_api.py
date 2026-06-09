@@ -7,7 +7,7 @@ Supported keys include:
 - `rollout_num` (int): iterative correction rollouts, default 5.
 - `mode` (str): iterative correction mode, default "till_good".
 - `iid_sampling` (bool): sample each rollout independently, default False.
-- `eval_name` (str): in-memory cache namespace for pass_at_k mode.
+- `eval_name` (str): pass_at_k cache namespace; format `[save_name]--[dataset_name]` for eval logs.
 - `chat` (dict): kwargs for `mxlm.ChatAPI` used by correcting model.
 - `far` (dict): kwargs for `onpanda.FindAndReplaceCorrectionAdapter`.
 
@@ -24,6 +24,8 @@ import argparse
 import copy
 import hashlib
 import json
+import os
+import re
 import threading
 import textwrap
 
@@ -34,6 +36,95 @@ UPSTREAM_TIMEOUT = (10, 4 * 60 * 60)
 HEARTBEAT_INTERVAL_SECONDS = 600
 PASS_AT_K_TASKS = {}
 PASS_AT_K_TASKS_LOCK = threading.Lock()
+
+_SAFE_PATH_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_DUMP_FILE_LOCKS = {}
+_DUMP_FILE_LOCKS_GUARD = threading.Lock()
+
+
+def _first_user_content_hash(messages):
+    """Hash the first user message's content (text + image uids) only."""
+    first_user_content = None
+    for m in messages:
+        if isinstance(m, dict) and m.get("role") == "user":
+            first_user_content = m.get("content")
+            break
+    return hashlib.sha256(
+        json.dumps(
+            first_user_content,
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _get_dump_lock(target_path):
+    with _DUMP_FILE_LOCKS_GUARD:
+        lock = _DUMP_FILE_LOCKS.get(target_path)
+        if lock is None:
+            lock = threading.Lock()
+            _DUMP_FILE_LOCKS[target_path] = lock
+        return lock
+
+
+def _safe_path_segment(value, fallback):
+    """Sanitize url_config-supplied strings for use as a path component."""
+    if not value:
+        return fallback
+    cleaned = _SAFE_PATH_RE.sub("_", str(value)).strip("._-")
+    return cleaned or fallback
+
+
+def _parse_eval_name_for_log(eval_name):
+    if not eval_name:
+        raise ValueError("eval_name is required for eval log dump")
+    save_name, _, dataset_name = str(eval_name).partition("--")
+    return (
+        _safe_path_segment(save_name, "_no_save_name"),
+        _safe_path_segment(dataset_name, "_no_dataset"),
+    )
+
+
+def _dump_corrected_log(corrected, *, log_dir, eval_name, prompt_hash):
+    """Append `corrected` dict to per-prompt JSON-array log file; soft-fail."""
+    if not log_dir:
+        return
+    try:
+        sn, ds = _parse_eval_name_for_log(eval_name)
+        ph = _safe_path_segment(prompt_hash, "_no_hash")
+        target_dir = os.path.join(log_dir, sn, ds)
+        os.makedirs(target_dir, exist_ok=True)
+        target_path = os.path.join(target_dir, f"prompt_{ph}.json")
+        with _get_dump_lock(target_path):
+            entries = []
+            if os.path.exists(target_path):
+                try:
+                    with open(target_path, "r", encoding="utf-8") as f:
+                        existing = json.load(f)
+                    if isinstance(existing, list):
+                        entries = existing
+                    else:
+                        entries = [existing]
+                except Exception:
+                    entries = []
+            entries.append(corrected)
+            tmp_path = f"{target_path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    entries,
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                )
+            os.replace(tmp_path, target_path)
+    except Exception as exc:
+        print(
+            f"[iterative_correction] eval log dump failed: "
+            f"log_dir={log_dir!r}, eval_name={eval_name!r}, "
+            f"prompt_hash={prompt_hash!r}, err={type(exc).__name__}: {exc}",
+            flush=True,
+        )
 
 
 def deep_merge(base, override):
@@ -57,7 +148,7 @@ def parse_url_config(value):
     return mxlm.decode_url_config_path(s)
 
 
-def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False):
+def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_dir=None):
     app = Flask(__name__)
     default_base_url = base_url
     default_api_key = api_key
@@ -226,6 +317,12 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False):
                         __import__("boxx").tree([eval_name, prompt_hash, corrected])
                     except ModuleNotFoundError:
                         pass
+                    _dump_corrected_log(
+                        corrected,
+                        log_dir=log_dir,
+                        eval_name=eval_name,
+                        prompt_hash=_first_user_content_hash(req_messages),
+                    )
                     prompt_state["candidates"] = [
                         correction_step["corrected_messages"][-1]
                         for correction_till_good in corrected["correction_till_goods"]
@@ -254,6 +351,13 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False):
             __import__("boxx").tree(corrected)
         except ModuleNotFoundError:
             pass
+        prompt_hash = _first_user_content_hash(req_messages)
+        _dump_corrected_log(
+            corrected,
+            log_dir=log_dir,
+            eval_name=eval_name,
+            prompt_hash=prompt_hash,
+        )
 
         corrected_messages = corrected.get("corrected_messages", [])
         final_message = (
@@ -324,6 +428,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model", default="", help="Default policy model if request body omits model"
     )
+    parser.add_argument(
+        "--log-dir",
+        default="",
+        help="Root directory for eval logs. If omitted, eval logs are not written.",
+    )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9300)
     parser.add_argument(
@@ -333,6 +442,7 @@ if __name__ == "__main__":
 
     base_url = args.base_url.strip()
     api_key = args.api_key.strip() if args.api_key else None
+    log_dir = args.log_dir.strip() or None
 
     cli_config = parse_url_config(args.default_url_config)
     if args.model:
@@ -351,6 +461,7 @@ if __name__ == "__main__":
           - URL config: url_config in /iterative_correction/{{url_config}}/v1/*
           - Merge in process_func: correcting_config = deep_merge(cli_config, url_config)
           - Common correcting_config keys: rollout_num, mode, iid_sampling, chat.*, far.*
+          - Eval logs: {log_dir or "disabled"}; eval_name format for logs is [save_name]--[dataset_name]
           - Request Bearer: {request_bearer_status}
           - chat.* -> mxlm.ChatAPI(**chat), far.* -> onpanda.FindAndReplaceCorrectionAdapter(**far)
           - URL config overrides CLI config
@@ -368,6 +479,7 @@ if __name__ == "__main__":
         api_key=api_key,
         cli_config=cli_config,
         disable_auth=args.disable_auth,
+        log_dir=log_dir,
     )
     app.run(
         host=args.host,
