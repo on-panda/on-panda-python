@@ -8,6 +8,7 @@ Supported keys include:
 - `mode` (str): iterative correction mode, default "till_good".
 - `iid_sampling` (bool): sample each rollout independently, default False.
 - `eval_name` (str): in-memory cache namespace for pass_at_k mode.
+- `allow_repeat` (bool): for pass_at_k only, resample after a prompt consumes k cached candidates.
 - `chat` (dict): kwargs for `mxlm.ChatAPI` used by correcting model.
 - `far` (dict): kwargs for `onpanda.FindAndReplaceCorrectionAdapter`.
 
@@ -165,6 +166,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
         rollout_num = int(correcting_config.get("rollout_num", 5))
         mode = correcting_config.get("mode", "till_good")
         iid_sampling = correcting_config.get("iid_sampling", False)
+        allow_repeat = bool(correcting_config.get("allow_repeat", False))
         eval_name = correcting_config.get("eval_name")
         if mode == "pass_at_k":
             if not eval_name:
@@ -209,12 +211,22 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             with PASS_AT_K_TASKS_LOCK:
                 task_state = PASS_AT_K_TASKS.setdefault(
                     eval_name,
-                    {"k": rollout_num, "prompt_states": {}},
+                    {
+                        "k": rollout_num,
+                        "allow_repeat": allow_repeat,
+                        "prompt_states": {},
+                    },
                 )
                 if int(task_state["k"]) != rollout_num:
                     raise ValueError(
                         "pass_at_k k mismatch for eval_name "
                         f"{eval_name}: existing={task_state['k']}, current={rollout_num}"
+                    )
+                if bool(task_state["allow_repeat"]) != allow_repeat:
+                    raise ValueError(
+                        "pass_at_k allow_repeat mismatch for eval_name "
+                        f"{eval_name}: existing={task_state['allow_repeat']}, "
+                        f"current={allow_repeat}"
                     )
                 prompt_state = task_state["prompt_states"].setdefault(
                     prompt_hash,
@@ -223,11 +235,21 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
 
             with prompt_state["lock"]:
                 if int(prompt_state["times"]) >= rollout_num:
-                    raise ValueError(
-                        "pass_at_k prompt request times exceeded k: "
+                    if not allow_repeat:
+                        raise ValueError(
+                            "pass_at_k prompt request times exceeded k: "
+                            f"eval_name={eval_name}, prompt_hash={prompt_hash}, "
+                            f"times={prompt_state['times']}, k={rollout_num}"
+                        )
+                    print(
+                        "[iterative_correction] pass_at_k prompt repeated after k; "
+                        "resampling candidates: "
                         f"eval_name={eval_name}, prompt_hash={prompt_hash}, "
-                        f"times={prompt_state['times']}, k={rollout_num}"
+                        f"times={prompt_state['times']}, k={rollout_num}",
+                        flush=True,
                     )
+                    prompt_state["times"] = 0
+                    prompt_state["candidates"] = []
                 if prompt_state["candidates"]:
                     extra_info = (
                         f"{prompt_state['times'] + 1}/{rollout_num} of "
