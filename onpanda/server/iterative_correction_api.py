@@ -9,6 +9,7 @@ Supported keys include:
 - `iid_sampling` (bool): sample each rollout independently, default False.
 - `eval_name` (str): in-memory cache namespace for pass_at_k mode.
 - `allow_repeat` (bool): for pass_at_k only, resample after a prompt consumes k cached candidates.
+- `rerun_bypass` (bool): direct-forward single-turn rerun extraction requests, default False.
 - `chat` (dict): kwargs for `mxlm.ChatAPI` used by correcting model.
 - `far` (dict): kwargs for `onpanda.FindAndReplaceCorrectionAdapter`.
 
@@ -143,6 +144,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
         - rollout_num: correction rollouts, default 5
         - mode: iterative mode, default till_good
         - iid_sampling: sample each rollout independently, default False
+        - rerun_bypass: direct-forward single-turn rerun extraction, default False
         - chat: used to build correcting chat, mxlm.ChatAPI(**chat)
         - far: used to build correcting adapter, FindAndReplaceCorrectionAdapter(**far)
 
@@ -162,6 +164,13 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
         )
 
         req_messages = body.get("messages", [])
+        rerun_bypass = bool(correcting_config.get("rerun_bypass", False))
+        # Shortcut single-turn rerun extraction before correction state is touched.
+        if rerun_bypass and sum(
+            message["role"] == "user" for message in req_messages
+        ) > 1:
+            return {"direct_forward": True}
+
         req_model = body.get("model") or correcting_config.get("model", "")
         rollout_num = int(correcting_config.get("rollout_num", 5))
         mode = correcting_config.get("mode", "till_good")
