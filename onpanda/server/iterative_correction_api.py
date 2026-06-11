@@ -220,22 +220,12 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             with PASS_AT_K_TASKS_LOCK:
                 task_state = PASS_AT_K_TASKS.setdefault(
                     eval_name,
-                    {
-                        "k": rollout_num,
-                        "allow_repeat": allow_repeat,
-                        "prompt_states": {},
-                    },
+                    {"k": rollout_num, "prompt_states": {}},
                 )
                 if int(task_state["k"]) != rollout_num:
                     raise ValueError(
                         "pass_at_k k mismatch for eval_name "
                         f"{eval_name}: existing={task_state['k']}, current={rollout_num}"
-                    )
-                if bool(task_state["allow_repeat"]) != allow_repeat:
-                    raise ValueError(
-                        "pass_at_k allow_repeat mismatch for eval_name "
-                        f"{eval_name}: existing={task_state['allow_repeat']}, "
-                        f"current={allow_repeat}"
                     )
                 prompt_state = task_state["prompt_states"].setdefault(
                     prompt_hash,
@@ -243,25 +233,16 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
                 )
 
             with prompt_state["lock"]:
-                if int(prompt_state["times"]) >= rollout_num:
-                    if not allow_repeat:
-                        raise ValueError(
-                            "pass_at_k prompt request times exceeded k: "
-                            f"eval_name={eval_name}, prompt_hash={prompt_hash}, "
-                            f"times={prompt_state['times']}, k={rollout_num}"
-                        )
-                    print(
-                        "[iterative_correction] pass_at_k prompt repeated after k; "
-                        "resampling candidates: "
+                if not allow_repeat and int(prompt_state["times"]) >= rollout_num:
+                    raise ValueError(
+                        "pass_at_k prompt request times exceeded k: "
                         f"eval_name={eval_name}, prompt_hash={prompt_hash}, "
-                        f"times={prompt_state['times']}, k={rollout_num}",
-                        flush=True,
+                        f"times={prompt_state['times']}, k={rollout_num}"
                     )
-                    prompt_state["times"] = 0
-                    prompt_state["candidates"] = []
                 if prompt_state["candidates"]:
                     extra_info = (
-                        f"{prompt_state['times'] + 1}/{rollout_num} of "
+                        f"{rollout_num - len(prompt_state['candidates']) + 1}/"
+                        f"{rollout_num} of "
                         "iterative_correction cached pass@k candidates"
                     )
                 else:
