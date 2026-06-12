@@ -42,9 +42,11 @@ DUMP_FILE_LOCKS = {}
 DUMP_FILE_LOCKS_GUARD = threading.Lock()
 
 
-def dump_corrected_log(corrected, *, log_dir, prompt_hash):
+def dump_corrected_log(corrected, *, log_dir, prompt_hash, eval_name=None):
     if not log_dir:
         return
+    if eval_name:
+        log_dir = os.path.join(log_dir, eval_name)
     os.makedirs(log_dir, exist_ok=True)
     target_path = os.path.join(log_dir, f"{quote(prompt_hash, safe='%')}.json")
     with DUMP_FILE_LOCKS_GUARD:
@@ -261,6 +263,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
                         corrected,
                         log_dir=log_dir,
                         prompt_hash=prompt_hash,
+                        eval_name=eval_name,
                     )
                     prompt_state["candidates"] = [
                         correction_step["corrected_messages"][-1]
@@ -294,6 +297,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             corrected,
             log_dir=log_dir,
             prompt_hash=prompt_hash,
+            eval_name=eval_name,
         )
 
         corrected_messages = corrected.get("corrected_messages", [])
