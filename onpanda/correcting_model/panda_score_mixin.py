@@ -38,6 +38,8 @@ class PandaScoreMixin:
           and correction samples
         - "correction_only": evaluate only correction samples, excluding gt
           is_good samples
+        - "first_rollout_only": evaluate only the correction from dialog 1 to
+          the latest is_good dialog (or dialog 1 itself when it is is_good)
 
         Returned summary metrics:
         - format_score: mean format reward on all samples
@@ -55,7 +57,11 @@ class PandaScoreMixin:
 
         if not sample_mode:
             sample_mode = "all"
-        assert sample_mode in ("all", "correction_only"), sample_mode
+        assert sample_mode in (
+            "all",
+            "correction_only",
+            "first_rollout_only",
+        ), sample_mode
 
         if isinstance(panda_json_path, (list, tuple)):
             panda_score_list = [
@@ -77,9 +83,19 @@ class PandaScoreMixin:
 
         panda_tree = PandaTree(panda_json_path, tokenizer=self.adapter.tokenizer)
         far_correction_datas = panda_tree.build_far_correction_data_v1(self.adapter)
+        latest_is_good_dialog_key = panda_tree.dense_keys[-1]
         for far_correction_data_idx, far_correction_data in enumerate(
             far_correction_datas
         ):
+            if sample_mode == "first_rollout_only":
+                onpanda_info = far_correction_data[0]["onpanda"]
+                is_first_rollout = (
+                    latest_is_good_dialog_key == 1
+                    and onpanda_info.get("dialog_key") == 1
+                ) or onpanda_info.get("dialog_pair") == (1, latest_is_good_dialog_key)
+                if not is_first_rollout:
+                    continue
+
             messages = remove_msgs_after_last_response_role(far_correction_data[:-2])
             gt_correction = far_correction_data[-1]["correction"]
             gt_is_good = bool(
