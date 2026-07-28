@@ -98,23 +98,23 @@ class FindAndReplaceVerifier:
         mid_text = far_text.removeprefix(self.special_tokens["split"]).removesuffix(
             self.special_tokens["split"]
         )
-        # # Keep compatibility with old correcting model step1f behavior.
-        # if mid_text == self.special_tokens["is_good"] or mid_text in [
-        #     "",
-        #     self.special_tokens["split"],
-        # ]:
-        #     return dict(
-        #         reward_with_feedback=dict(
-        #             parse_reward=1.0, parse_feedback="parse success: is_good format"
-        #         ),
-        #         find_and_replace=dict(
-        #             is_good=True,
-        #             location_text="",
-        #             location_index=0,
-        #             replacement_token="",
-        #             far_text=far_text,
-        #         ),
-        #     )
+        # Keep compatibility with old correcting model step1f behavior.
+        if mid_text == self.special_tokens["is_good"] or mid_text in [
+            "",
+            self.special_tokens["split"],
+        ]:
+            return dict(
+                reward_with_feedback=dict(
+                    parse_reward=1.0, parse_feedback="parse success: is_good format"
+                ),
+                find_and_replace=dict(
+                    is_good=True,
+                    location_text="",
+                    location_index=0,
+                    replacement_token="",
+                    far_text=far_text,
+                ),
+            )
 
         split_token = self.special_tokens["split"]
         split_count = far_text.count(split_token)
