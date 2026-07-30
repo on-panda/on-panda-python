@@ -1,5 +1,7 @@
 # `onpanda`: The Companion Python Package for onPanda
 
+Python package for *onPanda: Efficient Annotation of On-Policy Alignment Data for LLMs and Agents via Token-Level Correction* [[project page](https://on-panda.github.io/research/)]
+
 ### Contents: [Features](#-features) | [Install](#-install) | [Example Data](#-example-data) | [Quick Start](#-quick-start) | [Main Modules](#-main-modules) | [Iterative Correction API](#-iterative-correction-api) | [Data Assumptions](#-data-assumptions)
 
 ## ▮ Features
@@ -7,6 +9,7 @@
 - [x] Build token-level supervision data (`build_token_level_supervision_data_v1/v2`)
 - [x] Build Find-and-Replace correction training data (`build_far_correction_data_v1`)
 - [x] Verify and score Find-and-Replace outputs (`FindAndReplaceVerifier`)
+- [x] Benchmark [Panda-CVL dataset](https://on-panda.github.io/Panda-CVL/)
 - [x] Run iterative correction as a Proxy API (`onpanda.server.iterative_correction_api`)
 - [x] Build `panda battle` data from two arena result sets (`build_panda_battle`)
 
