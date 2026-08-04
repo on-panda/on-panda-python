@@ -305,18 +305,21 @@ def build_reasoning_correcting_model(
     adapter=None,
     tokenizer="Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
 ):
+    from dotenv import load_dotenv
+    from pathlib import Path
     import os
     import onpanda
 
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env.local")
     if chat_correcting is None:
         chat_correcting = mxlm.ChatAPI(
             base_url=os.environ.get(
-                "REASONING_CM_BASE_URL", "https://api.stepfun.com/v1"
+                "REASONING_CM_BASE_URL", "https://api.inference.wandb.ai/v1"
             ),
             api_key=os.environ.get(
-                "REASONING_CM_API_KEY", os.environ.get("STEPFUN_API_KEY")
+                "REASONING_CM_API_KEY", os.environ.get("WANDB_API_KEY")
             ),
-            model=os.environ.get("REASONING_CM_CORRECTING_MODEL", "step-3.7-flash"),
+            model=os.environ.get("REASONING_CM_MODEL", "moonshotai/Kimi-K2.6"),
             temperature=1,
             top_p=0.95,
             max_tokens=1024 * 10,
@@ -337,11 +340,17 @@ def build_correcting_model_with_policy(reasoning=True):
     if reasoning:
         correcting_model = build_reasoning_correcting_model()
         new_kwargs["model"] = os.environ.get(
-            "REASONING_CORRECTING_MODEL_POLICY_MODEL", "step-1v-32k"
+            "POLICY_API_MODEL", "Qwen/Qwen3.6-35B-A3B"
         )  # should support continue_final_message
     else:
         correcting_model = build_test_correcting_model()
     chat_policy = deepcopy(correcting_model.chat_correcting)
+    extra_parameters_json5_str = os.environ.get("POLICY_API_EXTRA_PARAMETERS_JSON5", "")
+    if extra_parameters_json5_str:
+        import json5
+
+        extra_parameters = json5.loads(extra_parameters_json5_str)
+        new_kwargs.update(extra_parameters)
     chat_policy.default_kwargs.update(new_kwargs)
     return dict(correcting_model=correcting_model, chat_policy=chat_policy)
 

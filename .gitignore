@@ -30,3 +30,8 @@ eggs/
 
 # tmp files
 *~
+
+# local config
+.env
+.env*.local
+

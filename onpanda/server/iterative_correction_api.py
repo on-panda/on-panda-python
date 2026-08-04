@@ -168,9 +168,10 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
         req_messages = body.get("messages", [])
         rerun_bypass = bool(correcting_config.get("rerun_bypass", False))
         # Shortcut single-turn rerun extraction before correction state is touched.
-        if rerun_bypass and sum(
-            message["role"] == "user" for message in req_messages
-        ) > 1:
+        if (
+            rerun_bypass
+            and sum(message["role"] == "user" for message in req_messages) > 1
+        ):
             return {"direct_forward": True}
 
         req_model = body.get("model") or correcting_config.get("model", "")
