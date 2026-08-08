@@ -13,7 +13,7 @@ from copy import deepcopy
 with mximport.inpkg():
     from ..token_level_supervision_utils import build_tokenizer
     from .verifier import FindAndReplaceVerifier
-    from ..utils import get_content_by_path_keys
+    from ..response_templates import flatten_messages_for_correcting
     from . import system_prompts
 
 
@@ -50,6 +50,14 @@ class CorrectionAdapter:
 
 
 class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
+    """
+    Adapter of one model: its tokenizer, its response template and the FAR answer format.
+
+    Used as the correcting model's adapter by default. When passed as `adapter_policy` of
+    `CorrectingModel.correct_and_rollout`, only `tokenizer`, `response_template` and
+    `max_replacement_tokens` matter, to render and token align the continuation prefix.
+    """
+
     def __init__(
         self,
         tokenizer=None,
@@ -58,14 +66,18 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         max_replacement_tokens=1,
         tokenizer_aware=False,
         system_prompt_language=None,
+        response_template=None,
     ):
         self.verifier = FindAndReplaceVerifier(
             special_tokens=special_tokens,
+            response_template=response_template,
         )
         self.special_tokens = self.verifier.special_tokens
+        self.response_template = self.verifier.response_template
         self.tokenizer = build_tokenizer(tokenizer)
         self.info = self.far_info = dict(
             tokenizer=dict(name_or_path=getattr(self.tokenizer, "name_or_path", "")),
+            response_template=deepcopy(self.response_template.config),
             special_tokens=dict(self.special_tokens),
             max_location_tokens=max_location_tokens,
             max_replacement_tokens=max_replacement_tokens,
@@ -104,13 +116,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             role="system",
             content=system_prompt,
         )
-        return messages + [sys_prompt_message]
-
-    def _set_by_path(self, data, path_keys, value):
-        target = data
-        for key in path_keys[:-1]:
-            target = target[key]
-        target[path_keys[-1]] = value
+        return flatten_messages_for_correcting(messages, self.response_template) + [
+            sys_prompt_message
+        ]
 
     def truncate_replacement_token(self, replacement_token):
         replacement_tokens = self.tokenizer.encode(
@@ -164,10 +172,14 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         return dict(not_found=True)
 
     def set_location_index(
-        self, rejected_messages, find_and_replace, messages_location
+        self,
+        rejected_messages,
+        find_and_replace,
+        target_message_index,
+        target_char_index,
     ):
         """
-        在所有模型输出文本中查找 find_and_replace.location_text 的所有匹配位置，
+        在所有模型输出的 templated prompt 中查找 find_and_replace.location_text 的所有匹配位置，
         返回对应的 find_and_replace.location_index
         """
         if isinstance(find_and_replace, str):
@@ -175,23 +187,21 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         find_and_replace = deepcopy(find_and_replace)
         location_text = find_and_replace["location_text"]
         matches = []
-        for path_keys, text in self.verifier._iter_assistant_text_locations(
+        for templated_location in self.verifier._iter_assistant_templated_prompts(
             rejected_messages
         ):
-            search_scope = text + self.special_tokens["stop"]
+            templated_prompt = templated_location["templated_prompt"]
             start = 0
             while True:
-                index = search_scope.find(location_text, start)
+                index = templated_prompt.find(location_text, start)
                 if index == -1:
                     break
-                matches.append((path_keys, index))
+                matches.append((templated_location["message_index"], index))
                 start = index + 1
 
-        target_path_keys = messages_location["path_keys"]
-        target_char_index = messages_location["char_index"]
         location_index = None
-        for idx, (path_keys, char_index) in enumerate(matches):
-            if path_keys == target_path_keys and char_index == target_char_index:
+        for idx, match in enumerate(matches):
+            if match == (target_message_index, target_char_index):
                 negative_idx = idx - len(matches)
                 if abs(negative_idx) < idx:
                     location_index = negative_idx
@@ -210,18 +220,20 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
     def build_correction_from_rejected_messages(self, rejected_messages):
         """
         将 rejected_messages 的 token_level 信息转换为 correction
+        location_text 沿本 adapter 自己 tokenizer 的可解码边界延伸，因为 correcting model
+        必须精确复制自己的 token
         """
         messages_location = self.convert_token_level_to_messages_location(
             rejected_messages
         )
-        path_keys = messages_location["path_keys"]
-        char_index = messages_location["char_index"]
-        content = get_content_by_path_keys(rejected_messages, path_keys)
-        if isinstance(content, list):
-            assert all([d["type"] == "text" for d in content]), rejected_messages
-            content = mxlm.get_text_content(content)
-        content_suffix = content[char_index:] + self.special_tokens["stop"]
-        suffix_tokens = self.tokenizer.encode(content_suffix, add_special_tokens=False)
+        templated_location = self.verifier.build_templated_location(
+            rejected_messages, messages_location["path_keys"][0]
+        )
+        target_char_index = self.verifier.build_templated_char_index(
+            templated_location, messages_location
+        )
+        location_suffix = templated_location["templated_prompt"][target_char_index:]
+        suffix_tokens = self.tokenizer.encode(location_suffix, add_special_tokens=False)
         decodable_num = 0
 
         while True:
@@ -233,7 +245,8 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             find_and_replace = self.set_location_index(
                 rejected_messages,
                 location_text,
-                messages_location,
+                templated_location["message_index"],
+                target_char_index,
             )
             if find_and_replace.get("not_found"):
                 raise ValueError("无法定位到 location_text", find_and_replace)
@@ -348,12 +361,19 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         ]
         return far_correction
 
-    def apply(self, messages, correction_or_far_text):
+    def apply(self, messages, correction_or_far_text, tools=None, adapter_policy=None):
+        """
+        Cut in the response template's text space and parse back, so a replacement can end any
+        channel and every downstream channel is truncated by construction. adapter_policy decides
+        whether the correction survives the policy's own template, defaults to this adapter.
+        """
         if isinstance(correction_or_far_text, str):
-            correction = self.verifier.parse_and_locate(
-                messages, correction_or_far_text
+            parse_result = self.verifier.parse(correction_or_far_text)
+            find_and_replace = parse_result["find_and_replace"]
+            correction = dict(
+                find_and_replace=find_and_replace,
+                reward_with_feedback=parse_result["reward_with_feedback"],
             )
-            find_and_replace = correction["find_and_replace"]
         else:
             correction = deepcopy(correction_or_far_text)
             if "find_and_replace" in correction:
@@ -369,12 +389,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                     f"correction_or_far_text is not a valid correction opreation: \n{correction_or_far_text}"
                 )
 
-        if "messages_location" not in correction:
-            correction["messages_location"] = self.verifier.locate(
-                messages, find_and_replace
-            )
-
         if find_and_replace.get("is_good"):
+            correction.setdefault(
+                "messages_location", self.verifier.locate(messages, find_and_replace)
+            )
             return dict(
                 correction=correction,
                 partial_messages=messages,
@@ -383,41 +401,106 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         assert (
             "replacement_token" in find_and_replace
         ), f"`replacement_token` not found in find_and_replace: {find_and_replace}"
-        messages_location = correction["messages_location"]
-        if messages_location.get("not_found"):
+
+        if "messages_location" in correction:
+            # A ground truth correction only carries its structured location.
+            messages_location = correction["messages_location"]
+            if messages_location.get("not_found"):
+                return dict(
+                    correction=correction,
+                    partial_messages=messages,
+                )
+            templated_location = self.verifier.build_templated_location(
+                messages, messages_location["path_keys"][0]
+            )
+            templated_char_index = self.verifier.build_templated_char_index(
+                templated_location, messages_location
+            )
+        else:
+            templated_location = self.verifier.locate_templated(
+                messages, find_and_replace
+            )
+            if templated_location.get("not_found"):
+                correction["messages_location"] = templated_location
+                return dict(
+                    correction=correction,
+                    partial_messages=messages,
+                )
+            messages_location = self.verifier.build_messages_location(
+                templated_location, find_and_replace
+            )
+            correction["messages_location"] = messages_location
+            templated_char_index = templated_location["templated_char_index"]
+
+        normalized_replacement_token, has_stop_token = (
+            self.verifier._normalize_replacement_token(
+                find_and_replace["replacement_token"]
+            )
+        )
+        # No truncation here: the replacement lives in this template's marker space, where a cut
+        # inside a marker means the intermediate representation stops parsing. Fitting it to a
+        # token grid is the policy's job, in build_partial_templated_prompt.
+        replacement = normalized_replacement_token
+        if has_stop_token:
+            replacement += self.special_tokens["stop"]
+        templated_prompt = templated_location["templated_prompt"]
+        message_index = templated_location["message_index"]
+        partial_message = self.response_template.parse(
+            templated_prompt[:templated_char_index] + replacement,
+            messages=messages,
+            tools=tools,
+        )
+        if not (adapter_policy or self).build_partial_templated_prompt(
+            messages[message_index], partial_message
+        )["replacement"]:
+            # A no-op correction: continuing it would reproduce the rejected response. Either the
+            # replacement only repeats the rejected text, or the policy's response template cannot
+            # express it, e.g. an opened but still empty tool call channel. Let the caller retry.
+            messages_location.update(
+                not_found=True,
+                find_feedback="no-op correction: partial response is a prefix of the rejected one",
+            )
             return dict(
                 correction=correction,
                 partial_messages=messages,
             )
 
-        path_keys = messages_location["path_keys"]
-        char_index = messages_location["char_index"]
-        replacement_token = find_and_replace["replacement_token"]
-        normalized_replacement_token, has_stop_token = (
-            self.verifier._normalize_replacement_token(replacement_token)
-        )
-        partial_messages = deepcopy(messages[: path_keys[0] + 1])
-
-        field_text = get_content_by_path_keys(partial_messages, path_keys)
-        if isinstance(field_text, list):
-            assert all([d["type"] == "text" for d in field_text]), partial_messages
-            field_text = mxlm.get_text_content(field_text)
-
-        good_prefix = field_text[:char_index]
-        corrected_field_text = good_prefix + self.truncate_replacement_token(
-            normalized_replacement_token
-        )
-        self._set_by_path(partial_messages, path_keys, corrected_field_text)
-
-        if path_keys[-1] == "content":
-            if has_stop_token:
-                partial_messages[-1]["finish_reason"] = "stop"
-            elif "finish_reason" in partial_messages[-1]:
-                del partial_messages[-1]["finish_reason"]
-
+        partial_messages = deepcopy(messages[:message_index]) + [partial_message]
         return dict(
             correction=correction,
             partial_messages=partial_messages,
+        )
+
+    def build_partial_templated_prompt(self, rejected_message, partial_message):
+        """
+        Render the corrected partial message for continuation, then align the correction to this
+        model's own token boundary: diff against the rejected message and keep only the first
+        `max_replacement_tokens` tokens of the difference. Cutting template scaffolding short is
+        fine, a prefix ending at `\\n` still guides the policy to generate the reasoning end.
+
+        An empty replacement means this template's round trip normalized the correction away.
+        """
+        templated_prompt = self.response_template.apply(partial_message)[
+            "templated_prompt"
+        ]
+        rejected_templated_prompt = self.response_template.apply(rejected_message)[
+            "templated_prompt"
+        ]
+        common_length = min(len(templated_prompt), len(rejected_templated_prompt))
+        fork_char_index = next(
+            (
+                char_index
+                for char_index in range(common_length)
+                if templated_prompt[char_index] != rejected_templated_prompt[char_index]
+            ),
+            common_length,
+        )
+        replacement = self.truncate_replacement_token(
+            templated_prompt[fork_char_index:]
+        )
+        return dict(
+            templated_prompt=templated_prompt[:fork_char_index] + replacement,
+            replacement=replacement,
         )
 
 
@@ -430,6 +513,142 @@ class NextTokenPredictionAsCorrectingBuilder:
         )
 
 
+def test_reasoning_and_tool_calls_correcting():
+    """Correct every channel of a reasoning tool calling response, without any API call."""
+    adapter = FindAndReplaceCorrectionAdapter(max_replacement_tokens=20)
+    split = adapter.special_tokens["split"]
+    stop = adapter.special_tokens["stop"]
+    reasoning_marker = adapter.special_tokens["reasoning"]
+
+    def build_far_text(location_text, replacement_token, location_index=0):
+        return f"{split}{location_text}{split}{location_index}{split}{replacement_token}{split}"
+
+    reasoning_messages = [
+        dict(role="user", content="1+1=?"),
+        dict(
+            role="assistant",
+            reasoning="1+1 gets 3",
+            content="The answer is 3.",
+            finish_reason="stop",
+        ),
+    ]
+    # Cut inside reasoning: content and finish_reason are truncated by construction.
+    partial_message = adapter.apply(reasoning_messages, build_far_text("3", "2"))[
+        "partial_messages"
+    ][-1]
+    assert partial_message == dict(
+        role="assistant", reasoning="1+1 gets 2"
+    ), partial_message
+    # The replacement can end thinking, which no structured replacement could express.
+    reasoning_end_message = adapter.apply(
+        reasoning_messages, build_far_text(" gets 3", reasoning_marker)
+    )["partial_messages"][-1]
+    assert reasoning_end_message == dict(
+        role="assistant", reasoning="1+1", content="", finish_reason="reasoning_end"
+    ), reasoning_end_message
+
+    tool_call_messages = [
+        dict(role="user", content="read /tmp/a.txt"),
+        dict(
+            role="assistant",
+            content="",
+            tool_calls=[
+                dict(
+                    index=0,
+                    type="function",
+                    id="functions.read_file:0",
+                    function=dict(name="read_file", arguments='{"path": "/tmp/b.txt"}'),
+                )
+            ],
+            finish_reason="tool_calls",
+        ),
+    ]
+    # Cut inside tool call arguments, and close the whole response with the stop token.
+    correction = adapter.apply(
+        tool_call_messages, build_far_text('b.txt"}', f'a.txt"}}{stop}')
+    )
+    assert correction["correction"]["messages_location"]["path_keys"] == [
+        1,
+        "tool_calls",
+        0,
+        "function",
+        "arguments",
+    ], correction["correction"]["messages_location"]
+    corrected_tool_call = correction["partial_messages"][-1]["tool_calls"][0]
+    assert (
+        corrected_tool_call["function"]["arguments"] == '{"path": "/tmp/a.txt"}'
+    ), corrected_tool_call
+    assert corrected_tool_call["id"] == "functions.read_file:0", corrected_tool_call
+    assert (
+        correction["partial_messages"][-1]["finish_reason"] == "tool_calls"
+    ), correction
+
+    # A no-op correction is retryable instead of silently rolling out the rejected response.
+    no_op_messages = [
+        dict(role="user", content="Name three kinds of fruit:"),
+        dict(role="assistant", content="Apple, potato, banana.", finish_reason="stop"),
+    ]
+    no_op_location = adapter.apply(no_op_messages, build_far_text(" potato", " p"))[
+        "correction"
+    ]["messages_location"]
+    assert (
+        no_op_location.get("not_found") and "no-op" in no_op_location["find_feedback"]
+    ), no_op_location
+
+    # The policy renders the same partial message with its own template, and the fork against
+    # the rejected response is the text the policy has to continue from.
+    adapter_policy = FindAndReplaceCorrectionAdapter(
+        response_template=dict(name_or_path="Qwen/Qwen3.6-35B-A3B")
+    )
+    partial_tool_call_message = dict(
+        role="assistant",
+        content="",
+        tool_calls=[
+            dict(index=0, function=dict(name="read_file", arguments='{"path": "/tmp/a'))
+        ],
+    )
+    partial_templated = adapter_policy.build_partial_templated_prompt(
+        tool_call_messages[-1], partial_tool_call_message
+    )
+    assert partial_templated["templated_prompt"] == (
+        "<tool_call>\n<function=read_file>\n<parameter=path>\n/tmp/a"
+    ), partial_templated
+    assert partial_templated["replacement"] == "a", partial_templated
+    # The correction is aligned to the policy's own token boundary, which may cut template
+    # scaffolding short: a prefix ending at `\n` still guides the policy to close thinking.
+    reasoning_partial_templated = adapter_policy.build_partial_templated_prompt(
+        dict(
+            role="assistant", reasoning="think", content="answer", finish_reason="stop"
+        ),
+        dict(
+            role="assistant", reasoning="thi", content="", finish_reason="reasoning_end"
+        ),
+    )
+    assert reasoning_partial_templated == dict(
+        templated_prompt="<think>\nthi\n", replacement="\n"
+    ), reasoning_partial_templated
+
+    # The correcting prompt flattens every channel, and tool responses merge into one user turn.
+    tool_response_messages = tool_call_messages + [
+        dict(role="tool", tool_call_id="functions.read_file:0", content="hello"),
+        dict(role="tool", tool_call_id="functions.read_file:1", content="world"),
+    ]
+    correction_prompt = adapter.build_correction_prompt(tool_response_messages)
+    assert [message["role"] for message in correction_prompt] == [
+        "user",
+        "assistant",
+        "user",
+        "system",
+    ], correction_prompt
+    assert correction_prompt[1]["content"].endswith(
+        '<|ON_PANDA_CALL_ARGUMENTS|>{"path": "/tmp/b.txt"}' + stop
+    ), correction_prompt[1]
+    assert (
+        correction_prompt[2]["content"].count("<|ON_PANDA_TOOL_RESPONSE|>") == 2
+    ), correction_prompt[2]
+    return 7
+
+
 if __name__ == "__main__":
     from boxx import *
 
@@ -439,6 +658,10 @@ if __name__ == "__main__":
 
     panda_json_dir = "../../../on-panda-example-data/panda_json"
     tokenizer = build_test_tokenizer()
+    print(
+        "test_reasoning_and_tool_calls_correcting passed:",
+        test_reasoning_and_tool_calls_correcting(),
+    )
     build_argkws = dict(
         tokenizer=tokenizer,
         special_tokens=dict(

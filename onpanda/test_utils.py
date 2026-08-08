@@ -28,3 +28,45 @@ def get_test_rejected_msgs1():
     ]
     far_text_gt1 = "<|fim_pad|> potato<|fim_pad|>0<|fim_pad|> orange<|fim_pad|>"
     return rejected_msgs1, far_text_gt1
+
+
+def get_test_reasoning_tool_calls_msgs():
+    """A rejected reasoning tool call response, whose thinking picks the wrong file path."""
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a text file and return its content.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Absolute file path"},
+                        "limit": {"type": "integer", "description": "Max line number"},
+                    },
+                    "required": ["path"],
+                },
+            },
+        }
+    ]
+    rejected_msgs = [
+        {"role": "user", "content": "Read the first 10 lines of /tmp/a.txt for me."},
+        {
+            "role": "assistant",
+            "reasoning": "The user wants /tmp/a.txt, so I should read /tmp/b.txt with limit 10.",
+            "content": "",
+            "tool_calls": [
+                {
+                    "index": 0,
+                    "type": "function",
+                    "id": "functions.read_file:0",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": '{"path": "/tmp/b.txt", "limit": 10}',
+                    },
+                }
+            ],
+            "finish_reason": "tool_calls",
+        },
+    ]
+    return rejected_msgs, tools

@@ -18,6 +18,14 @@ with mximport.inpkg():
     from ..utils import RESPONSE_ROLES
 
 
+def take_policy_message(policy_response):
+    """`reasoning_content` is the same channel as `reasoning`, which response templates read."""
+    message = policy_response["choices"][0]["message"]
+    if "reasoning_content" in message:
+        message["reasoning"] = message.pop("reasoning_content")
+    return message
+
+
 class CorrectingModel(BestOfNMixin, PandaScoreMixin):
     def __init__(
         self,
@@ -29,18 +37,22 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         self.adapter = adapter
         self.max_correction_attempts = max_correction_attempts
 
-    def correct(self, messages):
+    def correct(self, messages, tools=None, adapter_policy=None):
         correction_prompt = self.adapter.build_correction_prompt(messages)
         correction_response = self.chat_correcting(
             correction_prompt,
             return_dict=True,
             # max_tokens=self.adapter.max_location_tokens + 20,  # bad for reasoning model
+            # The correcting model answers in the FAR text format, it never calls a tool itself.
+            **(dict(tools=tools, tool_choice="none") if tools else {}),
         )
         message = correction_response["choices"][0]["message"]
         far_text = message["content"]
         if "new_messages" in correction_response:
             del correction_response["new_messages"]
-        apply_res = self.adapter.apply(messages, far_text)
+        apply_res = self.adapter.apply(
+            messages, far_text, tools=tools, adapter_policy=adapter_policy
+        )
         correction = apply_res["correction"]
         correction["response_info"] = dict(
             model=correction_response.get("model"),
@@ -54,7 +66,14 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
             correction_response=correction_response,
         )
 
-    def correct_and_rollout(self, messages, chat_policy, iid_sampling=False):
+    def correct_and_rollout(
+        self,
+        messages,
+        chat_policy,
+        iid_sampling=False,
+        adapter_policy=None,
+        tools=None,
+    ):
         """
         Run one correction step.
 
@@ -64,7 +83,14 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         If the final correction is still not_found, regenerate assistant message
         from messages without the last assistant.
         When iid_sampling is True, skip correction and keep the sampled assistant.
+
+        adapter_policy is the policy model's adapter, defaults to the correcting one. Only its
+        response_template is used here, to render the continuation prefix and parse it back.
         """
+        adapter_policy = adapter_policy or self.adapter
+        policy_kwargs = dict(tools=tools) if tools else {}
+        # A continuation comes back as raw text, so the server must not parse tool calls out of it.
+        continuation_kwargs = dict(policy_kwargs, tool_choice="none") if tools else {}
         corrected_result = dict(generate_new=False)
         if messages[-1]["role"] in RESPONSE_ROLES:
             failed_corrections = []
@@ -80,7 +106,9 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
             else:
                 corrected_result["correcting_model_name"] = self.chat_correcting.model
                 for _try_idx in range(self.max_correction_attempts):
-                    correction_result = self.correct(messages)
+                    correction_result = self.correct(
+                        messages, tools=tools, adapter_policy=adapter_policy
+                    )
                     if not self._is_not_found_correction(
                         correction_result["correction"]
                     ):
@@ -101,7 +129,9 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                 # if still not found, regenerate
                 rollout_messages = messages[:-1]
                 corrected_messages = rollout_messages + [
-                    dict(role="assistant", content=chat_policy(rollout_messages))
+                    take_policy_message(
+                        chat_policy(rollout_messages, return_dict=True, **policy_kwargs)
+                    )
                 ]
                 corrected_result["policy_model_name"] = chat_policy.model
                 corrected_result["generate_new"] = True
@@ -109,23 +139,65 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                 corrected_messages = messages
             else:
                 partial_messages = correction_result["partial_messages"]
-                if partial_messages[-1].get("finish_reason") == "stop":
+                if partial_messages[-1].get("finish_reason") in ("stop", "tool_calls"):
                     corrected_messages = partial_messages
                 else:
-                    corrected_content = chat_policy(
-                        partial_messages,
+                    corrected_message_index = len(partial_messages) - 1
+                    partial_templated = adapter_policy.build_partial_templated_prompt(
+                        messages[corrected_message_index], partial_messages[-1]
+                    )
+                    policy_choice = chat_policy(
+                        partial_messages[:-1]
+                        + [
+                            dict(
+                                role="assistant",
+                                content=partial_templated["templated_prompt"],
+                            )
+                        ],
                         continue_final_message=True,
                         add_generation_prompt=False,
                         echo=True,
+                        return_dict=True,
+                        **continuation_kwargs,
+                    )["choices"][0]
+                    prefix = partial_templated["templated_prompt"]
+                    response_text = policy_choice["message"]["content"]
+                    generated_reasoning = policy_choice["message"].get(
+                        "reasoning"
+                    ) or policy_choice["message"].get("reasoning_content")
+                    if generated_reasoning:
+                        # Some servers parse generated text into the reasoning channel while the
+                        # echoed prefix stays in content, and everything generated lands there
+                        # when the prefill already consumed the thinking begin marker. Put it back
+                        # where it was generated: the reasoning end marker only got consumed when
+                        # both channels are non-empty.
+                        generated_content = response_text[len(prefix) :]
+                        response_text = (
+                            prefix
+                            + generated_reasoning
+                            + (
+                                adapter_policy.response_template.reasoning_end_marker
+                                if generated_content
+                                else ""
+                            )
+                            + generated_content
+                        )
+                    corrected_message = adapter_policy.response_template.parse(
+                        response_text,
+                        messages=partial_messages[:-1],
+                        tools=tools,
+                        finish_reason=policy_choice.get("finish_reason"),
                     )
                     corrected_result["policy_model_name"] = chat_policy.model
-                    corrected_messages = messages[:-1] + [
-                        dict(role="assistant", content=corrected_content)
+                    corrected_messages = messages[:corrected_message_index] + [
+                        corrected_message
                     ]
         else:  # make new message
             # Corrected result without correcting_model_name key means new message.
             corrected_messages = messages + [
-                dict(role="assistant", content=chat_policy(messages))
+                take_policy_message(
+                    chat_policy(messages, return_dict=True, **policy_kwargs)
+                )
             ]
             corrected_result["policy_model_name"] = chat_policy.model
             corrected_result["generate_new"] = True
@@ -135,7 +207,13 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         return corrected_result
 
     def iterative_correction_till_good(
-        self, messages, chat_policy, max_rollouts=5, iid_sampling=False
+        self,
+        messages,
+        chat_policy,
+        max_rollouts=5,
+        iid_sampling=False,
+        adapter_policy=None,
+        tools=None,
     ):
         """
         Run iterative correction for max_rollouts steps.
@@ -161,7 +239,11 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         while len(correction_steps) < max_rollouts:
             if not correction_steps:
                 first_result = self.correct_and_rollout(
-                    messages, chat_policy, iid_sampling=iid_sampling
+                    messages,
+                    chat_policy,
+                    iid_sampling=iid_sampling,
+                    adapter_policy=adapter_policy,
+                    tools=tools,
                 )
                 first_result["applied_corrections"] = applied_corrections
                 correction_steps.append(first_result.copy())
@@ -169,7 +251,11 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
 
             current_messages = correction_steps[-1]["corrected_messages"]
             corrected_result = self.correct_and_rollout(
-                current_messages, chat_policy, iid_sampling=iid_sampling
+                current_messages,
+                chat_policy,
+                iid_sampling=iid_sampling,
+                adapter_policy=adapter_policy,
+                tools=tools,
             )
             correction_steps[-1].update(
                 {
@@ -206,6 +292,8 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         rollout_num=5,
         mode="till_good",
         iid_sampling=False,
+        adapter_policy=None,
+        tools=None,
     ):
         """
         Run iterative correction mode in one of:
@@ -235,6 +323,8 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                 chat_policy,
                 max_rollouts=remaining_rollouts,
                 iid_sampling=iid_sampling,
+                adapter_policy=adapter_policy,
+                tools=tools,
             )
             correction_till_goods.append(correction_till_good)
             remaining_rollouts -= len(correction_till_good["correction_steps"])
@@ -336,6 +426,8 @@ def build_reasoning_correcting_model(
 
 
 def build_correcting_model_with_policy(reasoning=True):
+    import onpanda
+
     new_kwargs = dict(max_tokens=1536, temperature=0.8)
     if reasoning:
         correcting_model = build_reasoning_correcting_model()
@@ -352,12 +444,29 @@ def build_correcting_model_with_policy(reasoning=True):
         extra_parameters = json5.loads(extra_parameters_json5_str)
         new_kwargs.update(extra_parameters)
     chat_policy.default_kwargs.update(new_kwargs)
-    return dict(correcting_model=correcting_model, chat_policy=chat_policy)
+    # The policy renders its own response template, which is usually named after the policy, and
+    # its own tokenizer decides how far a correction may reach into the continuation prefix.
+    adapter_policy = onpanda.FindAndReplaceCorrectionAdapter(
+        tokenizer=os.environ.get("POLICY_TOKENIZER_NAME_OR_PATH"),
+        response_template=dict(
+            name_or_path=os.environ.get(
+                "POLICY_RESPONSE_TEMPLATE_NAME_OR_PATH", chat_policy.model
+            )
+        ),
+    )
+    return dict(
+        correcting_model=correcting_model,
+        chat_policy=chat_policy,
+        adapter_policy=adapter_policy,
+    )
 
 
 if __name__ == "__main__":
     from boxx import *
-    from onpanda.test_utils import get_test_rejected_msgs1
+    from onpanda.test_utils import (
+        get_test_rejected_msgs1,
+        get_test_reasoning_tool_calls_msgs,
+    )
 
     _d = build_correcting_model_with_policy()
     correcting_model, chat_policy = _d["correcting_model"], _d["chat_policy"]
@@ -368,6 +477,8 @@ if __name__ == "__main__":
         # {"role": "assistant", "content": "12"},
     ]
     msgs = get_test_rejected_msgs1()[0]
+    tools = None
+    msgs, tools = get_test_reasoning_tool_calls_msgs()
 
     # msgs = [{"role": "user", "content": "How many `1` in result of 652*8596"},]
 
@@ -376,6 +487,8 @@ if __name__ == "__main__":
         chat_policy,
         rollout_num=3,
         mode="best_of_n",
+        adapter_policy=_d["adapter_policy"],
+        tools=tools,
         # iid_sampling=True,
     )
     tree(corrected)

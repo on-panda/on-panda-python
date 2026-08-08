@@ -212,7 +212,8 @@ def _build_fuzzy_context(
     best_char_index = 0
     best_patch_length = 1
 
-    for _, text in verifier._iter_assistant_text_locations(messages):
+    for templated_location in verifier._iter_assistant_templated_prompts(messages):
+        text = templated_location["templated_prompt"]
         if not text:
             continue
         if len(text) <= target_len:
