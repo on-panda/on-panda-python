@@ -41,6 +41,50 @@ def build_response_template(response_template=None, special_tokens=None):
     return DefaultResponseTemplate(response_template, special_tokens=special_tokens)
 
 
+def build_messages_location(templated_location, templated_char_index):
+    """
+    Convert a template space position into a structured messages_location, the only anchor
+    independent of both tokenizer and response template, so reward and old data keep comparable.
+    A position landing on template scaffolding snaps to the end of the channel it follows.
+
+    `templated_location` is an `apply` result plus the `message_index` it came from.
+    """
+    key_path = ["content"]
+    channel_text = ""
+    char_index = 0
+    for mapping in templated_location["key_path_prompt_mapping"]:
+        if templated_char_index < mapping["text_start"]:
+            break
+        key_path = mapping["key_path"]
+        channel_text = templated_location["templated_prompt"][
+            mapping["text_start"] : mapping["text_end"]
+        ]
+        char_index = (
+            min(templated_char_index, mapping["text_end"]) - mapping["text_start"]
+        )
+    return dict(
+        path_keys=[templated_location["message_index"]] + list(key_path),
+        char_index=char_index,
+        left5=channel_text[max(0, char_index - 5) : char_index],
+        right5=channel_text[char_index : char_index + 5],
+    )
+
+
+def build_templated_char_index(templated_location, messages_location):
+    """Inverse of build_messages_location, to cut a structured location in template space."""
+    key_path = list(messages_location["path_keys"][1:])
+    mappings = [
+        mapping
+        for mapping in templated_location["key_path_prompt_mapping"]
+        if mapping["key_path"] == key_path
+    ]
+    assert mappings, (
+        f"messages_location {messages_location} has no channel in templated prompt: "
+        f"{templated_location['key_path_prompt_mapping']}"
+    )
+    return mappings[0]["text_start"] + messages_location["char_index"]
+
+
 def flatten_messages_for_correcting(messages, response_template):
     """
     Flatten channels that the correcting model's own chat template would drop or restructure,

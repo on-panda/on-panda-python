@@ -13,7 +13,10 @@ from copy import deepcopy
 with mximport.inpkg():
     from ..token_level_supervision_utils import build_tokenizer
     from .verifier import FindAndReplaceVerifier
-    from ..response_templates import flatten_messages_for_correcting
+    from ..response_templates import (
+        build_templated_char_index,
+        flatten_messages_for_correcting,
+    )
     from . import system_prompts
 
 
@@ -229,7 +232,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         templated_location = self.verifier.build_templated_location(
             rejected_messages, messages_location["path_keys"][0]
         )
-        target_char_index = self.verifier.build_templated_char_index(
+        target_char_index = build_templated_char_index(
             templated_location, messages_location
         )
         location_suffix = templated_location["templated_prompt"][target_char_index:]
@@ -329,12 +332,15 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         token_level_info["chosen_content"] = token_level_msg["content"]
 
         rejected_content_str = mxlm.get_text_content(rejected_content_chunks)
+        # The chunks are the flattened response text, so parse them back into channels, otherwise
+        # this template would flatten an already flattened message a second time.
         rejected_msg = dict(
-            role="assistant",
+            self.response_template.parse(rejected_content_str),
             ignore_loss=True,
-            content=rejected_content_str,
-            finish_reason=token_level_info.get("rejected_finish_reason", ""),
             token_level=token_level_info,
+        )
+        rejected_msg.setdefault(
+            "finish_reason", token_level_info.get("rejected_finish_reason", "")
         )
         if "rejected_messages_location" in token_level_info:
             token_level_info["messages_location"] = token_level_info.pop(
@@ -413,7 +419,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             templated_location = self.verifier.build_templated_location(
                 messages, messages_location["path_keys"][0]
             )
-            templated_char_index = self.verifier.build_templated_char_index(
+            templated_char_index = build_templated_char_index(
                 templated_location, messages_location
             )
         else:
@@ -649,6 +655,49 @@ def test_reasoning_and_tool_calls_correcting():
     return 7
 
 
+def test_agent_panda_json_far_correction(far_adapter, panda_json):
+    """
+    Every ground truth FAR of an agent trajectory must score a perfect reward when fed back,
+    which closes the loop parser -> ground truth FAR -> locate -> apply -> reward across the
+    reasoning, tool call and content channels.
+    """
+    with mximport.inpkg():
+        from ..parser import build_test_panda_tree
+        from ..utils import remove_msgs_after_last_response_role
+
+    template = far_adapter.response_template
+    far_corrections = build_test_panda_tree(panda_json).build_far_correction_data_v1(
+        far_adapter
+    )
+    located_channels = set()
+    for far_correction in far_corrections:
+        gt_correction = far_correction[-1]["correction"]
+        # The sample stores flattened assistant messages, so parse the channels back to locate.
+        messages = [
+            (
+                dict(message, **template.parse(message["content"]))
+                if message["role"] == "assistant"
+                else message
+            )
+            for message in remove_msgs_after_last_response_role(far_correction[:-2])
+        ]
+        far_text = gt_correction["find_and_replace"]["far_text"]
+        reward = far_adapter.verifier.compute_reward(messages, far_text, gt_correction)
+        assert reward["reward_with_feedback"]["final_reward"] == 1.0, (
+            far_text,
+            reward["reward_with_feedback"]["feedback"],
+        )
+        path_keys = gt_correction["messages_location"].get("path_keys")
+        if path_keys:
+            located_channels.add(tuple(path_keys[1:]))
+    assert located_channels == {
+        ("reasoning",),
+        ("content",),
+        ("tool_calls", 0, "function", "arguments"),
+    }, located_channels
+    return len(far_corrections)
+
+
 if __name__ == "__main__":
     from boxx import *
 
@@ -719,3 +768,12 @@ if __name__ == "__main__":
     )
     panda_tree4 = build_test_panda_tree(test_json4)
     far_correction4 = panda_tree4.build_far_correction_data_v1(far_adapter)[-1]
+
+    # test agent trajectory: reasoning, tool call arguments and content channels
+    print(
+        "test_agent_panda_json_far_correction passed:",
+        test_agent_panda_json_far_correction(
+            far_adapter,
+            f"{panda_json_dir}/2026-06-25_agent_example_template-K2.panda.json",
+        ),
+    )

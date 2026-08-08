@@ -9,7 +9,7 @@ Created on Wed Feb 18 03:15:00 2026
 import mximport
 
 with mximport.inpkg():
-    from ..response_templates import build_response_template
+    from ..response_templates import build_messages_location, build_response_template
 
 
 class FindAndReplaceVerifier:
@@ -193,48 +193,15 @@ class FindAndReplaceVerifier:
                 yield self.build_templated_location(messages, message_index)
 
     def build_messages_location(self, templated_location, find_and_replace):
-        """
-        messages_location stays structured, the only anchor independent of both tokenizer and
-        response template, so reward and old data keep comparable. A cut landing on template
-        scaffolding snaps to the end of the channel it follows.
-        """
-        templated_char_index = templated_location["templated_char_index"]
-        key_path = ["content"]
-        channel_text = ""
-        char_index = 0
-        for mapping in templated_location["key_path_prompt_mapping"]:
-            if templated_char_index < mapping["text_start"]:
-                break
-            key_path = mapping["key_path"]
-            channel_text = templated_location["templated_prompt"][
-                mapping["text_start"] : mapping["text_end"]
-            ]
-            char_index = (
-                min(templated_char_index, mapping["text_end"]) - mapping["text_start"]
-            )
+        """messages_location of a located match, with the find feedback of that match."""
         return dict(
-            path_keys=[templated_location["message_index"]] + list(key_path),
-            char_index=char_index,
-            left5=channel_text[max(0, char_index - 5) : char_index],
-            right5=channel_text[char_index : char_index + 5],
+            build_messages_location(
+                templated_location, templated_location["templated_char_index"]
+            ),
             match_num=templated_location["match_num"],
             patch_length=len(find_and_replace["location_text"]),
             find_feedback="matched",
         )
-
-    def build_templated_char_index(self, templated_location, messages_location):
-        """Inverse of build_messages_location, to cut a structured location in template space."""
-        key_path = list(messages_location["path_keys"][1:])
-        mappings = [
-            mapping
-            for mapping in templated_location["key_path_prompt_mapping"]
-            if mapping["key_path"] == key_path
-        ]
-        assert mappings, (
-            f"messages_location {messages_location} has no channel in templated prompt: "
-            f"{templated_location['key_path_prompt_mapping']}"
-        )
-        return mappings[0]["text_start"] + messages_location["char_index"]
 
     def assert_messages_location_context_valid(self, messages, messages_location):
         if "left5" not in messages_location:
