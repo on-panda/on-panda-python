@@ -335,7 +335,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         # The chunks are the flattened response text, so parse them back into channels, otherwise
         # this template would flatten an already flattened message a second time.
         rejected_msg = dict(
-            self.response_template.parse(rejected_content_str),
+            self.response_template.parse(
+                rejected_content_str, tools=messages[0].get("tools")
+            ),
             ignore_loss=True,
             token_level=token_level_info,
         )

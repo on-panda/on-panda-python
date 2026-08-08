@@ -119,7 +119,7 @@ class PandaScoreMixin:
             if sample_mode == "correction_only" and gt_is_good:
                 continue
 
-            correction_result = self.correct(messages)
+            correction_result = self.correct(messages, tools=messages[0].get("tools"))
             far_text = correction_result["correction"]["find_and_replace"]["far_text"]
             reward_result = self.adapter.verifier.compute_reward(
                 messages,

@@ -12,6 +12,9 @@ Supported keys include:
 - `rerun_bypass` (bool): direct-forward single-turn rerun extraction requests, default False.
 - `chat` (dict): kwargs for `mxlm.ChatAPI` used by correcting model.
 - `far` (dict): kwargs for `onpanda.FindAndReplaceCorrectionAdapter`.
+- `policy_far` (dict): kwargs for the policy's `FindAndReplaceCorrectionAdapter`, whose
+  `response_template` renders the continuation prefix. Required when the policy is a reasoning
+  or tool calling model, otherwise the policy would be rendered by the correcting template.
 
 url_config-path examples:
 - SFT correcting model for best_of_n mode:
@@ -20,6 +23,8 @@ url_config-path examples:
     - rollout_num@3,chat.model@step-3.7-flash,far.max_replacement_tokens@1,chat.is_reasoning@true
 - correcting model as reward model:
     - rollout_num@3,mode@best_of_n,iid_sampling@true,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false
+- agent policy (reasoning and tool calls), whose response template name needs url encoding:
+    - rollout_num@3,chat.model@step-3.7-flash,chat.is_reasoning@true,policy_far.response_template.name_or_path@Qwen%2FQwen3.6-35B-A3B
 """
 
 import argparse
@@ -97,6 +102,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
         import onpanda
 
         far = copy.deepcopy(correcting_config.get("far"))
+        policy_far = copy.deepcopy(correcting_config.get("policy_far"))
         chat = copy.deepcopy(correcting_config.get("chat"))
         if chat is not None:
             # chat_correcting uses the same upstream by default, while still
@@ -105,16 +111,21 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             chat.setdefault("api_key", chat_policy.api_key)
         model_config = {
             "far": far,
+            "policy_far": policy_far,
             "chat": chat,
         }
         model_key = json.dumps(
             model_config, sort_keys=True, ensure_ascii=False, default=repr
         )
-        correcting_model = correcting_model_holder.get(model_key)
+        correcting_model, adapter_policy = correcting_model_holder.get(
+            model_key, (None, None)
+        )
         if correcting_model is None:
             chat_correcting = None
             if far is not None:
                 far = onpanda.FindAndReplaceCorrectionAdapter(**far)
+            if policy_far is not None:
+                adapter_policy = onpanda.FindAndReplaceCorrectionAdapter(**policy_far)
             if chat is not None:
 
                 def reasoning_parser(message):
@@ -136,8 +147,8 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
                 chat_correcting=chat_correcting,
                 adapter=far,
             )
-            correcting_model_holder[model_key] = correcting_model
-        return correcting_model
+            correcting_model_holder[model_key] = (correcting_model, adapter_policy)
+        return correcting_model, adapter_policy
 
     def iterative_correction_process_func(body, headers, url_config):
         """
@@ -149,6 +160,10 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
         - rerun_bypass: direct-forward single-turn rerun extraction, default False
         - chat: used to build correcting chat, mxlm.ChatAPI(**chat)
         - far: used to build correcting adapter, FindAndReplaceCorrectionAdapter(**far)
+        - policy_far: used to build the policy adapter, which renders the continuation prefix
+
+        Request body `tools` are forwarded to both the correcting model, so it can judge whether
+        the arguments fit the schema, and the policy, so its continuation stays on schema.
 
         Return dict:
         - direct_forward: bool
@@ -184,11 +199,13 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             if not eval_name:
                 raise ValueError("pass_at_k mode requires eval_name in url config")
             eval_name = str(eval_name)
-        # TODO: support tool calls and structured response_format in iterative correction.
-        assert "tools" not in body, "iterative_correction does not support tools yet"
-        prompt_hash = mxlm.hash_object_sha256_base64(
-            mxlm.remove_last_assistant(req_messages)
-        )
+        # TODO: support structured response_format in iterative correction.
+        tools = body.get("tools")
+        prompt_object = mxlm.remove_last_assistant(req_messages)
+        if tools:
+            # Same messages with different tools are different prompts for pass_at_k and logs.
+            prompt_object = [prompt_object, tools]
+        prompt_hash = mxlm.hash_object_sha256_base64(prompt_object)
 
         auth_header = headers.get("Authorization", "")
         bearer_token = (
@@ -209,12 +226,15 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             "top_p",
             "frequency_penalty",
             "presence_penalty",
+            "chat_template_kwargs",  # e.g. enable_thinking of a reasoning policy
         ):
             if k in body:
                 policy_kwargs[k] = body[k]
 
         chat_policy = mxlm.ChatAPI(**policy_kwargs)
-        correcting_model = get_correcting_model(correcting_config, chat_policy)
+        correcting_model, adapter_policy = get_correcting_model(
+            correcting_config, chat_policy
+        )
         print("correcting_model.chat_correcting:")
         print(correcting_model.chat_correcting)
         print("chat_policy:")
@@ -255,6 +275,8 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
                         rollout_num=rollout_num,
                         mode=mode,
                         iid_sampling=iid_sampling,
+                        adapter_policy=adapter_policy,
+                        tools=tools,
                     )
                     try:
                         __import__("boxx").tree([eval_name, prompt_hash, corrected])
@@ -289,6 +311,8 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             rollout_num=rollout_num,
             mode=mode,
             iid_sampling=iid_sampling,
+            adapter_policy=adapter_policy,
+            tools=tools,
         )
         try:
             __import__("boxx").tree(corrected)
@@ -402,13 +426,15 @@ if __name__ == "__main__":
           - CLI config: from --default_url_config and --model
           - URL config: url_config in /iterative_correction/{{url_config}}/v1/*
           - Merge in process_func: correcting_config = deep_merge(cli_config, url_config)
-          - Common correcting_config keys: rollout_num, mode, iid_sampling, chat.*, far.*
+          - Common correcting_config keys: rollout_num, mode, iid_sampling, chat.*, far.*, policy_far.*
           - Eval logs: {log_dir or "disabled"}; filenames use Panda prompt_hash
           - Request Bearer: {request_bearer_status}
           - chat.* -> mxlm.ChatAPI(**chat), far.* -> onpanda.FindAndReplaceCorrectionAdapter(**far)
+          - policy_far.* -> the policy's adapter; set policy_far.response_template.name_or_path for a
+            reasoning or tool calling policy, otherwise its continuation prefix uses the correcting template
           - URL config overrides CLI config
           - Aggregation moved to: python -m mxlm.aggregate_apis
-          - If using reasoning model as correcting model i.e. `chat.is_reasoning@true` and non-utf8 tokenizer, set `far.max_replacement_tokens` to a small number like 1, otherwise the replacement token may inject too much information.
+          - If using reasoning model as correcting model i.e. `chat.is_reasoning@true`, set `policy_far.max_replacement_tokens` to a small number like 1, otherwise the replacement token may inject too much information. It counts tokens of `policy_far.tokenizer`, which defaults to utf8_tokenizer i.e. bytes.
         [iterative_correction_api] examples:
           - curl http://{args.host}:{args.port}/iterative_correction/chat.model@model_name,chat.is_reasoning@false/v1/models
           - curl http://{args.host}:{args.port}/iterative_correction/rollout_num@3,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false,far.tokenizer@utf8_tokenizer/v1/models

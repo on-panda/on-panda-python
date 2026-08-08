@@ -276,6 +276,10 @@ class PandaTree:
             if data.get("uuid"):
                 onpanda_info["uuid"] = data["uuid"]
             messages[0]["onpanda"] = onpanda_info
+            if dialog.get("tools"):
+                # tools ride on the first message, so the correcting model and the policy can
+                # both see the schema, and the sample stays a plain messages list.
+                messages[0]["tools"] = deepcopy(dialog["tools"])
             sfts.append(messages)
         preferences = []
         for rejected_key, chosen_key in self.outcome_pairs + self.fork_pairs:
@@ -434,6 +438,9 @@ class PandaTree:
             if self.data.get("uuid"):
                 onpanda_info["uuid"] = self.data["uuid"]
             token_level_msgs[0]["onpanda"] = onpanda_info
+            chosen_tools = self.data["dialogs"][chosen_key].get("tools")
+            if chosen_tools:
+                token_level_msgs[0]["tools"] = deepcopy(chosen_tools)
 
             token_levels.append(token_level_msgs)
         # g()
