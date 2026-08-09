@@ -1,4 +1,5 @@
 from types import MethodType, SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -405,6 +406,80 @@ def test_structured_tool_calls_survive_policy_continuation(response_template):
         {"name": "read", "arguments": '{"path": "/tmp/fixed"}'},
         {"name": "read", "arguments": '{"path": "/tmp/a"}'},
     ]
+    assert corrected["finish_reason"] == "tool_calls"
+
+
+def test_mislabeled_content_continuation_does_not_leak_think_end():
+    adapter = FindAndReplaceCorrectionAdapter(
+        max_replacement_tokens=200,
+        response_template={"name_or_path": "Qwen/Qwen3.6-35B-A3B"},
+    )
+    correcting_model = CorrectingModel(
+        SimpleNamespace(model="correcting"), adapter, max_correction_attempts=1
+    )
+    rejected_message = {
+        "role": "assistant",
+        "reasoning": "think",
+        "content": "answer /tmp/b",
+        "finish_reason": "stop",
+    }
+    partial_message = {
+        "role": "assistant",
+        "reasoning": "think",
+        "content": "answer /tmp/a",
+    }
+    prefix = adapter.build_partial_templated_prompt(
+        rejected_message, partial_message
+    )["templated_prompt"]
+    correcting_model.correct = Mock(
+        return_value={
+            "correction": {
+                "messages_location": {
+                    "path_keys": [1, "content"],
+                    "char_index": 0,
+                }
+            },
+            "partial_messages": [{"role": "user", "content": "q"}, partial_message],
+        }
+    )
+    policy = Mock(
+        return_value={
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        # mxlm echoes the prefix before returning the vLLM response.
+                        "content": (
+                            prefix
+                            + "<tool_call>\n"
+                            "<function=read_file>\n"
+                            "<parameter=path>\n/tmp/a.txt\n</parameter>\n"
+                            "</function>\n"
+                            "</tool_call>"
+                        ),
+                        "reasoning": ".txt\n",
+                        "reasoning_content": ".txt\n",
+                        "tool_calls": [],
+                    },
+                }
+            ]
+        }
+    )
+    policy.model = "policy"
+    corrected = correcting_model.correct_and_rollout(
+        [{"role": "user", "content": "q"}, rejected_message],
+        policy,
+        adapter_policy=adapter,
+    )["corrected_messages"][-1]
+
+    assert corrected["reasoning"] == "think"
+    assert corrected["content"] == "answer /tmp/a.txt"
+    assert "</think>" not in corrected["content"]
+    assert corrected["tool_calls"][0]["function"] == {
+        "name": "read_file",
+        "arguments": '{"path": "/tmp/a.txt"}',
+    }
     assert corrected["finish_reason"] == "tool_calls"
 
 

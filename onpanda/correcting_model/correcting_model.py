@@ -199,21 +199,25 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                     ) or policy_message.get("reasoning_content")
                     if generated_reasoning:
                         # Some servers parse generated text into the reasoning channel while the
-                        # echoed prefix stays in content, and everything generated lands there
-                        # when the prefill already consumed the thinking begin marker. Put it back
-                        # where it was generated: the reasoning end marker only got consumed when
-                        # both channels are non-empty.
+                        # echoed prefix stays in content. Only close reasoning when the prefix
+                        # itself still ends in that channel.
                         generated_content = response_text[len(prefix) :]
-                        response_text = (
-                            prefix
-                            + generated_reasoning
-                            + (
-                                adapter_policy.response_template.reasoning_end_marker
-                                if generated_content
-                                else ""
+                        if generated_content:
+                            prefix_message = adapter_policy.response_template.parse(
+                                prefix,
+                                messages=partial_messages[:-1],
+                                tools=tools,
                             )
-                            + generated_content
-                        )
+                            if (
+                                "reasoning" in prefix_message
+                                and "content" not in prefix_message
+                                and "tool_calls" not in prefix_message
+                                and prefix_message.get("finish_reason") != "reasoning_end"
+                            ):
+                                generated_reasoning += (
+                                    adapter_policy.response_template.reasoning_end_marker
+                                )
+                        response_text = prefix + generated_reasoning + generated_content
                     corrected_message = adapter_policy.response_template.parse(
                         response_text,
                         messages=partial_messages[:-1],
@@ -250,6 +254,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
             corrected_result["generate_new"] = True
 
         corrected_result["corrected_messages"] = corrected_messages[:]
+        corrected_result["tools"] = tools
         # g()
         return corrected_result
 
@@ -279,6 +284,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                 dict(
                     generate_new=False,
                     corrected_messages=messages[:],
+                    tools=tools,
                     applied_corrections=applied_corrections,
                 )
             )
@@ -407,12 +413,14 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         adapter_policy=None,
         error_types=(
             "reasoning",
-            "call_name",
             "content",
+            "call_name",
             "bad_argument_value",
             "bad_argument_key",
             "bad_argument_num",
             "bad_argument_json",
+            "no_call",
+            "redundant_call",
         ),
     ):
         """Run model-backed smoke cases and return their raw results for inspection."""
@@ -507,6 +515,7 @@ def build_reasoning_correcting_model(
     if adapter is None:
         adapter = onpanda.FindAndReplaceCorrectionAdapter(
             tokenizer=tokenizer,
+            system_prompt_language=os.environ.get("FAR_SYSTEM_PROMPT_LANGUAGE"),
         )
     return CorrectingModel(
         chat_correcting,
@@ -559,11 +568,14 @@ if __name__ == "__main__":
 
     _d = build_correcting_model_with_policy()
     correcting_model, chat_policy, adapter_policy = _d["correcting_model"], _d["chat_policy"], _d["adapter_policy"]
-    correcteds = correcting_model.test(
-        chat_policy=chat_policy,
-        adapter_policy=adapter_policy,
-    )
-    tree(correcteds)
+    
+    if 1:
+        correcteds = correcting_model.test(
+            chat_policy=chat_policy,
+            adapter_policy=adapter_policy,
+        )
+        tree(correcteds)
+        print(savejson(correcteds , f"/tmp/{localTimeStr()}-correcteds.json"))
 
     msgs = [
         {"role": "user", "content": "5+7="},
@@ -572,7 +584,7 @@ if __name__ == "__main__":
     ]
     msgs = get_test_rejected_msgs1()[0]
     tools = None
-    msgs, tools = get_test_reasoning_tool_calls_msgs1()
+    msgs, tools = get_test_reasoning_tool_calls_msgs1('call_name')
 
     # msgs = [{"role": "user", "content": "How many `1` in result of 652*8596"},]
 

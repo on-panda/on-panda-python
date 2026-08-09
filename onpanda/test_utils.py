@@ -37,7 +37,7 @@ def get_test_reasoning_tool_calls_msgs1(error_type="reasoning"):
             "type": "function",
             "function": {
                 "name": "read_file",
-                "description": "Read a text file and return its content.",
+                "description": "Read a text file on the user's computer and return its content",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -70,7 +70,7 @@ def get_test_reasoning_tool_calls_msgs1(error_type="reasoning"):
                     "type": "function",
                     "id": "functions.read_file:0",
                     "function": {
-                        "name": "read-file" if "call_name" in error_type else "read_file",
+                        "name": "read" if "call_name" in error_type else "read_file",
                         "arguments": arguments,
                     },
                 }
@@ -78,4 +78,18 @@ def get_test_reasoning_tool_calls_msgs1(error_type="reasoning"):
             "finish_reason": "tool_calls",
         },
     ]
+    if "no_call" in error_type:
+        del rejected_msgs[-1]["tool_calls"]
+        rejected_msgs[-1]["content"] = "I will call read_file tool to read `/tmp/a.txt` with limit 10."
+        del rejected_msgs[-1]["finish_reason"]
+    if "redundant_call" in error_type:
+        rejected_msgs[-1]["tool_calls"].append({
+                    "index": 1,
+                    "type": "function",
+                    "id": "functions.read_file:1",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": arguments,
+                    },
+                })
     return rejected_msgs, tools

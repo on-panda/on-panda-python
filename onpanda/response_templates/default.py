@@ -17,7 +17,7 @@ def _call_marker(name):
     return "".join(["<|", "ON_", "PANDA_", name, "|>"])
 
 
-MARKER_PAIR_SEPARATOR = "\n\n\n"
+MARKER_PAIR_SEPARATOR = "\n\n"
 TOOL_CALLS_MARKER = _special_marker("tool_calls")
 TOOL_RESPONSE_MARKER = _call_marker("TOOL_RESPONSE")
 CALL_BEGIN_MARKER = _call_marker("CALL_BEGIN")
@@ -98,7 +98,7 @@ def parse_tool_call_records(tool_calls_text):
 
 class DefaultResponseTemplate:
     """
-    `<|reasoning|>{reasoning}<|reasoning|>\\n\\n\\n<|reasoning|>{content}<|tool_calls|>\\n\\n\\n<|tool_calls|>{tool_calls}<|stop|>`
+    `<|reasoning|>{reasoning}<|reasoning|>\\n\\n<|reasoning|>{content}<|tool_calls|>\\n\\n<|tool_calls|>{tool_calls}<|stop|>`
 
     A marker means the channel exists, so a content only message stays marker free and
     renders exactly as before this template existed. The reasoning and stop markers come
