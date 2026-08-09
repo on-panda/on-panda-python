@@ -20,9 +20,19 @@ with mximport.inpkg():
 
 def take_policy_message(policy_response):
     """`reasoning_content` is the same channel as `reasoning`, which response templates read."""
-    message = policy_response["choices"][0]["message"]
-    if "reasoning_content" in message:
-        message["reasoning"] = message.pop("reasoning_content")
+    choice = policy_response["choices"][0]
+    message = choice["message"]
+    reasoning_content = message.pop("reasoning_content", None)
+    if reasoning_content:
+        message["reasoning"] = reasoning_content
+    elif not message.get("reasoning"):
+        message.pop("reasoning", None)
+    if not message.get("tool_calls"):
+        message.pop("tool_calls", None)
+    if choice.get("finish_reason") is not None:
+        message["finish_reason"] = choice["finish_reason"]
+        if message["finish_reason"] == "stop" and message.get("tool_calls"):
+            message["finish_reason"] = "tool_calls"
     return message
 
 
@@ -42,6 +52,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         correction_response = self.chat_correcting(
             correction_prompt,
             return_dict=True,
+            skip_special_tokens=False,
             # max_tokens=self.adapter.max_location_tokens + 20,  # bad for reasoning model
             # The correcting model answers in the FAR text format, it never calls a tool itself.
             **(dict(tools=tools, tool_choice="none") if tools else {}),
@@ -88,9 +99,13 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         response_template is used here, to render the continuation prefix and parse it back.
         """
         adapter_policy = adapter_policy or self.adapter
-        policy_kwargs = dict(tools=tools) if tools else {}
+        policy_kwargs = dict(skip_special_tokens=False)
+        if tools:
+            policy_kwargs["tools"] = tools
         # A continuation comes back as raw text, so the server must not parse tool calls out of it.
-        continuation_kwargs = dict(policy_kwargs, tool_choice="none") if tools else {}
+        continuation_kwargs = policy_kwargs.copy()
+        if tools:
+            continuation_kwargs["tool_choice"] = "none"
         corrected_result = dict(generate_new=False)
         if messages[-1]["role"] in RESPONSE_ROLES:
             failed_corrections = []
@@ -161,10 +176,11 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                         **continuation_kwargs,
                     )["choices"][0]
                     prefix = partial_templated["templated_prompt"]
-                    response_text = policy_choice["message"]["content"]
-                    generated_reasoning = policy_choice["message"].get(
+                    policy_message = policy_choice["message"]
+                    response_text = policy_message.get("content") or prefix
+                    generated_reasoning = policy_message.get(
                         "reasoning"
-                    ) or policy_choice["message"].get("reasoning_content")
+                    ) or policy_message.get("reasoning_content")
                     if generated_reasoning:
                         # Some servers parse generated text into the reasoning channel while the
                         # echoed prefix stays in content, and everything generated lands there
@@ -188,6 +204,21 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                         tools=tools,
                         finish_reason=policy_choice.get("finish_reason"),
                     )
+                    if policy_message.get("tool_calls"):
+                        # vLLM parses generated text before echoing the prefix, so these calls
+                        # follow any calls already parsed from response_text.
+                        corrected_message["tool_calls"] = (
+                            corrected_message.get("tool_calls", [])
+                            + policy_message["tool_calls"]
+                        )
+                        corrected_message = adapter_policy.response_template.parse(
+                            adapter_policy.response_template.apply(corrected_message)[
+                                "templated_prompt"
+                            ],
+                            messages=partial_messages[:-1],
+                            tools=tools,
+                            finish_reason=policy_choice.get("finish_reason"),
+                        )
                     corrected_result["policy_model_name"] = chat_policy.model
                     corrected_messages = messages[:corrected_message_index] + [
                         corrected_message

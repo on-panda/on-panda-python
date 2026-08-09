@@ -339,7 +339,7 @@ class BestOfNMixin:
                 block_parts.append(
                     json.dumps(content, ensure_ascii=False, indent=2, default=str)
                 )
-            for tool_call in message.get("tool_calls", []):
+            for tool_call in message.get("tool_calls") or []:
                 function = tool_call["function"]
                 arguments = function.get("arguments", {})
                 invalid_json_arguments = False
@@ -495,8 +495,10 @@ def test_best_of_n_judge_prompt(correcting_model):
         content_only_history = [dict(role="user", content="1+1=")]
         judge_messages = build_judge_messages(
             [
-                content_only_history + [dict(role="assistant", content="2")],
-                content_only_history + [dict(role="assistant", content="3")],
+                content_only_history
+                + [dict(role="assistant", content="2", tool_calls=None)],
+                content_only_history
+                + [dict(role="assistant", content="3", tool_calls=None)],
             ]
         )
         assert [message["role"] for message in judge_messages] == [

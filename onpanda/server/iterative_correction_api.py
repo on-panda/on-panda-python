@@ -150,6 +150,26 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             correcting_model_holder[model_key] = (correcting_model, adapter_policy)
         return correcting_model, adapter_policy
 
+    def build_hijack_result(final_message, iterative_correction_info):
+        finish_reason = final_message.get("finish_reason")
+        if finish_reason == "stop" and final_message.get("tool_calls"):
+            finish_reason = "tool_calls"
+        elif not finish_reason:
+            finish_reason = "tool_calls" if final_message.get("tool_calls") else "stop"
+        message = {
+            "role": final_message.get("role", "assistant"),
+            "content": final_message.get("content", ""),
+        }
+        for key in ("tool_calls", "reasoning", "reasoning_content"):
+            if key in final_message:
+                message[key] = final_message[key]
+        return {
+            "direct_forward": False,
+            "message": message,
+            "finish_reason": finish_reason,
+            "extra_info": {"iterative_correction": iterative_correction_info},
+        }
+
     def iterative_correction_process_func(body, headers, url_config):
         """
         `correcting_config` keys used here:
@@ -298,11 +318,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
                 selected_message = prompt_state["candidates"].pop(0)
                 prompt_state["times"] += 1
 
-            return {
-                "direct_forward": False,
-                "message": selected_message,
-                "extra_info": {"iterative_correction": extra_info},
-            }
+            return build_hijack_result(selected_message, extra_info)
 
         # print("chat_policy created:", chat_policy, correcting_model.chat_correcting, flush=True)
         corrected = correcting_model.iterative_correction(
@@ -331,22 +347,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             if corrected_messages
             else {"role": "assistant", "content": ""}
         )
-        message = {
-            "role": final_message.get("role", "assistant"),
-            "content": final_message.get("content", ""),
-        }
-        if "tool_calls" in final_message:
-            message["tool_calls"] = final_message["tool_calls"]
-        if "reasoning" in final_message:
-            message["reasoning"] = final_message["reasoning"]
-        if "reasoning_content" in final_message:
-            message["reasoning_content"] = final_message["reasoning_content"]
-
-        return {
-            "direct_forward": False,
-            "message": message,
-            "extra_info": {"iterative_correction": corrected},
-        }
+        return build_hijack_result(final_message, corrected)
 
     mxlm.hijack_chat_api(
         app,

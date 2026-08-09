@@ -358,25 +358,20 @@ def parse_qwen_response_text(text, tools=None):
         message["content"] = remaining_text
     else:
         tool_calls = parse_tool_calls(remaining_text[tool_call_begin:], tools)
-        if tool_calls:
-            message["content"] = re.sub(r"\n+$", "", remaining_text[:tool_call_begin])
-            message["tool_calls"] = tool_calls
-        else:
-            message["content"] = remaining_text
+        message["content"] = re.sub(r"\n+$", "", remaining_text[:tool_call_begin])
+        message["tool_calls"] = tool_calls
 
     if has_im_end:
         message["finish_reason"] = "tool_calls" if message.get("tool_calls") else "stop"
     elif (
-        reasoning_closed
-        and not message.get("content")
-        and not message.get("tool_calls")
+        reasoning_closed and not message.get("content") and "tool_calls" not in message
     ):
         message["finish_reason"] = REASONING_END
     if (
         has_assistant_begin
         and not message.get("content")
         and not message.get("reasoning")
-        and not message.get("tool_calls")
+        and "tool_calls" not in message
     ):
         message["content"] = ""
     return message
@@ -457,19 +452,20 @@ class Qwen3p5ResponseTemplate:
 
         finish_reason = message.get("finish_reason")
         is_partial = finish_reason not in COMPLETE_FINISH_REASONS
+        tool_calls = message.get("tool_calls")
         reasoning = (
             strip_repeated_think_begin(message["reasoning"])
             if message.get("reasoning")
             else ""
         )
         has_response_body = bool(
-            reasoning or message.get("content") or message.get("tool_calls")
+            reasoning or message.get("content") or tool_calls is not None
         )
         is_pure_reasoning_partial = (
             is_partial
             and finish_reason != REASONING_END
             and not message.get("content")
-            and not message.get("tool_calls")
+            and tool_calls is None
         )
 
         if reasoning or (
@@ -479,26 +475,29 @@ class Qwen3p5ResponseTemplate:
             append_mapped(["reasoning"], reasoning)
             if not is_pure_reasoning_partial:
                 append_raw("\n" + THINK_END)
-                if message.get("content") or message.get("tool_calls"):
+                if message.get("content") or tool_calls is not None:
                     append_raw("\n\n")
         append_mapped(["content"], message.get("content"))
 
-        if message.get("tool_calls"):
+        if tool_calls is not None:
             if message.get("content"):
                 append_raw("\n\n")
-            for tool_call_position, tool_call in enumerate(message["tool_calls"]):
+            if not tool_calls:
+                append_raw(TOOL_CALL_BEGIN)
+            for tool_call_position, tool_call in enumerate(tool_calls):
                 if tool_call_position:
                     append_raw("\n")
+                function = tool_call.get("function") or {}
                 append_raw(
                     TOOL_CALL_BEGIN
                     + "\n"
                     + FUNCTION_BEGIN
-                    + tool_call["function"]["name"]
+                    + (function.get("name") or "")
                 )
-                if "arguments" not in tool_call["function"]:
+                if "arguments" not in function:
                     continue
                 append_raw(">\n")
-                arguments = tool_call["function"]["arguments"]
+                arguments = function["arguments"]
                 parsed_arguments = parse_partial_json_object(arguments)
                 is_last_partial_tool_call = (
                     is_partial and tool_call_position == len(message["tool_calls"]) - 1
@@ -546,9 +545,9 @@ class Qwen3p5ResponseTemplate:
             return {}
         message = parse_qwen_response_text(text, tools)
         if finish_reason:
-            message["finish_reason"] = (
-                "tool_calls" if message.get("tool_calls") else finish_reason
-            )
+            message["finish_reason"] = finish_reason
+            if finish_reason == "stop" and message.get("tool_calls"):
+                message["finish_reason"] = "tool_calls"
         return normalize_message_tool_calls(message, messages)
 
 

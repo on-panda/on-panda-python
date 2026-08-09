@@ -219,9 +219,9 @@ class DefaultResponseTemplate:
             if opened_length:
                 message["tool_calls"] = []
         if finish_reason:
-            message["finish_reason"] = (
-                "tool_calls" if message.get("tool_calls") else finish_reason
-            )
+            message["finish_reason"] = finish_reason
+            if finish_reason == "stop" and message.get("tool_calls"):
+                message["finish_reason"] = "tool_calls"
         return message
 
 

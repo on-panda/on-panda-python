@@ -95,16 +95,21 @@ def flatten_messages_for_correcting(messages, response_template):
     flattened = []
     previous_is_tool = False
     for message in messages:
+        has_reasoning = message.get("reasoning") is not None or bool(
+            message.get("reasoning_content")
+        )
         if message["role"] == "assistant" and (
-            message.get("reasoning") is not None
-            or message.get("tool_calls") is not None
+            has_reasoning or message.get("tool_calls") is not None
         ):
             flattened_message = {
                 key: value
                 for key, value in message.items()
                 if key not in FLATTENED_MESSAGE_KEYS
             }
-            flattened_message["content"] = response_template.apply(message)[
+            template_message = message
+            if message.get("reasoning_content"):
+                template_message = dict(message, reasoning=message["reasoning_content"])
+            flattened_message["content"] = response_template.apply(template_message)[
                 "templated_prompt"
             ]
             flattened.append(flattened_message)

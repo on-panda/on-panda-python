@@ -458,9 +458,19 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             messages=messages,
             tools=tools,
         )
-        if not (adapter_policy or self).build_partial_templated_prompt(
+        policy_templated = (adapter_policy or self).build_partial_templated_prompt(
             messages[message_index], partial_message
-        )["replacement"]:
+        )
+        if not policy_templated["replacement"] and (
+            partial_message.get("finish_reason") not in ("stop", "tool_calls")
+            or (
+                messages[message_index].get("finish_reason") in ("stop", "tool_calls")
+                and policy_templated["templated_prompt"]
+                == (adapter_policy or self).response_template.apply(
+                    messages[message_index]
+                )["templated_prompt"]
+            )
+        ):
             # A no-op correction: continuing it would reproduce the rejected response. Either the
             # replacement only repeats the rejected text, or the policy's response template cannot
             # express it, e.g. an opened but still empty tool call channel. Let the caller retry.
@@ -482,9 +492,8 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
     def build_partial_templated_prompt(self, rejected_message, partial_message):
         """
         Render the corrected partial message for continuation, then align the correction to this
-        model's own token boundary: diff against the rejected message and keep only the first
-        `max_replacement_tokens` tokens of the difference. Cutting template scaffolding short is
-        fine, a prefix ending at `\\n` still guides the policy to generate the reasoning end.
+        model's own token boundary: diff the complete token sequences and keep only the first
+        `max_replacement_tokens` tokens after their fork.
 
         An empty replacement means this template's round trip normalized the correction away.
         """
@@ -494,20 +503,43 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         rejected_templated_prompt = self.response_template.apply(rejected_message)[
             "templated_prompt"
         ]
-        common_length = min(len(templated_prompt), len(rejected_templated_prompt))
-        fork_char_index = next(
+        templated_tokens = self.tokenizer.encode(
+            templated_prompt, add_special_tokens=False
+        )
+        rejected_templated_tokens = self.tokenizer.encode(
+            rejected_templated_prompt, add_special_tokens=False
+        )
+        common_length = min(len(templated_tokens), len(rejected_templated_tokens))
+        fork_token_index = next(
             (
-                char_index
-                for char_index in range(common_length)
-                if templated_prompt[char_index] != rejected_templated_prompt[char_index]
+                token_index
+                for token_index in range(common_length)
+                if templated_tokens[token_index]
+                != rejected_templated_tokens[token_index]
             ),
             common_length,
         )
-        replacement = self.truncate_replacement_token(
-            templated_prompt[fork_char_index:]
+        if (
+            fork_token_index == len(templated_tokens)
+            or self.max_replacement_tokens <= 0
+        ):
+            return dict(
+                templated_prompt=self.tokenizer.decode(
+                    templated_tokens[:fork_token_index]
+                ),
+                replacement="",
+            )
+        target_token_num = min(
+            fork_token_index + self.max_replacement_tokens, len(templated_tokens)
+        )
+        decodable_res = next_decodable_num(
+            templated_tokens, target_token_num - 1, self.tokenizer
+        )
+        replacement = self.tokenizer.decode(
+            templated_tokens[fork_token_index : decodable_res["next_num"]]
         )
         return dict(
-            templated_prompt=templated_prompt[:fork_char_index] + replacement,
+            templated_prompt=decodable_res["decoded_text"],
             replacement=replacement,
         )
 
