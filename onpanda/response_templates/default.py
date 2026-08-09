@@ -71,10 +71,10 @@ def _matched_suffix_length(text, marker):
 
 
 def parse_tool_call_records(tool_calls_text):
-    """A field marker means the key exists, a missing marker means the channel has not started."""
-    if not tool_calls_text:
+    """A complete call marker opens a record; a field marker means the key exists."""
+    if not tool_calls_text.startswith(CALL_BEGIN_MARKER):
         return []
-    records = tool_calls_text.removeprefix(CALL_BEGIN_MARKER + "\n").split(
+    records = tool_calls_text[len(CALL_BEGIN_MARKER) :].removeprefix("\n").split(
         "\n" + CALL_BEGIN_MARKER + "\n"
     )
     tool_calls = []
@@ -213,11 +213,13 @@ class DefaultResponseTemplate:
                 text[tool_calls_index + len(self.tool_calls_begin_marker) :]
             )
         else:
-            # A cut may stop inside the tool calls begin marker pair, the channel opened anyway.
+            # The channel opens at the first complete marker, even if the pair is still partial.
             opened_length = _matched_suffix_length(text, self.tool_calls_begin_marker)
-            message["content"] = text[: len(text) - opened_length]
-            if opened_length:
+            if opened_length >= len(TOOL_CALLS_MARKER):
+                message["content"] = text[: len(text) - opened_length]
                 message["tool_calls"] = []
+            else:
+                message["content"] = text
         if finish_reason:
             message["finish_reason"] = finish_reason
             if finish_reason == "stop" and message.get("tool_calls"):

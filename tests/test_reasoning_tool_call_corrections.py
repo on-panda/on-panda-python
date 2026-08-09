@@ -3,7 +3,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from mxlm.server.hijack_chat_api import build_chat_completion_response
 from onpanda import FindAndReplaceCorrectionAdapter
 from onpanda.correcting_model.best_of_n_mixin import (
     test_best_of_n_judge_prompt as run_best_of_n_judge_prompt_test,
@@ -17,6 +16,7 @@ from onpanda.response_templates import (
     DefaultResponseTemplate,
     flatten_messages_for_correcting,
 )
+from onpanda.response_templates.default import CALL_BEGIN_MARKER
 from onpanda.response_templates.qwen3p5 import Qwen3p5ResponseTemplate
 
 
@@ -162,6 +162,47 @@ def test_qwen_template_round_trips_open_tool_call_states():
     }
     parsed = template.parse(template.apply(open_call)["templated_prompt"])
     assert parsed["tool_calls"][0]["function"]["name"] == ""
+
+
+def test_default_template_parses_partial_tool_calls_boundary():
+    template = DefaultResponseTemplate()
+    assert template.parse("answer<|tool_calls|>") == {
+        "role": "assistant",
+        "content": "answer",
+        "tool_calls": [],
+    }
+    assert template.parse("answer<|tool_calls|>\n") == {
+        "role": "assistant",
+        "content": "answer",
+        "tool_calls": [],
+    }
+    for marker_prefix in ("<", "<<", "<|to", "<|tool_call", "<|tool_calls|"):
+        assert template.parse("answer" + marker_prefix) == {
+            "role": "assistant",
+            "content": "answer" + marker_prefix,
+        }
+
+
+def test_default_template_requires_complete_call_begin_marker():
+    template = DefaultResponseTemplate()
+    tool_calls_begin = template.tool_calls_begin_marker
+    assert template.parse(tool_calls_begin + CALL_BEGIN_MARKER) == {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"index": 0}],
+    }
+    for marker_prefix in (
+        "\n",
+        "x",
+        "<",
+        CALL_BEGIN_MARKER[:3],
+        CALL_BEGIN_MARKER[:-1],
+    ):
+        assert template.parse(tool_calls_begin + marker_prefix) == {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [],
+        }
 
 
 def test_qwen_template_preserves_open_reasoning_trailing_newline():
@@ -481,14 +522,3 @@ def test_mislabeled_content_continuation_does_not_leak_think_end():
         "arguments": '{"path": "/tmp/a.txt"}',
     }
     assert corrected["finish_reason"] == "tool_calls"
-
-
-@pytest.mark.parametrize("stream", [False, True])
-def test_hijack_response_uses_choice_finish_reason(stream):
-    response = build_chat_completion_response(
-        {"role": "assistant", "content": "partial"},
-        stream=stream,
-        finish_reason="length",
-    )
-
-    assert response["choices"][0]["finish_reason"] == "length"

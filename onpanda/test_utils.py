@@ -81,7 +81,7 @@ def get_test_reasoning_tool_calls_msgs1(error_type="reasoning"):
     if "no_call" in error_type:
         del rejected_msgs[-1]["tool_calls"]
         rejected_msgs[-1]["content"] = "I will call read_file tool to read `/tmp/a.txt` with limit 10."
-        del rejected_msgs[-1]["finish_reason"]
+        rejected_msgs[-1]["finish_reason"] = "stop"
     if "redundant_call" in error_type:
         rejected_msgs[-1]["tool_calls"].append({
                     "index": 1,
