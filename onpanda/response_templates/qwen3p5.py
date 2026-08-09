@@ -321,19 +321,17 @@ def parse_qwen_response_text(text, tools=None):
             implicit_reasoning_end = remaining_text.find(
                 TOOL_CALL_BEGIN, reasoning_start
             )
-            reasoning = re.sub(
-                r"\n+$",
-                "",
-                strip_repeated_think_begin(
-                    remaining_text[
-                        reasoning_start : (
-                            len(remaining_text)
-                            if implicit_reasoning_end == -1
-                            else implicit_reasoning_end
-                        )
-                    ]
-                ),
+            reasoning = strip_repeated_think_begin(
+                remaining_text[
+                    reasoning_start : (
+                        len(remaining_text)
+                        if implicit_reasoning_end == -1
+                        else implicit_reasoning_end
+                    )
+                ]
             )
+            if implicit_reasoning_end != -1:
+                reasoning = re.sub(r"\n+$", "", reasoning)
             if reasoning:
                 message["reasoning"] = reasoning
             if implicit_reasoning_end == -1:

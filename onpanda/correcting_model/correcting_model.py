@@ -98,8 +98,8 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         from messages without the last assistant.
         When iid_sampling is True, skip correction and keep the sampled assistant.
 
-        adapter_policy is the policy model's adapter, defaults to the correcting one. Only its
-        response_template is used here, to render the continuation prefix and parse it back.
+        adapter_policy is the policy model's adapter, defaults to the correcting one. Its tokenizer
+        and response_template render and align the continuation prefix, then parse it back.
         """
         adapter_policy = adapter_policy or self.adapter
         policy_kwargs = dict(skip_special_tokens=False)
@@ -157,13 +157,23 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                 corrected_messages = messages
             else:
                 partial_messages = correction_result["partial_messages"]
-                if partial_messages[-1].get("finish_reason") in ("stop", "tool_calls"):
+                corrected_message_index = len(partial_messages) - 1
+                partial_templated = adapter_policy.build_partial_templated_prompt(
+                    messages[corrected_message_index], partial_messages[-1]
+                )
+                complete_templated_prompt = adapter_policy.response_template.apply(
+                    partial_messages[-1]
+                )["templated_prompt"]
+                if partial_messages[-1].get("finish_reason") in (
+                    "stop",
+                    "tool_calls",
+                ) and adapter_policy.tokenizer.encode(
+                    partial_templated["templated_prompt"], add_special_tokens=False
+                ) == adapter_policy.tokenizer.encode(
+                    complete_templated_prompt, add_special_tokens=False
+                ):
                     corrected_messages = partial_messages
                 else:
-                    corrected_message_index = len(partial_messages) - 1
-                    partial_templated = adapter_policy.build_partial_templated_prompt(
-                        messages[corrected_message_index], partial_messages[-1]
-                    )
                     policy_choice = chat_policy(
                         partial_messages[:-1]
                         + [
