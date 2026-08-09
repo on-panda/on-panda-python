@@ -18,6 +18,7 @@ from onpanda.response_templates import (
 )
 from onpanda.response_templates.default import CALL_BEGIN_MARKER
 from onpanda.response_templates.qwen3p5 import Qwen3p5ResponseTemplate
+from onpanda.test_utils import get_test_reasoning_tool_calls_partial_msgs1
 
 
 class ContextTokenizer:
@@ -39,6 +40,10 @@ class ContextTokenizer:
 
     def decode(self, tokens, **kwargs):
         return self.tokens_to_text[tuple(tokens)]
+
+
+def test_reasoning_tool_call_default_far_refs_build_expected_partials():
+    partials = get_test_reasoning_tool_calls_partial_msgs1()
 
 
 def test_policy_message_normalizes_api_channels_and_finish_reason():
