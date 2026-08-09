@@ -59,11 +59,12 @@ far_tokenizer_aware_system_prompt_en = """\
 
 
 <|reasoning|>` is a fixed combination, indicating the reasoning model's thinking has ended and the answer begins
-        - `<|reasoning|>` is the escape of the "thinking end" special token
+        - Only this complete fixed combination represents the "thinking end" boundary; an individual `<|reasoning|>` does not, because the leading one indicates that thinking begins
     - `<|tool_calls|>
 
 
 <|tool_calls|>` is a fixed combination, indicating the answer has ended and tool calls begin
+    - When {message.content} is empty, adjacent `<|reasoning|><|tool_calls|>` is the valid connection between these two fixed boundaries, not duplicated markers, and must not be corrected
     - `<|stop|>` indicates the end of content, i.e., the end of the response
     - A marker only shows up when the message has that field, so a message with content only carries no marker at all
     - {message.reasoning}, {message.content} and {message.tool_calls} all belong to the model's output content and need to be evaluated by the correcting model
@@ -204,11 +205,12 @@ far_tokenizer_aware_system_prompt_cn = """\
 
 
 <|reasoning|>` 是固定搭配，表示 reasoning model 的 thinking 结束，开始正式回答问题。
-        - `<|reasoning|>` 是 “thinking end” special token 的转义
+        - 只有上述完整的固定组合才表示 “thinking end” 边界；单个 `<|reasoning|>` 不固定表示 thinking end，因为开头的 `<|reasoning|>` 表示 thinking 开始
     - `<|tool_calls|>
 
 
 <|tool_calls|>` 是固定搭配，表示回答结束，开始调用工具
+    - 当 {message.content} 为空时，相邻的 `<|reasoning|><|tool_calls|>` 是这两组固定边界的合法衔接，不是重复标记，不得对此进行修正
     - `<|stop|>` 表示 content 结束，即回答结束
     - 只有 message 存在对应字段时才会出现对应标记，所以只有 content 字段的 message 不带任何标记
     - {message.reasoning}、{message.content}、{message.tool_calls} 都属于模型输出内容，需要被 correcting model 评估
@@ -317,11 +319,12 @@ far_tokenizer_agnostic_system_prompt_en = """\
 
 
 <|reasoning|>` is a fixed combination, indicating the reasoning model's thinking has ended and the answer begins
-        - `<|reasoning|>` is the escape of the "thinking end" special token
+        - Only this complete fixed combination represents the "thinking end" boundary; an individual `<|reasoning|>` does not, because the leading one indicates that thinking begins
     - `<|tool_calls|>
 
 
 <|tool_calls|>` is a fixed combination, indicating the answer has ended and tool calls begin
+    - When {message.content} is empty, adjacent `<|reasoning|><|tool_calls|>` is the valid connection between these two fixed boundaries, not duplicated markers, and must not be corrected
     - `<|stop|>` indicates the end of content, i.e., the end of the response
     - A marker only shows up when the message has that field, so a message with content only carries no marker at all
     - {message.reasoning}, {message.content} and {message.tool_calls} all belong to the model's output content and need to be evaluated by the correcting model
@@ -429,11 +432,12 @@ far_tokenizer_agnostic_system_prompt_cn = """\
 
 
 <|reasoning|>` 是固定搭配，表示 reasoning model 的 thinking 结束，开始正式回答问题。
-        - `<|reasoning|>` 是 “thinking end” special token 的转义
+        - 只有上述完整的固定组合才表示 “thinking end” 边界；单个 `<|reasoning|>` 不固定表示 thinking end，因为开头的 `<|reasoning|>` 表示 thinking 开始
     - `<|tool_calls|>
 
 
 <|tool_calls|>` 是固定搭配，表示回答结束，开始调用工具
+    - 当 {message.content} 为空时，相邻的 `<|reasoning|><|tool_calls|>` 是这两组固定边界的合法衔接，不是重复标记，不得对此进行修正
     - `<|stop|>` 表示 content 结束，即回答结束
     - 只有 message 存在对应字段时才会出现对应标记，所以只有 content 字段的 message 不带任何标记
     - {message.reasoning}、{message.content}、{message.tool_calls} 都属于模型输出内容，需要被 correcting model 评估

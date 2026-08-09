@@ -14,7 +14,10 @@ import mximport
 with mximport.inpkg():
     from .best_of_n_mixin import BestOfNMixin
     from .panda_score_mixin import PandaScoreMixin
-    from ..test_utils import build_test_tokenizer
+    from ..test_utils import (
+        build_test_tokenizer,
+        get_test_reasoning_tool_calls_msgs1,
+    )
     from ..utils import RESPONSE_ROLES
 
 
@@ -176,6 +179,9 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                         **continuation_kwargs,
                     )["choices"][0]
                     prefix = partial_templated["templated_prompt"]
+                    corrected_result["correction"]["continue_prefix_right40"] = (
+                        prefix if len(prefix) <= 40 else "..." + prefix[-37:]
+                    )
                     policy_message = policy_choice["message"]
                     response_text = policy_message.get("content") or prefix
                     generated_reasoning = policy_message.get(
@@ -385,6 +391,48 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
     def _is_applied_correction(self, correction):
         return bool(correction["messages_location"].get("path_keys"))
 
+    def test(
+        self,
+        chat_policy=None,
+        adapter_policy=None,
+        error_types=(
+            "reasoning",
+            "call_name",
+            "content",
+            "bad_argument_value",
+            "bad_argument_key",
+            "bad_argument_num",
+            "bad_argument_json",
+        ),
+    ):
+        """Run model-backed smoke cases and return their raw results for inspection."""
+        from boxx import mapmt
+
+        if chat_policy is None:
+            defaults = build_correcting_model_with_policy()
+            chat_policy = defaults["chat_policy"]
+            if adapter_policy is None:
+                adapter_policy = defaults["adapter_policy"]
+
+        correcteds = {}
+        print("test error_types:", error_types)
+
+        def f(error_type):
+            msgs, tools = get_test_reasoning_tool_calls_msgs1(error_type=error_type)
+
+            correcteds[error_type] = self.iterative_correction(
+                msgs,
+                chat_policy,
+                rollout_num=3,
+                mode="best_of_n",
+                adapter_policy=adapter_policy,
+                tools=tools,
+                # iid_sampling=True,
+            )
+
+        mapmt(f, error_types, pool=len(error_types))
+        return {"error_type:" + k: correcteds[k] for k in error_types}
+
 
 def build_test_correcting_model(
     chat_correcting=None,
@@ -496,11 +544,16 @@ if __name__ == "__main__":
     from boxx import *
     from onpanda.test_utils import (
         get_test_rejected_msgs1,
-        get_test_reasoning_tool_calls_msgs,
+        get_test_reasoning_tool_calls_msgs1,
     )
 
     _d = build_correcting_model_with_policy()
-    correcting_model, chat_policy = _d["correcting_model"], _d["chat_policy"]
+    correcting_model, chat_policy, adapter_policy = _d["correcting_model"], _d["chat_policy"], _d["adapter_policy"]
+    correcteds = correcting_model.test(
+        chat_policy=chat_policy,
+        adapter_policy=adapter_policy,
+    )
+    tree(correcteds)
 
     msgs = [
         {"role": "user", "content": "5+7="},
@@ -509,7 +562,7 @@ if __name__ == "__main__":
     ]
     msgs = get_test_rejected_msgs1()[0]
     tools = None
-    msgs, tools = get_test_reasoning_tool_calls_msgs()
+    msgs, tools = get_test_reasoning_tool_calls_msgs1()
 
     # msgs = [{"role": "user", "content": "How many `1` in result of 652*8596"},]
 

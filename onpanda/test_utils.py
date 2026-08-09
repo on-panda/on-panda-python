@@ -30,7 +30,7 @@ def get_test_rejected_msgs1():
     return rejected_msgs1, far_text_gt1
 
 
-def get_test_reasoning_tool_calls_msgs():
+def get_test_reasoning_tool_calls_msgs1(error_type="reasoning"):
     """A rejected reasoning tool call response, whose thinking picks the wrong file path."""
     tools = [
         {
@@ -49,20 +49,29 @@ def get_test_reasoning_tool_calls_msgs():
             },
         }
     ]
+    arguments = '{"path": "/tmp/a.txt", "limit": 10}'
+    if "reasoning" in error_type or "content" in error_type or "bad_argument_value" in error_type:
+        arguments = '{"path": "/tmp/b.txt", "limit": 10}'
+    if "bad_argument_key" in error_type:
+        arguments = '{"file": "/tmp/a.txt", "limit": 10}'
+    if "bad_argument_num" in error_type:
+        arguments = '{"path": "/tmp/a.txt"}'
+    if "bad_argument_json" in error_type:
+        arguments = '{"path": /tmp/a.txt, "limit": 10}'
     rejected_msgs = [
         {"role": "user", "content": "Read the first 10 lines of /tmp/a.txt for me."},
         {
             "role": "assistant",
-            "reasoning": "The user wants /tmp/a.txt, so I should read /tmp/b.txt with limit 10.",
-            "content": "",
+            "reasoning": f"The user wants /tmp/a.txt, so I should read /tmp/{'b' if 'reasoning' in error_type else 'a'}.txt with limit 10.",
+            "content": "I will call read_file tool to read `/tmp/b.txt` with limit 10." if 'content' in error_type else "",
             "tool_calls": [
                 {
                     "index": 0,
                     "type": "function",
                     "id": "functions.read_file:0",
                     "function": {
-                        "name": "read_file",
-                        "arguments": '{"path": "/tmp/b.txt", "limit": 10}',
+                        "name": "read-file" if "call_name" in error_type else "read_file",
+                        "arguments": arguments,
                     },
                 }
             ],
