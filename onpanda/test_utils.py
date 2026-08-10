@@ -57,6 +57,8 @@ def get_test_reasoning_tool_calls_msgs1(error_type="reasoning"):
         arguments = '{"file": "/tmp/a.txt", "limit": 10}'
     if "bad_argument_num" in error_type:
         arguments = '{"path": "/tmp/a.txt"}'
+    if "bad_argument_arg2" in error_type:
+        arguments = '{"path": "/tmp/a.txt", "limit": 1}'
     if "bad_argument_json" in error_type:
         arguments = '{"path": /tmp/a.txt, "limit": 10}'
     rejected_msgs = [
@@ -135,6 +137,7 @@ def get_test_reasoning_tool_calls_partial_msgs1():
         "bad_argument_value": build_far_ref("b.txt", "a.txt"),
         "bad_argument_key": build_far_ref('"file"', '"path"'),
         "bad_argument_num": build_far_ref("}" + stop, ', "limit"'),
+        "bad_argument_arg2": build_far_ref("1}" + stop, "10"),
         "bad_argument_json": build_far_ref(
             '/tmp/a.txt, "limit": 10}',
             '"/tmp/a.txt"',
@@ -161,6 +164,13 @@ def get_test_reasoning_tool_calls_partial_msgs1():
             "arguments",
         ],
         "bad_argument_num": [
+            1,
+            "tool_calls",
+            0,
+            "function",
+            "arguments",
+        ],
+        "bad_argument_arg2": [
             1,
             "tool_calls",
             0,
@@ -230,6 +240,11 @@ def get_test_reasoning_tool_calls_partial_msgs1():
     assert bad_argument_num["tool_calls"][0]["function"]["arguments"] == (
         '{"path": "/tmp/a.txt", "limit"'
     ), bad_argument_num
+
+    bad_argument_arg2 = partials["error_type:bad_argument_arg2"]["partial_message"]
+    assert bad_argument_arg2["tool_calls"][0]["function"]["arguments"] == (
+        '{"path": "/tmp/a.txt", "limit": 10'
+    ), bad_argument_arg2
 
     bad_argument_json = partials["error_type:bad_argument_json"]["partial_message"]
     assert bad_argument_json["tool_calls"][0]["function"]["arguments"] == (

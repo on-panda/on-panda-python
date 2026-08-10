@@ -569,7 +569,7 @@ if __name__ == "__main__":
     _d = build_correcting_model_with_policy()
     correcting_model, chat_policy, adapter_policy = _d["correcting_model"], _d["chat_policy"], _d["adapter_policy"]
     
-    if 1:
+    if 0:
         correcteds = correcting_model.test(
             chat_policy=chat_policy,
             adapter_policy=adapter_policy,
@@ -584,7 +584,7 @@ if __name__ == "__main__":
     ]
     msgs = get_test_rejected_msgs1()[0]
     tools = None
-    msgs, tools = get_test_reasoning_tool_calls_msgs1('call_name')
+    msgs, tools = get_test_reasoning_tool_calls_msgs1('bad_argument_arg2')
 
     # msgs = [{"role": "user", "content": "How many `1` in result of 652*8596"},]
 
