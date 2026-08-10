@@ -295,7 +295,7 @@ def parse_tool_calls(tool_calls_text, tools=None):
     return tool_calls
 
 
-def parse_qwen_response_text(text, tools=None):
+def parse_qwen_response_text(text, tools=None, reasoning_content_separator="\n\n"):
     message = dict(role="assistant")
     remaining_text = text
     has_assistant_begin = False
@@ -347,8 +347,8 @@ def parse_qwen_response_text(text, tools=None):
             if reasoning:
                 message["reasoning"] = reasoning
             remaining_text = remaining_text[reasoning_end + len(THINK_END) :]
-            if remaining_text.startswith("\n\n"):
-                remaining_text = remaining_text[2:]
+            if remaining_text.startswith(reasoning_content_separator):
+                remaining_text = remaining_text[len(reasoning_content_separator) :]
             reasoning_closed = True
 
     tool_call_begin = remaining_text.find(TOOL_CALL_BEGIN)
@@ -407,6 +407,10 @@ def normalize_message_tool_calls(message, messages=None):
 
 class Qwen3p5ResponseTemplate:
     """Plain text template: the templated prompt is the model's literal response text."""
+
+    reasoning_content_separator = "\n\n"
+    content_tool_calls_separator = "\n\n"
+    tool_call_separator = "\n"
 
     @staticmethod
     def match(response_template=None):
@@ -474,17 +478,17 @@ class Qwen3p5ResponseTemplate:
             if not is_pure_reasoning_partial:
                 append_raw("\n" + THINK_END)
                 if message.get("content") or tool_calls is not None:
-                    append_raw("\n\n")
+                    append_raw(self.reasoning_content_separator)
         append_mapped(["content"], message.get("content"))
 
         if tool_calls is not None:
             if message.get("content"):
-                append_raw("\n\n")
+                append_raw(self.content_tool_calls_separator)
             if not tool_calls:
                 append_raw(TOOL_CALL_BEGIN)
             for tool_call_position, tool_call in enumerate(tool_calls):
                 if tool_call_position:
-                    append_raw("\n")
+                    append_raw(self.tool_call_separator)
                 function = tool_call.get("function") or {}
                 append_raw(
                     TOOL_CALL_BEGIN
@@ -541,7 +545,9 @@ class Qwen3p5ResponseTemplate:
     def parse(self, text, messages=None, tools=None, finish_reason=None):
         if not text:
             return {}
-        message = parse_qwen_response_text(text, tools)
+        message = parse_qwen_response_text(
+            text, tools, self.reasoning_content_separator
+        )
         if finish_reason:
             message["finish_reason"] = finish_reason
             if finish_reason == "stop" and message.get("tool_calls"):

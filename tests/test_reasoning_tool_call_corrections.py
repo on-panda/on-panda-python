@@ -17,8 +17,17 @@ from onpanda.response_templates import (
     flatten_messages_for_correcting,
 )
 from onpanda.response_templates.default import CALL_BEGIN_MARKER
-from onpanda.response_templates.qwen3p5 import Qwen3p5ResponseTemplate
-from onpanda.test_utils import get_test_reasoning_tool_calls_partial_msgs1
+from onpanda.response_templates.qwen3p5 import (
+    Qwen3p5ResponseTemplate,
+    THINK_END,
+    TOOL_CALL_BEGIN,
+    TOOL_CALL_END,
+)
+from onpanda.response_templates.step3p5 import Step3p5ResponseTemplate
+from onpanda.test_utils import (
+    get_test_reasoning_tool_calls_msgs1,
+    get_test_reasoning_tool_calls_partial_msgs1,
+)
 
 
 class ContextTokenizer:
@@ -44,6 +53,19 @@ class ContextTokenizer:
 
 def test_reasoning_tool_call_default_far_refs_build_expected_partials():
     partials = get_test_reasoning_tool_calls_partial_msgs1()
+    for key, partial_ref in partials.items():
+        error_type = key.removeprefix("error_type:")
+        messages, tools = get_test_reasoning_tool_calls_msgs1(error_type)
+        partial_message = partial_ref["partial_message"]
+        for template in (Qwen3p5ResponseTemplate(), Step3p5ResponseTemplate()):
+            text = template.apply(partial_message)["templated_prompt"]
+            parsed_message = template.parse(
+                text,
+                messages=messages[:-1],
+                tools=tools,
+                finish_reason=partial_message.get("finish_reason"),
+            )
+            assert template.apply(parsed_message)["templated_prompt"] == text
 
 
 def test_policy_message_normalizes_api_channels_and_finish_reason():
@@ -136,7 +158,12 @@ def test_best_of_n_judge_accepts_null_tool_calls():
 
 
 @pytest.mark.parametrize(
-    "template", [DefaultResponseTemplate(), Qwen3p5ResponseTemplate()]
+    "template",
+    [
+        DefaultResponseTemplate(),
+        Qwen3p5ResponseTemplate(),
+        Step3p5ResponseTemplate(),
+    ],
 )
 def test_length_finish_reason_is_not_coerced_to_tool_calls(template):
     message = {
@@ -216,6 +243,38 @@ def test_qwen_template_preserves_open_reasoning_trailing_newline():
     text = template.apply(message)["templated_prompt"]
 
     assert template.parse(text) == message
+
+
+def test_step_template_uses_step_response_separators():
+    template = Step3p5ResponseTemplate()
+    message = {
+        "role": "assistant",
+        "reasoning": "think",
+        "content": "answer",
+        "tool_calls": [
+            {
+                "index": 0,
+                "type": "function",
+                "function": {"name": "read", "arguments": "{}"},
+            },
+            {
+                "index": 1,
+                "type": "function",
+                "function": {"name": "read", "arguments": "{}"},
+            },
+        ],
+        "finish_reason": "tool_calls",
+    }
+    text = template.apply(message)["templated_prompt"]
+
+    assert THINK_END + "\nanswer" + TOOL_CALL_BEGIN in text
+    assert TOOL_CALL_END + TOOL_CALL_BEGIN in text
+    assert (
+        template.apply(template.parse(text, finish_reason="tool_calls"))[
+            "templated_prompt"
+        ]
+        == text
+    )
 
 
 def test_policy_prefix_is_a_prefix_of_the_corrected_token_sequence():

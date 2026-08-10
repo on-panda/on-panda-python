@@ -16,8 +16,9 @@ with mximport.inpkg():
         test_default_response_template,
     )
     from .qwen3p5 import Qwen3p5ResponseTemplate, test_qwen3p5_response_template
+    from .step3p5 import Step3p5ResponseTemplate, test_step3p5_response_template
 
-RESPONSE_TEMPLATE_CLASSES = [Qwen3p5ResponseTemplate]
+RESPONSE_TEMPLATE_CLASSES = [Qwen3p5ResponseTemplate, Step3p5ResponseTemplate]
 FLATTENED_MESSAGE_KEYS = (
     "reasoning",
     "reasoning_content",
@@ -134,6 +135,7 @@ def test_response_templates():
     return dict(
         default=test_default_response_template(),
         qwen3p5=test_qwen3p5_response_template(),
+        step3p5=test_step3p5_response_template(),
     )
 
 
