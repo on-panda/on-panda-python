@@ -1,11 +1,13 @@
+import json
+
 from mximport import inpkg
 
 
 _REASONING_ERROR_TYPES = (
-    "reasoning_end",
-    "reasoning_resume",
-    "content_end",
-    "content_resume",
+    "stop_reasoning",
+    "resume_reasoning",
+    "stop_content",
+    "resume_content",
 )
 
 ERROR_TYPES = _REASONING_ERROR_TYPES + (
@@ -52,28 +54,28 @@ def get_test_rejected_msgs1():
     return rejected_msgs1, far_text_gt1
 
 
-def get_test_reasoning_msgs1(error_type="reasoning_end"):
+def get_test_reasoning_msgs1(error_type="stop_reasoning"):
     """A rejected reasoning response exercising channel-ending and resumption corrections."""
     rejected_message = {"role": "assistant"}
-    if error_type == "reasoning_end":
+    if error_type == "stop_reasoning":
         rejected_message.update(
             reasoning="2 × 5 + 4 = 10 + 4 = 14.wait!wait!wait!wait!",
             content="The answer is 14.",
             finish_reason="stop",
         )
-    elif error_type == "reasoning_resume":
+    elif error_type == "resume_reasoning":
         rejected_message.update(
             reasoning="2 × 5 + 4 = 10 + 4 =",
-            content="",
-            finish_reason="reasoning_end",
+            content="The answer is 14.",
+            finish_reason="stop",
         )
-    elif error_type == "content_end":
+    elif error_type == "stop_content":
         rejected_message.update(
             reasoning="2 × 5 + 4 = 10 + 4 = 14.",
             content="The answer is 14.wait!wait!wait!wait!",
             finish_reason="stop",
         )
-    elif error_type == "content_resume":
+    elif error_type == "resume_content":
         rejected_message.update(
             reasoning="2 × 5 + 4 = 10 + 4 = 14.",
             content="The answer is",
@@ -107,20 +109,20 @@ def get_test_reasoning_partial_msgs_all():
         )
 
     default_far_refs = {
-        "reasoning_end": build_far_ref(
+        "stop_reasoning": build_far_ref(
             "wait!", adapter.special_tokens["reasoning"]
         ),
-        "reasoning_resume": build_far_ref(
+        "resume_reasoning": build_far_ref(
             adapter.response_template.reasoning_end_marker, " 14"
         ),
-        "content_end": build_far_ref("wait!", stop),
-        "content_resume": build_far_ref(stop, " 14"),
+        "stop_content": build_far_ref("wait!", stop),
+        "resume_content": build_far_ref(stop, " 14"),
     }
     expected_location_paths = {
-        "reasoning_end": [1, "reasoning"],
-        "reasoning_resume": [1, "reasoning"],
-        "content_end": [1, "content"],
-        "content_resume": [1, "content"],
+        "stop_reasoning": [1, "reasoning"],
+        "resume_reasoning": [1, "reasoning"],
+        "stop_content": [1, "content"],
+        "resume_content": [1, "content"],
     }
 
     partials = {}
@@ -140,23 +142,23 @@ def get_test_reasoning_partial_msgs_all():
             "partial_message": apply_result["partial_messages"][-1],
         }
 
-    assert partials["error_type:reasoning_end"]["partial_message"] == {
+    assert partials["error_type:stop_reasoning"]["partial_message"] == {
         "role": "assistant",
         "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
         "content": "",
         "finish_reason": "reasoning_end",
     }
-    assert partials["error_type:reasoning_resume"]["partial_message"] == {
+    assert partials["error_type:resume_reasoning"]["partial_message"] == {
         "role": "assistant",
         "reasoning": "2 × 5 + 4 = 10 + 4 = 14",
     }
-    assert partials["error_type:content_end"]["partial_message"] == {
+    assert partials["error_type:stop_content"]["partial_message"] == {
         "role": "assistant",
         "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
         "content": "The answer is 14.",
         "finish_reason": "stop",
     }
-    assert partials["error_type:content_resume"]["partial_message"] == {
+    assert partials["error_type:resume_content"]["partial_message"] == {
         "role": "assistant",
         "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
         "content": "The answer is 14",
@@ -419,6 +421,41 @@ def get_test_partial_msgs_all():
         **get_test_reasoning_partial_msgs_all(),
         **get_test_reasoning_tool_calls_partial_msgs_all(),
     }
+
+
+def print_response_template_partial_messages(response_template):
+    with inpkg():
+        from .correcting_model.far_correction_utils import (
+            FindAndReplaceCorrectionAdapter,
+        )
+
+    adapter = FindAndReplaceCorrectionAdapter(
+        response_template=response_template, max_replacement_tokens=1
+        )
+    for error_key, partial_ref in get_test_partial_msgs_all().items():
+        rejected_message = partial_ref["rejected_messages"][-1]
+        partial_message = partial_ref["partial_message"]
+        partial_templated = response_template.apply(partial_message)[
+            "templated_prompt"
+        ]
+        replacement_tokens_1 = adapter.build_partial_templated_prompt(
+            rejected_message, partial_message
+        )["templated_prompt"]
+        partial_templated, replacement_tokens_1 = (
+            text if len(text) <= 40 else "..." + text[-37:]
+            for text in (partial_templated, replacement_tokens_1)
+        )
+        print('\x1b[31m%s\x1b[0m' % f"\nERROR_TYPE: {error_key.removeprefix('error_type:')}")
+        print("rejected_response:")
+        print(json.dumps(rejected_message, ensure_ascii=False, indent=2)[2:-2])
+        print(
+            f"default_far_ref: {partial_ref['default_far_ref']!r}",
+            f"partial____templated: '''{partial_templated}'''",
+            f"replacement_tokens_1: '''{replacement_tokens_1}'''",
+            sep="\n",
+        )
+        print()
+
 
 if __name__ == "__main__":
     from boxx import *

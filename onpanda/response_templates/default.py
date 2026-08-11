@@ -435,4 +435,10 @@ def test_default_response_template():
 
 
 if __name__ == "__main__":
+    import mximport
+
+    with mximport.inpkg():
+        from ..test_utils import print_response_template_partial_messages
+
     print("test_default_response_template passed:", test_default_response_template())
+    print_response_template_partial_messages(DefaultResponseTemplate())

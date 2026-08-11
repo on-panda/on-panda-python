@@ -95,4 +95,8 @@ def test_step3p5_response_template():
 
 
 if __name__ == "__main__":
+    with mximport.inpkg():
+        from ..test_utils import print_response_template_partial_messages
+
     print("test_step3p5_response_template passed:", test_step3p5_response_template())
+    print_response_template_partial_messages(Step3p5ResponseTemplate())
