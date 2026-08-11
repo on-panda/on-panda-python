@@ -109,6 +109,7 @@ class DefaultResponseTemplate:
     def __init__(self, response_template=None, special_tokens=None):
         special_tokens = special_tokens or {}
         self.config = response_template or {}
+        self.name_or_path = self.config.get("name_or_path")
         self.reasoning_marker = special_tokens.get(
             "reasoning", _special_marker("reasoning")
         )

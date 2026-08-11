@@ -22,6 +22,7 @@ with mximport.inpkg():
 class Step3p5ResponseTemplate(Qwen3p5ResponseTemplate):
     """Step Flash uses Qwen-style XML calls with different response separators."""
 
+    default_name_or_path = "stepfun-ai/Step-3.7-Flash"
     reasoning_content_separator = "\n"
     content_tool_calls_separator = ""
     tool_call_separator = ""

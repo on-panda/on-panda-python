@@ -430,8 +430,10 @@ def print_response_template_partial_messages(response_template):
         )
 
     adapter = FindAndReplaceCorrectionAdapter(
-        response_template=response_template, max_replacement_tokens=1
-        )
+        response_template=response_template,
+        tokenizer=response_template.name_or_path or "utf8_tokenizer",
+        max_replacement_tokens=1,
+    )
     for error_key, partial_ref in get_test_partial_msgs_all().items():
         rejected_message = partial_ref["rejected_messages"][-1]
         partial_message = partial_ref["partial_message"]

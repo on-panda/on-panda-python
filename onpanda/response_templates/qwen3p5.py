@@ -408,6 +408,7 @@ def normalize_message_tool_calls(message, messages=None):
 class Qwen3p5ResponseTemplate:
     """Plain text template: the templated prompt is the model's literal response text."""
 
+    default_name_or_path = "Qwen/Qwen3.6-35B-A3B"
     reasoning_content_separator = "\n\n"
     content_tool_calls_separator = "\n\n"
     tool_call_separator = "\n"
@@ -424,6 +425,7 @@ class Qwen3p5ResponseTemplate:
 
     def __init__(self, response_template=None, special_tokens=None):
         self.config = response_template or {}
+        self.name_or_path = self.config.get("name_or_path") or self.default_name_or_path
         self.reasoning_end_marker = THINK_END
 
     def __str__(self):
