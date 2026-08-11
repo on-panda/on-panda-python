@@ -15,8 +15,9 @@ with mximport.inpkg():
     from .best_of_n_mixin import BestOfNMixin
     from .panda_score_mixin import PandaScoreMixin
     from ..test_utils import (
+        ERROR_TYPES,
         build_test_tokenizer,
-        get_test_reasoning_tool_calls_msgs1,
+        get_test_msgs,
     )
     from ..utils import RESPONSE_ROLES
 
@@ -411,18 +412,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         self,
         chat_policy=None,
         adapter_policy=None,
-        error_types=(
-            "reasoning",
-            "content",
-            "call_name",
-            "bad_argument_value",
-            "bad_argument_key",
-            "bad_argument_num",
-            "bad_argument_arg2",
-            "bad_argument_json",
-            "no_call",
-            "redundant_call",
-        ),
+        error_types=ERROR_TYPES,
     ):
         """Run model-backed smoke cases and return their raw results for inspection."""
         from boxx import mapmt
@@ -437,7 +427,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         print("test error_types:", error_types)
 
         def f(error_type):
-            msgs, tools = get_test_reasoning_tool_calls_msgs1(error_type=error_type)
+            msgs, tools = get_test_msgs(error_type)
 
             correcteds[error_type] = self.iterative_correction(
                 msgs,

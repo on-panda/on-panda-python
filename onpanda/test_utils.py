@@ -1,6 +1,27 @@
 from mximport import inpkg
 
 
+_REASONING_ERROR_TYPES = (
+    "reasoning_end",
+    "reasoning_resume",
+    "content_end",
+    "content_resume",
+)
+
+ERROR_TYPES = _REASONING_ERROR_TYPES + (
+    "bad_reasoning",
+    "bad_content",
+    "call_name",
+    "bad_argument_value",
+    "bad_argument_key",
+    "bad_argument_num",
+    "bad_argument_arg2",
+    "bad_argument_json",
+    "no_call",
+    "redundant_call",
+)
+
+
 def build_test_tokenizer(name_or_path="Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4"):
     with inpkg():
         from .token_level_supervision_utils import _from_pretrained_local_first
@@ -31,7 +52,119 @@ def get_test_rejected_msgs1():
     return rejected_msgs1, far_text_gt1
 
 
-def get_test_reasoning_tool_calls_msgs1(error_type="reasoning"):
+def get_test_reasoning_msgs1(error_type="reasoning_end"):
+    """A rejected reasoning response exercising channel-ending and resumption corrections."""
+    rejected_message = {"role": "assistant"}
+    if error_type == "reasoning_end":
+        rejected_message.update(
+            reasoning="2 × 5 + 4 = 10 + 4 = 14.wait!wait!wait!wait!",
+            content="The answer is 14.",
+            finish_reason="stop",
+        )
+    elif error_type == "reasoning_resume":
+        rejected_message.update(
+            reasoning="2 × 5 + 4 = 10 + 4 =",
+            content="",
+            finish_reason="reasoning_end",
+        )
+    elif error_type == "content_end":
+        rejected_message.update(
+            reasoning="2 × 5 + 4 = 10 + 4 = 14.",
+            content="The answer is 14.wait!wait!wait!wait!",
+            finish_reason="stop",
+        )
+    elif error_type == "content_resume":
+        rejected_message.update(
+            reasoning="2 × 5 + 4 = 10 + 4 = 14.",
+            content="The answer is",
+            finish_reason="stop",
+        )
+    return [
+        {"role": "user", "content": "Calculate 2 × 5 + 4."},
+        rejected_message,
+    ]
+
+
+def get_test_reasoning_partial_msgs_all():
+    """Build reference FAR partials for reasoning and content boundaries."""
+    with inpkg():
+        from .correcting_model.far_correction_utils import (
+            FindAndReplaceCorrectionAdapter,
+        )
+        from .response_templates import DefaultResponseTemplate
+
+    adapter = FindAndReplaceCorrectionAdapter(
+        response_template=DefaultResponseTemplate(),
+        max_replacement_tokens=20,
+    )
+    split = adapter.special_tokens["split"]
+    stop = adapter.special_tokens["stop"]
+
+    def build_far_ref(location_text, replacement_token, location_index=0):
+        return (
+            f"{split}{location_text}{split}{location_index}"
+            f"{split}{replacement_token}{split}"
+        )
+
+    default_far_refs = {
+        "reasoning_end": build_far_ref(
+            "wait!", adapter.special_tokens["reasoning"]
+        ),
+        "reasoning_resume": build_far_ref(
+            adapter.response_template.reasoning_end_marker, " 14"
+        ),
+        "content_end": build_far_ref("wait!", stop),
+        "content_resume": build_far_ref(stop, " 14"),
+    }
+    expected_location_paths = {
+        "reasoning_end": [1, "reasoning"],
+        "reasoning_resume": [1, "reasoning"],
+        "content_end": [1, "content"],
+        "content_resume": [1, "content"],
+    }
+
+    partials = {}
+    for error_type, default_far_ref in default_far_refs.items():
+        messages = get_test_reasoning_msgs1(error_type)
+        apply_result = adapter.apply(messages, default_far_ref)
+        location = apply_result["correction"]["messages_location"]
+        assert location.get("path_keys") == expected_location_paths[error_type], (
+            error_type,
+            location,
+        )
+        assert not location.get("not_found"), (error_type, location)
+        error_key = "error_type:" + error_type
+        partials[error_key] = {
+            "rejected_messages": messages,
+            "default_far_ref": default_far_ref,
+            "partial_message": apply_result["partial_messages"][-1],
+        }
+
+    assert partials["error_type:reasoning_end"]["partial_message"] == {
+        "role": "assistant",
+        "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
+        "content": "",
+        "finish_reason": "reasoning_end",
+    }
+    assert partials["error_type:reasoning_resume"]["partial_message"] == {
+        "role": "assistant",
+        "reasoning": "2 × 5 + 4 = 10 + 4 = 14",
+    }
+    assert partials["error_type:content_end"]["partial_message"] == {
+        "role": "assistant",
+        "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
+        "content": "The answer is 14.",
+        "finish_reason": "stop",
+    }
+    assert partials["error_type:content_resume"]["partial_message"] == {
+        "role": "assistant",
+        "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
+        "content": "The answer is 14",
+    }
+    return partials
+
+
+def get_test_reasoning_tool_calls_msgs1(error_type="bad_reasoning"):
     """A rejected reasoning tool call response, whose thinking picks the wrong file path."""
     tools = [
         {
@@ -51,29 +184,36 @@ def get_test_reasoning_tool_calls_msgs1(error_type="reasoning"):
         }
     ]
     arguments = '{"path": "/tmp/a.txt", "limit": 10}'
-    if "reasoning" in error_type or "content" in error_type or "bad_argument_value" in error_type:
+    if error_type in ("bad_reasoning", "bad_content", "bad_argument_value"):
         arguments = '{"path": "/tmp/b.txt", "limit": 10}'
-    if "bad_argument_key" in error_type:
+    elif error_type == "bad_argument_key":
         arguments = '{"file": "/tmp/a.txt", "limit": 10}'
-    if "bad_argument_num" in error_type:
+    elif error_type == "bad_argument_num":
         arguments = '{"path": "/tmp/a.txt"}'
-    if "bad_argument_arg2" in error_type:
+    elif error_type == "bad_argument_arg2":
         arguments = '{"path": "/tmp/a.txt", "limit": 1}'
-    if "bad_argument_json" in error_type:
+    elif error_type == "bad_argument_json":
         arguments = '{"path": /tmp/a.txt, "limit": 10}'
     rejected_msgs = [
         {"role": "user", "content": "Read the first 10 lines of /tmp/a.txt for me."},
         {
             "role": "assistant",
-            "reasoning": f"The user wants /tmp/a.txt, so I should read /tmp/{'b' if 'reasoning' in error_type else 'a'}.txt with limit 10.",
-            "content": "I will call read_file tool to read `/tmp/b.txt` with limit 10." if 'content' in error_type else "",
+            "reasoning": (
+                f"The user wants /tmp/a.txt, so I should read /tmp/"
+                f"{'b' if error_type == 'bad_reasoning' else 'a'}.txt with limit 10."
+            ),
+            "content": (
+                "I will call read_file tool to read `/tmp/b.txt` with limit 10."
+                if error_type == "bad_content"
+                else ""
+            ),
             "tool_calls": [
                 {
                     "index": 0,
                     "type": "function",
                     "id": "functions.read_file:0",
                     "function": {
-                        "name": "read" if "call_name" in error_type else "read_file",
+                        "name": "read" if error_type == "call_name" else "read_file",
                         "arguments": arguments,
                     },
                 }
@@ -81,11 +221,11 @@ def get_test_reasoning_tool_calls_msgs1(error_type="reasoning"):
             "finish_reason": "tool_calls",
         },
     ]
-    if "no_call" in error_type:
+    if error_type == "no_call":
         del rejected_msgs[-1]["tool_calls"]
         rejected_msgs[-1]["content"] = "I will call read_file tool to read `/tmp/a.txt` with limit 10."
         rejected_msgs[-1]["finish_reason"] = "stop"
-    if "redundant_call" in error_type:
+    if error_type == "redundant_call":
         rejected_msgs[-1]["tool_calls"].append({
                     "index": 1,
                     "type": "function",
@@ -98,7 +238,7 @@ def get_test_reasoning_tool_calls_msgs1(error_type="reasoning"):
     return rejected_msgs, tools
 
 
-def get_test_reasoning_tool_calls_partial_msgs1():
+def get_test_reasoning_tool_calls_partial_msgs_all():
     """Build reference FAR partials in the canonical default response template."""
     with inpkg():
         from .correcting_model.far_correction_utils import (
@@ -128,8 +268,8 @@ def get_test_reasoning_tool_calls_partial_msgs1():
         )
 
     default_far_refs = {
-        "reasoning": build_far_ref("b.txt", "a.txt"),
-        "content": build_far_ref("`/tmp/b.txt`", "`/tmp/a.txt`"),
+        "bad_reasoning": build_far_ref("b.txt", "a.txt"),
+        "bad_content": build_far_ref("`/tmp/b.txt`", "`/tmp/a.txt`"),
         "call_name": build_far_ref(
             "read\n" + call_arguments_marker,
             "read_file",
@@ -146,8 +286,8 @@ def get_test_reasoning_tool_calls_partial_msgs1():
         "redundant_call": build_far_ref('\n' + CALL_BEGIN_MARKER, stop, -1),
     }
     expected_location_paths = {
-        "reasoning": [1, "reasoning"],
-        "content": [1, "content"],
+        "bad_reasoning": [1, "reasoning"],
+        "bad_content": [1, "content"],
         "call_name": [1, "tool_calls", 0, "function", "name"],
         "bad_argument_value": [
             1,
@@ -205,18 +345,20 @@ def get_test_reasoning_tool_calls_partial_msgs1():
             location,
         )
         assert not location.get("not_found"), (error_type, location)
-        partials["error_type:" + error_type] = {
+        error_key = "error_type:" + error_type
+        partials[error_key] = {
+            "rejected_messages": messages,
             "default_far_ref": default_far_ref,
             "partial_message": apply_result["partial_messages"][-1],
         }
 
-    reasoning = partials["error_type:reasoning"]["partial_message"]
+    reasoning = partials["error_type:bad_reasoning"]["partial_message"]
     assert reasoning == {
         "role": "assistant",
         "reasoning": "The user wants /tmp/a.txt, so I should read /tmp/a.txt",
     }, reasoning
 
-    content = partials["error_type:content"]["partial_message"]
+    content = partials["error_type:bad_content"]["partial_message"]
     assert content["content"] == "I will call read_file tool to read `/tmp/a.txt`"
     assert "tool_calls" not in content and "finish_reason" not in content, content
 
@@ -264,3 +406,20 @@ def get_test_reasoning_tool_calls_partial_msgs1():
     assert redundant_call["finish_reason"] == "tool_calls", redundant_call
 
     return partials
+
+
+def get_test_msgs(error_type):
+    if error_type in _REASONING_ERROR_TYPES:
+        return get_test_reasoning_msgs1(error_type), None
+    return get_test_reasoning_tool_calls_msgs1(error_type)
+
+
+def get_test_partial_msgs_all():
+    return {
+        **get_test_reasoning_partial_msgs_all(),
+        **get_test_reasoning_tool_calls_partial_msgs_all(),
+    }
+
+if __name__ == "__main__":
+    from boxx import *
+    partial_msgs_all = get_test_partial_msgs_all()

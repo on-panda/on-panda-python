@@ -34,8 +34,9 @@ from onpanda.response_templates.qwen3p5 import (
 from onpanda.response_templates.step3p5 import Step3p5ResponseTemplate
 from onpanda.response_templates.partial_json import parse_partial_json_object
 from onpanda.test_utils import (
-    get_test_reasoning_tool_calls_msgs1,
-    get_test_reasoning_tool_calls_partial_msgs1,
+    ERROR_TYPES,
+    get_test_msgs,
+    get_test_partial_msgs_all,
 )
 
 
@@ -60,11 +61,12 @@ class ContextTokenizer:
         return self.tokens_to_text[tuple(tokens)]
 
 
-def test_reasoning_tool_call_default_far_refs_build_expected_partials():
-    partials = get_test_reasoning_tool_calls_partial_msgs1()
+def test_default_far_refs_build_expected_partials():
+    partials = get_test_partial_msgs_all()
+    assert tuple(key.removeprefix("error_type:") for key in partials) == ERROR_TYPES
     for key, partial_ref in partials.items():
         error_type = key.removeprefix("error_type:")
-        messages, tools = get_test_reasoning_tool_calls_msgs1(error_type)
+        messages, tools = get_test_msgs(error_type)
         partial_message = partial_ref["partial_message"]
         for template in (Qwen3p5ResponseTemplate(), Step3p5ResponseTemplate()):
             text = template.apply(partial_message)["templated_prompt"]
