@@ -135,13 +135,13 @@ class DefaultResponseTemplate:
 
         def append_mapped(key_path, text):
             nonlocal templated_prompt
-            if not text:
-                return
             key_path_prompt_mapping.append(
                 dict(
                     key_path=key_path,
                     text_start=len(templated_prompt),
                     text_end=len(templated_prompt) + len(text),
+                    channel_start=0,
+                    channel_end=len(text),
                 )
             )
             templated_prompt += text
@@ -159,7 +159,8 @@ class DefaultResponseTemplate:
             )
             if not is_thinking_open:
                 append_raw(self.reasoning_end_marker)
-        append_mapped(["content"], content_to_text(message.get("content")))
+        if "content" in message:
+            append_mapped(["content"], content_to_text(message["content"]))
         if message.get("tool_calls") is not None:
             append_raw(self.tool_calls_begin_marker)
             for tool_call_index, tool_call in enumerate(message["tool_calls"]):

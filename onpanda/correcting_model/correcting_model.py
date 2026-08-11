@@ -418,6 +418,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
             "bad_argument_value",
             "bad_argument_key",
             "bad_argument_num",
+            "bad_argument_arg2",
             "bad_argument_json",
             "no_call",
             "redundant_call",
@@ -542,6 +543,8 @@ def build_correcting_model_with_policy(reasoning=True):
         extra_parameters = json5.loads(extra_parameters_json5_str)
         new_kwargs.update(extra_parameters)
     chat_policy.default_kwargs.update(new_kwargs)
+    if os.environ.get("POLICY_API_BASE_URL"):
+        chat_policy = mxlm.ChatAPI(os.environ.get("POLICY_API_BASE_URL"), os.environ.get("POLICY_API_KEY"), **chat_policy.default_kwargs)
     # The policy renders its own response template, which is usually named after the policy, and
     # its own tokenizer decides how far a correction may reach into the continuation prefix.
     adapter_policy = onpanda.FindAndReplaceCorrectionAdapter(
@@ -569,7 +572,7 @@ if __name__ == "__main__":
     _d = build_correcting_model_with_policy()
     correcting_model, chat_policy, adapter_policy = _d["correcting_model"], _d["chat_policy"], _d["adapter_policy"]
     
-    if 0:
+    if 10:
         correcteds = correcting_model.test(
             chat_policy=chat_policy,
             adapter_policy=adapter_policy,

@@ -185,7 +185,11 @@ class FindAndReplaceVerifier:
         addressable, including reasoning end and each tool call end.
         """
         apply_result = self.response_template.apply(messages[message_index])
-        return dict(message_index=message_index, **apply_result)
+        return dict(
+            message_index=message_index,
+            message=messages[message_index],
+            **apply_result,
+        )
 
     def _iter_assistant_templated_prompts(self, messages):
         for message_index, message in enumerate(messages):

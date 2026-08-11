@@ -14,7 +14,11 @@ with mximport.inpkg():
     from .correcting_model.far_correction_utils import (
         FindAndReplaceCorrectionAdapter,
     )
-    from .response_templates import FLATTENED_MESSAGE_KEYS, build_messages_location
+    from .response_templates import (
+        FLATTENED_MESSAGE_KEYS,
+        build_messages_location,
+        content_to_text,
+    )
     from .utils import HASH_TEMPLATE_PREFIX, HASH_TEMPLATE_REGEX, RESPONSE_ROLES
     from .dump_utils import dump_panda_json
 
@@ -385,14 +389,23 @@ class PandaTree:
             message_index = len(messages) - 1
             if response_template is not None:
                 return dict(
-                    message_index=message_index, **response_template.apply(messages[-1])
+                    message_index=message_index,
+                    message=messages[-1],
+                    **response_template.apply(messages[-1]),
                 )
             content = mxlm.get_text_content(messages[-1]["content"])
             return dict(
                 message_index=message_index,
+                message=messages[-1],
                 templated_prompt=content,
                 key_path_prompt_mapping=[
-                    dict(key_path=["content"], text_start=0, text_end=len(content))
+                    dict(
+                        key_path=["content"],
+                        text_start=0,
+                        text_end=len(content),
+                        channel_start=0,
+                        channel_end=len(content),
+                    )
                 ],
             )
 
@@ -423,6 +436,17 @@ class PandaTree:
             token_level_info["rejected_messages_location"] = build_messages_location(
                 rejected_applied, token_level_info["rejected_text_unicode_range"][0]
             )
+            if response_template is not None:
+                # Keep the source channel because template parsing may normalize JSON formatting.
+                location_path = token_level_info["rejected_messages_location"][
+                    "path_keys"
+                ]
+                rejected_channel = rejected_msgs[location_path[0]]
+                for key in location_path[1:]:
+                    rejected_channel = rejected_channel[key]
+                token_level_info["rejected_channel_text"] = content_to_text(
+                    rejected_channel
+                )
             # The chunks below are the flattened text, so the flattened channels must go.
             chosen_message = {
                 key: value

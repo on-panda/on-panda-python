@@ -439,18 +439,30 @@ class Qwen3p5ResponseTemplate:
             nonlocal templated_prompt
             templated_prompt += text
 
-        def append_mapped(key_path, text):
+        def append_mapped(
+            key_path,
+            text,
+            channel_start=0,
+            channel_end=None,
+            channel_boundaries=None,
+        ):
             nonlocal templated_prompt
-            if not text:
-                return
-            key_path_prompt_mapping.append(
-                dict(
-                    key_path=key_path,
-                    text_start=len(templated_prompt),
-                    text_end=len(templated_prompt) + len(text),
-                )
+            mapping = dict(
+                key_path=key_path,
+                text_start=len(templated_prompt),
+                text_end=len(templated_prompt) + len(text),
+                channel_start=channel_start,
+                channel_end=(
+                    channel_start + len(text) if channel_end is None else channel_end
+                ),
             )
+            if channel_boundaries is not None:
+                mapping["channel_boundaries"] = channel_boundaries
+            key_path_prompt_mapping.append(mapping)
             templated_prompt += text
+
+        def append_anchor(key_path, channel_index):
+            append_mapped(key_path, "", channel_index, channel_index)
 
         finish_reason = message.get("finish_reason")
         is_partial = finish_reason not in COMPLETE_FINISH_REASONS
@@ -474,12 +486,16 @@ class Qwen3p5ResponseTemplate:
             not has_response_body and is_partial and finish_reason != REASONING_END
         ):
             append_raw(THINK_BEGIN + "\n")
-            append_mapped(["reasoning"], reasoning)
+            if "reasoning" in message:
+                append_mapped(["reasoning"], reasoning)
             if not is_pure_reasoning_partial:
                 append_raw("\n" + THINK_END)
                 if message.get("content") or tool_calls is not None:
                     append_raw(self.reasoning_content_separator)
-        append_mapped(["content"], message.get("content"))
+        elif "reasoning" in message:
+            append_anchor(["reasoning"], 0)
+        if "content" in message:
+            append_mapped(["content"], message["content"] or "")
 
         if tool_calls is not None:
             if message.get("content"):
@@ -490,43 +506,68 @@ class Qwen3p5ResponseTemplate:
                 if tool_call_position:
                     append_raw(self.tool_call_separator)
                 function = tool_call.get("function") or {}
-                append_raw(
-                    TOOL_CALL_BEGIN
-                    + "\n"
-                    + FUNCTION_BEGIN
-                    + (function.get("name") or "")
-                )
+                append_raw(TOOL_CALL_BEGIN + "\n" + FUNCTION_BEGIN)
+                function_name_path = [
+                    "tool_calls",
+                    tool_call_position,
+                    "function",
+                    "name",
+                ]
+                if function.get("name"):
+                    append_mapped(function_name_path, function["name"])
+                elif "name" in function:
+                    append_anchor(function_name_path, 0)
                 if "arguments" not in function:
                     continue
                 append_raw(">\n")
                 arguments = function["arguments"]
+                arguments_path = [
+                    "tool_calls",
+                    tool_call_position,
+                    "function",
+                    "arguments",
+                ]
+                append_anchor(arguments_path, 0)
                 parsed_arguments = parse_partial_json_object(arguments)
                 is_last_partial_tool_call = (
                     is_partial and tool_call_position == len(message["tool_calls"]) - 1
                 )
                 if parsed_arguments:
                     for parameter in parsed_arguments["entries"]:
-                        append_raw(PARAMETER_BEGIN + parameter["name"])
+                        append_raw(PARAMETER_BEGIN)
+                        append_mapped(
+                            arguments_path,
+                            parameter["name"],
+                            parameter["name_start"],
+                            parameter["name_end"],
+                            parameter["name_offsets"],
+                        )
                         if not parameter["name_complete"]:
                             break
                         append_raw(">\n")
                         if "value" not in parameter:
                             break
                         append_mapped(
-                            ["tool_calls", tool_call_position, "function", "arguments"],
+                            arguments_path,
                             (
                                 _argument_value_to_text(parameter["value"])
                                 if parameter["complete"]
                                 else parameter["value"]
                             ),
+                            parameter["value_start"],
+                            parameter["value_end"],
+                            parameter.get("value_offsets"),
                         )
                         if parameter["complete"]:
                             append_raw("\n" + PARAMETER_END + "\n")
                 else:
                     append_mapped(
-                        ["tool_calls", tool_call_position, "function", "arguments"],
+                        arguments_path,
                         arguments,
+                        0,
+                        len(arguments),
                     )
+                append_anchor(arguments_path, len(arguments))
 
                 function_complete = not is_last_partial_tool_call or (
                     parsed_arguments and parsed_arguments["complete"]

@@ -14,6 +14,7 @@ with mximport.inpkg():
     from ..token_level_supervision_utils import build_tokenizer
     from .verifier import FindAndReplaceVerifier
     from ..response_templates import (
+        build_messages_location,
         build_templated_char_index,
         flatten_messages_for_correcting,
     )
@@ -235,6 +236,11 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         target_char_index = build_templated_char_index(
             templated_location, messages_location
         )
+        # Structured positions inside a JSON escape or template scaffold project to a
+        # canonical template boundary; keep the persisted context consistent with that snap.
+        messages_location.update(
+            build_messages_location(templated_location, target_char_index)
+        )
         location_suffix = templated_location["templated_prompt"][target_char_index:]
         suffix_tokens = self.tokenizer.encode(location_suffix, add_special_tokens=False)
         decodable_num = 0
@@ -329,6 +335,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         token_level_msg = messages[-1]
         token_level_info = token_level_msg["token_level"]
         rejected_content_chunks = token_level_info.pop("rejected_content")
+        rejected_channel_text = token_level_info.pop("rejected_channel_text", None)
         token_level_info["chosen_content"] = token_level_msg["content"]
 
         rejected_content_str = mxlm.get_text_content(rejected_content_chunks)
@@ -341,6 +348,15 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             ignore_loss=True,
             token_level=token_level_info,
         )
+        if rejected_channel_text is not None:
+            channel = rejected_msg
+            for key in token_level_info["rejected_messages_location"]["path_keys"][
+                1:-1
+            ]:
+                channel = channel[key]
+            channel[token_level_info["rejected_messages_location"]["path_keys"][-1]] = (
+                rejected_channel_text
+            )
         rejected_msg.setdefault(
             "finish_reason", token_level_info.get("rejected_finish_reason", "")
         )

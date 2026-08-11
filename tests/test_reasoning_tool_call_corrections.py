@@ -1,9 +1,12 @@
+import json
+from copy import deepcopy
 from types import MethodType, SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from onpanda import FindAndReplaceCorrectionAdapter
+from onpanda import utf8_tokenizer
 from onpanda.correcting_model.best_of_n_mixin import (
     test_best_of_n_judge_prompt as run_best_of_n_judge_prompt_test,
 )
@@ -12,18 +15,24 @@ from onpanda.correcting_model.correcting_model import (
     build_test_correcting_model,
     take_policy_message,
 )
+from onpanda.parser import PandaTree
 from onpanda.response_templates import (
     DefaultResponseTemplate,
+    build_messages_location,
+    build_templated_char_index,
     flatten_messages_for_correcting,
 )
 from onpanda.response_templates.default import CALL_BEGIN_MARKER
 from onpanda.response_templates.qwen3p5 import (
+    FUNCTION_BEGIN,
+    PARAMETER_BEGIN,
     Qwen3p5ResponseTemplate,
     THINK_END,
     TOOL_CALL_BEGIN,
     TOOL_CALL_END,
 )
 from onpanda.response_templates.step3p5 import Step3p5ResponseTemplate
+from onpanda.response_templates.partial_json import parse_partial_json_object
 from onpanda.test_utils import (
     get_test_reasoning_tool_calls_msgs1,
     get_test_reasoning_tool_calls_partial_msgs1,
@@ -66,6 +75,226 @@ def test_reasoning_tool_call_default_far_refs_build_expected_partials():
                 finish_reason=partial_message.get("finish_reason"),
             )
             assert template.apply(parsed_message)["templated_prompt"] == text
+
+
+@pytest.mark.parametrize(
+    "template", [Qwen3p5ResponseTemplate(), Step3p5ResponseTemplate()]
+)
+def test_structured_tool_call_locations_map_each_channel(template):
+    arguments = '{"path": "/tmp/a.txt", "limit": 1}'
+    message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"function": {"name": "read_file", "arguments": arguments}}],
+    }
+    applied = dict(template.apply(message), message_index=1, message=message)
+    prompt = applied["templated_prompt"]
+    arguments_path = ["tool_calls", 0, "function", "arguments"]
+    cases = [
+        (
+            ["tool_calls", 0, "function", "name"],
+            prompt.index(FUNCTION_BEGIN) + len(FUNCTION_BEGIN) + 2,
+            2,
+            "read_file",
+        ),
+        (
+            arguments_path,
+            prompt.index(PARAMETER_BEGIN + "path>") + len(PARAMETER_BEGIN),
+            arguments.index("path"),
+            arguments,
+        ),
+        (
+            arguments_path,
+            prompt.index("\n/tmp/a.txt\n") + 1,
+            arguments.index("/tmp/a.txt"),
+            arguments,
+        ),
+        (
+            arguments_path,
+            prompt.index(PARAMETER_BEGIN + "limit>") + len(PARAMETER_BEGIN),
+            arguments.index("limit"),
+            arguments,
+        ),
+        (
+            arguments_path,
+            prompt.index("\n1\n") + 1,
+            arguments.rindex("1"),
+            arguments,
+        ),
+    ]
+    for expected_path, templated_index, expected_char_index, channel_text in cases:
+        location = build_messages_location(applied, templated_index)
+        assert location["path_keys"] == [1] + expected_path
+        assert location["char_index"] == expected_char_index
+        assert (
+            location["left5"]
+            == channel_text[max(0, expected_char_index - 5) : expected_char_index]
+        )
+        assert (
+            location["right5"]
+            == channel_text[expected_char_index : expected_char_index + 5]
+        )
+        assert build_templated_char_index(applied, location) == templated_index
+
+
+def test_structured_tool_call_location_translates_from_default_template():
+    arguments = '{"path": "/tmp/a.txt", "limit": 1}'
+    message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"function": {"name": "read_file", "arguments": arguments}}],
+    }
+    default_applied = dict(
+        DefaultResponseTemplate().apply(message), message_index=1, message=message
+    )
+    name_mapping = next(
+        mapping
+        for mapping in default_applied["key_path_prompt_mapping"]
+        if mapping["key_path"] == ["tool_calls", 0, "function", "name"]
+    )
+    arguments_mapping = next(
+        mapping
+        for mapping in default_applied["key_path_prompt_mapping"]
+        if mapping["key_path"] == ["tool_calls", 0, "function", "arguments"]
+    )
+
+    for template in (Qwen3p5ResponseTemplate(), Step3p5ResponseTemplate()):
+        applied = dict(template.apply(message), message_index=1, message=message)
+        for default_index in [
+            name_mapping["text_start"] + 2,
+            arguments_mapping["text_start"],
+            default_applied["templated_prompt"].rindex("1"),
+            arguments_mapping["text_end"],
+        ]:
+            default_location = build_messages_location(default_applied, default_index)
+            templated_index = build_templated_char_index(applied, default_location)
+            assert build_messages_location(applied, templated_index) == default_location
+
+        empty_message = {
+            "role": "assistant",
+            "tool_calls": [{"function": {"name": "read_file", "arguments": "{}"}}],
+        }
+        empty_applied = dict(
+            template.apply(empty_message), message_index=1, message=empty_message
+        )
+        empty_location = {
+            "path_keys": [1, "tool_calls", 0, "function", "arguments"],
+            "char_index": 2,
+            "left5": "{}",
+            "right5": "",
+        }
+        templated_index = build_templated_char_index(empty_applied, empty_location)
+        assert build_messages_location(empty_applied, templated_index) == empty_location
+
+
+def test_structured_tool_call_location_aligns_escaped_argument_text():
+    arguments = '{"text": "a\\nMID\\nb", "limit": 1}'
+    message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"function": {"name": "read", "arguments": arguments}}],
+    }
+    template = Qwen3p5ResponseTemplate()
+    applied = dict(template.apply(message), message_index=1, message=message)
+    templated_index = applied["templated_prompt"].index("a\nMID\nb") + 2
+    location = build_messages_location(applied, templated_index)
+
+    assert location["path_keys"] == [1, "tool_calls", 0, "function", "arguments"]
+    assert location["char_index"] == arguments.index("\\") + 2
+    assert location["right5"] == arguments[location["char_index"] :][:5]
+    inverse_index = build_templated_char_index(applied, location)
+    assert inverse_index == templated_index
+
+
+def test_token_level_tool_location_preserves_raw_argument_channel():
+    rejected_arguments = json.dumps(
+        {"path": "/tmp/a.txt", "limit": 1}, separators=(",", ":")
+    )
+    chosen_arguments = json.dumps(
+        {"path": "/tmp/a.txt", "limit": 10}, separators=(",", ":")
+    )
+    rejected_message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "type": "function",
+                "index": 0,
+                "id": "functions.read_file:0",
+                "function": {
+                    "name": "read_file",
+                    "arguments": rejected_arguments,
+                },
+            }
+        ],
+        "finish_reason": "tool_calls",
+    }
+    chosen_message = deepcopy(rejected_message)
+    chosen_message["tool_calls"][0]["function"]["arguments"] = chosen_arguments
+    panda_tree = PandaTree(
+        {
+            "version": "2.0",
+            "update_time": 0,
+            "dialogs": {
+                "1": {
+                    "messages": [{"role": "user", "content": "q"}, rejected_message],
+                    "annotate": {"is_good": False},
+                    "operations": [{"is_new_generated": True}],
+                },
+                "2": {
+                    "messages": [{"role": "user", "content": "q"}, chosen_message],
+                    "annotate": {"is_good": True},
+                    "operations": [{"parent": "1"}],
+                },
+            },
+        },
+        tokenizer=utf8_tokenizer,
+    )
+    template = Qwen3p5ResponseTemplate()
+    token_level = panda_tree.build_token_level_supervision_data_v1(
+        tokenizer=utf8_tokenizer, response_template=template
+    )[0]
+    assert token_level[-1]["token_level"]["rejected_channel_text"] == rejected_arguments
+
+    adapter = FindAndReplaceCorrectionAdapter(
+        tokenizer=utf8_tokenizer,
+        response_template=template,
+        max_replacement_tokens=20,
+    )
+    correction_data = adapter.build_correction_data_from_token_level(
+        token_level, is_good=False
+    )
+    location = correction_data[-1]["correction"]["messages_location"]
+    assert location["path_keys"] == [1, "tool_calls", 0, "function", "arguments"]
+    assert location["char_index"] == rejected_arguments.index("1") + 1
+    assert location["right5"] == rejected_arguments[location["char_index"] :][:5]
+
+
+def test_partial_json_string_boundaries_reject_closed_dangling_escape():
+    assert parse_partial_json_object('{"x":"a\\u12"}') is None
+    parsed = parse_partial_json_object('{"x":"a\\u1234"}')
+    assert parsed["entries"][0]["value_offsets"] == [6, 7, 13]
+
+
+def test_structured_location_snaps_inside_json_escape_to_left_boundary():
+    arguments = '{"x":"a\\nb"}'
+    message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"function": {"name": "f", "arguments": arguments}}],
+    }
+    template = Qwen3p5ResponseTemplate()
+    applied = dict(template.apply(message), message_index=1, message=message)
+    raw_escape_index = arguments.index("\\") + 1
+    location = {
+        "path_keys": [1, "tool_calls", 0, "function", "arguments"],
+        "char_index": raw_escape_index,
+    }
+    templated_index = build_templated_char_index(applied, location)
+    assert templated_index == applied["templated_prompt"].index("a\n") + 1
+    assert build_messages_location(applied, templated_index)[
+        "char_index"
+    ] == arguments.index("\\")
 
 
 def test_policy_message_normalizes_api_channels_and_finish_reason():

@@ -6,6 +6,8 @@ text, `parse` turns that text back into a structured message. Ported from onPand
 `src/utils/responseTemplates`, targeted at iterative correction instead of view tokens.
 """
 
+from bisect import bisect_left
+
 import mximport
 
 with mximport.inpkg():
@@ -42,27 +44,59 @@ def build_response_template(response_template=None, special_tokens=None):
     return DefaultResponseTemplate(response_template, special_tokens=special_tokens)
 
 
+def _get_channel_text(templated_location, key_path):
+    channel = templated_location["message"]
+    for key in key_path:
+        channel = channel[key]
+    return content_to_text(channel)
+
+
 def build_messages_location(templated_location, templated_char_index):
     """
     Convert a template space position into a structured messages_location, the only anchor
     independent of both tokenizer and response template, so reward and old data keep comparable.
-    A position landing on template scaffolding snaps to the end of the channel it follows.
+    Scaffolding after a mapped fragment snaps to that fragment's end, while leading
+    scaffolding snaps to the first fragment's start.  When mappings share a template
+    position, the later mapping owns that boundary.
 
-    `templated_location` is an `apply` result plus the `message_index` it came from.
+    `templated_location` is an `apply` result plus its `message_index` and source `message`.
+    Mapping channel ranges are half-open offsets in the source value selected by `key_path`.
+    `channel_boundaries`, when present, contains one absolute channel index per rendered
+    text boundary and is monotonically nondecreasing.  A non-bijective normalized fragment
+    without exact boundaries snaps its interior to the source fragment's start.
     """
     key_path = ["content"]
-    channel_text = ""
     char_index = 0
-    for mapping in templated_location["key_path_prompt_mapping"]:
+    selected_mapping = None
+    mappings = templated_location["key_path_prompt_mapping"]
+    for mapping in mappings:
         if templated_char_index < mapping["text_start"]:
             break
+        selected_mapping = mapping
         key_path = mapping["key_path"]
-        channel_text = templated_location["templated_prompt"][
-            mapping["text_start"] : mapping["text_end"]
-        ]
-        char_index = (
-            min(templated_char_index, mapping["text_end"]) - mapping["text_start"]
-        )
+    if selected_mapping is None and mappings:
+        selected_mapping = mappings[0]
+        key_path = selected_mapping["key_path"]
+        char_index = selected_mapping["channel_start"]
+    elif selected_mapping is not None:
+        channel_start = selected_mapping["channel_start"]
+        channel_text = _get_channel_text(templated_location, key_path)
+        channel_end = selected_mapping["channel_end"]
+        if templated_char_index >= selected_mapping["text_end"]:
+            char_index = channel_end
+        else:
+            rendered_text = templated_location["templated_prompt"][
+                selected_mapping["text_start"] : selected_mapping["text_end"]
+            ]
+            source_text = channel_text[channel_start:channel_end]
+            rendered_offset = templated_char_index - selected_mapping["text_start"]
+            if "channel_boundaries" in selected_mapping:
+                char_index = selected_mapping["channel_boundaries"][rendered_offset]
+            elif rendered_text == source_text:
+                char_index = channel_start + rendered_offset
+            else:
+                char_index = channel_start
+    channel_text = _get_channel_text(templated_location, key_path)
     return dict(
         path_keys=[templated_location["message_index"]] + list(key_path),
         char_index=char_index,
@@ -72,7 +106,7 @@ def build_messages_location(templated_location, templated_char_index):
 
 
 def build_templated_char_index(templated_location, messages_location):
-    """Inverse of build_messages_location, to cut a structured location in template space."""
+    """Project a structured location into template space using the mapping's snap rules."""
     key_path = list(messages_location["path_keys"][1:])
     mappings = [
         mapping
@@ -83,7 +117,36 @@ def build_templated_char_index(templated_location, messages_location):
         f"messages_location {messages_location} has no channel in templated prompt: "
         f"{templated_location['key_path_prompt_mapping']}"
     )
-    return mappings[0]["text_start"] + messages_location["char_index"]
+    mapping = mappings[0]
+    for candidate in mappings:
+        if messages_location["char_index"] < candidate["channel_start"]:
+            break
+        mapping = candidate
+    channel_start = mapping["channel_start"]
+    channel_text = _get_channel_text(templated_location, key_path)
+    channel_end = mapping["channel_end"]
+    source_text = channel_text[channel_start:channel_end]
+    rendered_text = templated_location["templated_prompt"][
+        mapping["text_start"] : mapping["text_end"]
+    ]
+    if messages_location["char_index"] <= channel_start:
+        return mapping["text_start"]
+    if messages_location["char_index"] >= channel_end:
+        return mapping["text_end"]
+    if "channel_boundaries" in mapping:
+        boundary_index = bisect_left(
+            mapping["channel_boundaries"], messages_location["char_index"]
+        )
+        if (
+            mapping["channel_boundaries"][boundary_index]
+            != messages_location["char_index"]
+        ):
+            # A cut inside one JSON escape belongs before its decoded character.
+            boundary_index -= 1
+        return mapping["text_start"] + boundary_index
+    if source_text == rendered_text:
+        return mapping["text_start"] + messages_location["char_index"] - channel_start
+    return mapping["text_start"]
 
 
 def flatten_messages_for_correcting(messages, response_template):
