@@ -221,11 +221,16 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             find_and_replace["not_found"] = True
         return find_and_replace
 
-    def build_correction_from_rejected_messages(self, rejected_messages):
+    def build_correction_from_rejected_messages(
+        self, rejected_messages, templated_char_index=None
+    ):
         """
         将 rejected_messages 的 token_level 信息转换为 correction
         location_text 沿本 adapter 自己 tokenizer 的可解码边界延伸，因为 correcting model
         必须精确复制自己的 token
+
+        When supplied, `templated_char_index` preserves a fork on template scaffolding
+        instead of projecting it back to the structured channel boundary.
         """
         messages_location = self.convert_token_level_to_messages_location(
             rejected_messages
@@ -233,8 +238,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         templated_location = self.verifier.build_templated_location(
             rejected_messages, messages_location["path_keys"][0]
         )
-        target_char_index = build_templated_char_index(
-            templated_location, messages_location
+        target_char_index = (
+            build_templated_char_index(templated_location, messages_location)
+            if templated_char_index is None
+            else templated_char_index
         )
         # Structured positions inside a JSON escape or template scaffold project to a
         # canonical template boundary; keep the persisted context consistent with that snap.

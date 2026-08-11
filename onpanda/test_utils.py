@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 
 from mximport import inpkg
 
@@ -428,6 +429,8 @@ def print_response_template_partial_messages(response_template):
         from .correcting_model.far_correction_utils import (
             FindAndReplaceCorrectionAdapter,
         )
+        from .response_templates import build_messages_location
+        from .token_level_supervision_utils import compute_token_level_supervision
 
     adapter = FindAndReplaceCorrectionAdapter(
         response_template=response_template,
@@ -440,9 +443,40 @@ def print_response_template_partial_messages(response_template):
         partial_templated = response_template.apply(partial_message)[
             "templated_prompt"
         ]
-        replacement_tokens_1 = adapter.build_partial_templated_prompt(
+        rejected_applied = response_template.apply(rejected_message)
+        rejected_templated = rejected_applied["templated_prompt"]
+        partial_result = adapter.build_partial_templated_prompt(
             rejected_message, partial_message
-        )["templated_prompt"]
+        )
+        replacement_tokens_1 = partial_result["templated_prompt"]
+        token_level = compute_token_level_supervision(
+            chosen_content=partial_templated,
+            rejected_content=rejected_templated,
+            tokenizer=adapter.tokenizer,
+        )
+        token_level["chosen_text"] = partial_result["replacement"]
+        token_level["messages_location"] = build_messages_location(
+            dict(
+                message_index=0,
+                message=rejected_message,
+                **rejected_applied,
+            ),
+            token_level["rejected_text_unicode_range"][0],
+        )
+        if token_level["rejected_text"]:
+            templated_message = deepcopy(rejected_message)
+            templated_message["token_level"] = token_level
+            templated_far = adapter.build_correction_from_rejected_messages(
+                [templated_message],
+                templated_char_index=token_level["rejected_text_unicode_range"][0],
+            )["find_and_replace"]["far_text"]
+        else:
+            split = adapter.special_tokens["split"]
+            stop = adapter.special_tokens["stop"]
+            templated_far = (
+                f"{split}{stop}{split}0{split}"
+                f"{partial_result['replacement'] or stop}{split}"
+            )
         partial_templated, replacement_tokens_1 = (
             text if len(text) <= 40 else "..." + text[-37:]
             for text in (partial_templated, replacement_tokens_1)
@@ -454,6 +488,7 @@ def print_response_template_partial_messages(response_template):
             f"default_far_ref: {partial_ref['default_far_ref']!r}",
             f"partial____templated: '''{partial_templated}'''",
             f"replacement_tokens_1: '''{replacement_tokens_1}'''",
+            f"templated_far: {templated_far!r}",
             sep="\n",
         )
         print()

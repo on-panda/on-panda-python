@@ -508,6 +508,47 @@ def test_step_template_uses_step_response_separators():
     )
 
 
+def test_far_template_fork_keeps_the_first_duplicate_tool_call():
+    rejected_messages, _ = get_test_msgs("redundant_call")
+    rejected_message = deepcopy(rejected_messages[-1])
+    template = Step3p5ResponseTemplate()
+    applied = dict(
+        template.apply(rejected_message),
+        message_index=0,
+        message=rejected_message,
+    )
+    first_call = applied["templated_prompt"].find(TOOL_CALL_BEGIN)
+    fork_index = applied["templated_prompt"].find(
+        TOOL_CALL_BEGIN, first_call + 1
+    )
+    rejected_message["token_level"] = {
+        "chosen_text": "",
+        "rejected_text_unicode_range": [
+            fork_index,
+            len(applied["templated_prompt"]),
+        ],
+        "messages_location": build_messages_location(applied, fork_index),
+    }
+
+    adapter = FindAndReplaceCorrectionAdapter(
+        tokenizer=utf8_tokenizer,
+        response_template=template,
+        max_location_tokens=20,
+    )
+    far_text = adapter.build_correction_from_rejected_messages(
+        [rejected_message], templated_char_index=fork_index
+    )["find_and_replace"]["far_text"]
+    split = adapter.special_tokens["split"]
+    assert far_text.split(split)[1].startswith(TOOL_CALL_BEGIN)
+    assert far_text.split(split)[2] == "1"
+
+    find_and_replace = adapter.verifier.parse(far_text)["find_and_replace"]
+    located = adapter.verifier.locate_templated(
+        [rejected_message], find_and_replace
+    )
+    assert located["templated_char_index"] == fork_index
+
+
 def test_policy_prefix_is_a_prefix_of_the_corrected_token_sequence():
     adapter = FindAndReplaceCorrectionAdapter(
         tokenizer=ContextTokenizer(), max_replacement_tokens=1
