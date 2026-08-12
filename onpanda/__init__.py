@@ -23,3 +23,4 @@ from .correcting_model.system_prompts import (
 )
 from .correcting_model.verifier import FindAndReplaceVerifier
 from .correcting_model.correcting_model import CorrectingModel
+from .response_templates import build_response_template

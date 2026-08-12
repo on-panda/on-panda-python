@@ -97,6 +97,20 @@ class PandaScoreMixin:
                     continue
 
             messages = remove_msgs_after_last_response_role(far_correction_data[:-2])
+            # The sample stores flattened assistant messages, because that is what the correcting
+            # model trains on, while messages_location stays structured. Parse the channels back,
+            # so locating happens in the same space the ground truth was recorded in.
+            messages = [
+                (
+                    dict(
+                        message,
+                        **self.adapter.response_template.parse(message["content"]),
+                    )
+                    if message["role"] == "assistant"
+                    else message
+                )
+                for message in messages
+            ]
             gt_correction = far_correction_data[-1]["correction"]
             gt_is_good = bool(
                 gt_correction["find_and_replace"].get("is_good")
@@ -105,7 +119,7 @@ class PandaScoreMixin:
             if sample_mode == "correction_only" and gt_is_good:
                 continue
 
-            correction_result = self.correct(messages)
+            correction_result = self.correct(messages, tools=messages[0].get("tools"))
             far_text = correction_result["correction"]["find_and_replace"]["far_text"]
             reward_result = self.adapter.verifier.compute_reward(
                 messages,

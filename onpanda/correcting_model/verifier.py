@@ -6,11 +6,16 @@ Created on Wed Feb 18 03:15:00 2026
 @author: DIYer22
 """
 
+import mximport
+
+with mximport.inpkg():
+    from ..response_templates import build_messages_location, build_response_template
+
 
 class FindAndReplaceVerifier:
     """
     Tokenizer-agnostic FindAndReplaceVerifier
-    This class can standalone without dependency.
+    This class only depends on onpanda response templates, which are pure string logic.
     """
 
     default_special_tokens = dict(
@@ -20,8 +25,11 @@ class FindAndReplaceVerifier:
         reasoning="<|reasoning|>",
     )
 
-    def __init__(self, special_tokens=None):
+    def __init__(self, special_tokens=None, response_template=None):
         self.special_tokens = {**self.default_special_tokens, **(special_tokens or {})}
+        self.response_template = build_response_template(
+            response_template, special_tokens=self.special_tokens
+        )
 
     @staticmethod
     def _mean(nums):
@@ -171,37 +179,33 @@ class FindAndReplaceVerifier:
             ),
         )
 
-    def _iter_assistant_text_locations(self, messages):
+    def build_templated_location(self, messages, message_index):
+        """
+        Correcting happens in the response template's text space, where every channel end is
+        addressable, including reasoning end and each tool call end.
+        """
+        apply_result = self.response_template.apply(messages[message_index])
+        return dict(
+            message_index=message_index,
+            message=messages[message_index],
+            **apply_result,
+        )
+
+    def _iter_assistant_templated_prompts(self, messages):
         for message_index, message in enumerate(messages):
-            if message["role"] != "assistant":
-                continue
-            reasoning = message.get("reasoning")
-            if isinstance(reasoning, str):
-                yield [message_index, "reasoning"], reasoning
+            if message["role"] == "assistant":
+                yield self.build_templated_location(messages, message_index)
 
-            content = self._content_to_text(message.get("content", ""))
-            yield [message_index, "content"], content
-
-            for tool_call_index, tool_call in enumerate(message.get("tool_calls", [])):
-                function = tool_call.get("function", {})
-                function_name = function.get("name")
-                if isinstance(function_name, str):
-                    yield [
-                        message_index,
-                        "tool_calls",
-                        tool_call_index,
-                        "function",
-                        "name",
-                    ], function_name
-                function_arguments = function.get("arguments")
-                if isinstance(function_arguments, str):
-                    yield [
-                        message_index,
-                        "tool_calls",
-                        tool_call_index,
-                        "function",
-                        "arguments",
-                    ], function_arguments
+    def build_messages_location(self, templated_location, find_and_replace):
+        """messages_location of a located match, with the find feedback of that match."""
+        return dict(
+            build_messages_location(
+                templated_location, templated_location["templated_char_index"]
+            ),
+            match_num=templated_location["match_num"],
+            patch_length=len(find_and_replace["location_text"]),
+            find_feedback="matched",
+        )
 
     def assert_messages_location_context_valid(self, messages, messages_location):
         if "left5" not in messages_location:
@@ -224,15 +228,8 @@ class FindAndReplaceVerifier:
             f"right5={right5!r}, path_keys={path_keys}, char_index={char_index}"
         )
 
-    def locate(self, messages, find_and_replace):
-        if find_and_replace.get("is_good"):
-            return dict(
-                not_found=True,
-                is_good=True,
-                match_num=0,
-                find_feedback="is_good: skip find",
-            )
-
+    def locate_templated(self, messages, find_and_replace):
+        """Find location_text in template space, then pick the match by location_index."""
         location_text = find_and_replace.get("location_text", "")
         if not location_text:
             return dict(
@@ -249,31 +246,25 @@ class FindAndReplaceVerifier:
                 find_feedback=f"location_index is not int: {location_index}",
             )
 
-        messages_locations = []
-        for path_keys, text in self._iter_assistant_text_locations(messages):
-            search_scope = text + self.special_tokens["stop"]
+        templated_locations = []
+        for templated_location in self._iter_assistant_templated_prompts(messages):
+            templated_prompt = templated_location["templated_prompt"]
             start = 0
             while True:
-                index = search_scope.find(location_text, start)
+                index = templated_prompt.find(location_text, start)
                 if index == -1:
                     break
-                messages_location = dict(
-                    path_keys=path_keys,
-                    char_index=index,
-                    left5=text[max(0, index - 5) : index],
-                    right5=text[index : index + 5],
+                templated_locations.append(
+                    dict(templated_location, templated_char_index=index)
                 )
-                messages_locations.append(messages_location)
                 start = index + 1
-        match_num = len(messages_locations)
+        match_num = len(templated_locations)
         if match_num and -match_num <= location_index < match_num:
-            messages_location = __import__("copy").deepcopy(
-                messages_locations[location_index]
+            return dict(
+                templated_locations[location_index],
+                match_num=match_num,
+                find_feedback="matched",
             )
-            messages_location["match_num"] = match_num
-            messages_location["patch_length"] = len(location_text)
-            messages_location["find_feedback"] = "matched"
-            return messages_location
         if match_num == 0:
             find_feedback = "location_text not found"
         else:
@@ -283,6 +274,23 @@ class FindAndReplaceVerifier:
             match_num=match_num,
             find_feedback=find_feedback,
         )
+
+    def locate(self, messages, find_and_replace):
+        if find_and_replace.get("is_good"):
+            return dict(
+                not_found=True,
+                is_good=True,
+                match_num=0,
+                find_feedback="is_good: skip find",
+            )
+        templated_location = self.locate_templated(messages, find_and_replace)
+        if templated_location.get("not_found"):
+            return dict(
+                not_found=True,
+                match_num=templated_location["match_num"],
+                find_feedback=templated_location["find_feedback"],
+            )
+        return self.build_messages_location(templated_location, find_and_replace)
 
     def parse_and_locate(self, messages, far_text):
         parse_res = self.parse(far_text)

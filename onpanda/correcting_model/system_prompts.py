@@ -45,21 +45,35 @@ far_tokenizer_aware_system_prompt_en = """\
 - If there are issues in the Chain of Thought, do not skip CoT and directly modify the final result. You should still target only the first inappropriate token; the system will apply multiple correction steps to gradually converge to the optimal response
 
 
-## Custom format for Reasoning Model
-- To avoid the reasoning field content in messages being removed by the chat template, messages with a reasoning field will be specially processed
-- Use the following template to place reasoning into content:
-    - `{message.reasoning}<|reasoning|>
+## Custom format for Reasoning Model and Tool Calls
+- To avoid the reasoning and tool_calls fields of a message being removed or restructured by the chat template, such a message is specially processed
+- Use the following template to place every output channel into content:
+    - `<|reasoning|>{message.reasoning}<|reasoning|>
 
+<|reasoning|>{message.content}<|tool_calls|>
 
-<|reasoning|>{message.content}{message.tool_calls}<|stop|>`
-    - Here, `<|reasoning|>
-
+<|tool_calls|>{message.tool_calls}<|stop|>`
+    - The leading `<|reasoning|>` indicates that thinking begins, and `<|reasoning|>
 
 <|reasoning|>` is a fixed combination, indicating the reasoning model's thinking has ended and the answer begins
-        - `<|reasoning|>` is the escape of the "thinking end" special token
+        - Only this complete fixed combination represents the "thinking end" boundary; an individual `<|reasoning|>` does not, because the leading one indicates that thinking begins
+    - `<|tool_calls|>
+
+<|tool_calls|>` is a fixed combination, indicating the answer has ended and tool calls begin
+    - When {message.content} is empty, adjacent `<|reasoning|><|tool_calls|>` is the valid connection between these two fixed boundaries, not duplicated markers, and must not be corrected
     - `<|stop|>` indicates the end of content, i.e., the end of the response
-    - {message.reasoning} belongs to the model's output content and needs to be evaluated by the correcting model
-- If you do not see `<|reasoning|>` marker, it means the message has no reasoning field, then ignore this rule
+    - A marker only shows up when the message has that field, so a message with content only carries no marker at all
+    - {message.reasoning}, {message.content} and {message.tool_calls} all belong to the model's output content and need to be evaluated by the correcting model
+- {message.tool_calls} is a list of tool call records, each of which looks like:
+    - `<|ON_PANDA_CALL_BEGIN|>
+<|ON_PANDA_CALL_TYPE|>{type}
+<|ON_PANDA_CALL_ID|>{id}
+<|ON_PANDA_CALL_NAME|>{function.name}
+<|ON_PANDA_CALL_ARGUMENTS|>{function.arguments}`
+    - {function.arguments} is a JSON string, and is the last field of a record, so it may contain real newlines
+    - To end an argument value early, generate its closing quote; to end the whole response, generate `<|stop|>`
+- A tool response is placed into content by `<|ON_PANDA_TOOL_RESPONSE|>{tool_call_id}`, followed by the tool response content
+- If you do not see any of these markers, it means the message has only a content field, then ignore this rule
 
 
 ## Examples
@@ -173,21 +187,35 @@ far_tokenizer_aware_system_prompt_cn = """\
     - 也要注意别忽略了 token 内的不可见字符，比如英语单词往往会和其前面的空格合为一个 token, 比如通常是 [` apple`]，而不是 [` `, `apple`]
 - 如果回答的 Chain of Thought 过程有问题，不可以跳过 CoT 直接修改最终结果，你应该只认准 “首个不恰当 token”，系统会通过多次操作来一步步地修改到位，最终达到最优的回答
 
-## Reasoning Model 的定制格式
-- 为了避免 message 的 reasoning 字段内容被 chat template 删掉，带 reasoning 字段的 message 会被特殊处理
-- 通过如下模版把 reasoning 放入 content：
-    - `{message.reasoning}<|reasoning|>
+## Reasoning Model 与 Tool Calls 的定制格式
+- 为了避免 message 的 reasoning、tool_calls 字段被 chat template 删掉或改写，这类 message 会被特殊处理
+- 通过如下模版把模型输出的各个通道都放入 content：
+    - `<|reasoning|>{message.reasoning}<|reasoning|>
 
+<|reasoning|>{message.content}<|tool_calls|>
 
-<|reasoning|>{message.content}{message.tool_calls}<|stop|>`
-    - 其中 `<|reasoning|>
-
+<|tool_calls|>{message.tool_calls}<|stop|>`
+    - 开头的 `<|reasoning|>` 表示 thinking 开始，而 `<|reasoning|>
 
 <|reasoning|>` 是固定搭配，表示 reasoning model 的 thinking 结束，开始正式回答问题。
-        - `<|reasoning|>` 是 “thinking end” special token 的转义
+        - 只有上述完整的固定组合才表示 “thinking end” 边界；单个 `<|reasoning|>` 不固定表示 thinking end，因为开头的 `<|reasoning|>` 表示 thinking 开始
+    - `<|tool_calls|>
+
+<|tool_calls|>` 是固定搭配，表示回答结束，开始调用工具
+    - 当 {message.content} 为空时，相邻的 `<|reasoning|><|tool_calls|>` 是这两组固定边界的合法衔接，不是重复标记，不得对此进行修正
     - `<|stop|>` 表示 content 结束，即回答结束
-    - {message.reasoning} 属于模型输出内容，需要被 correcting model 评估
-- 如果没有看到 `<|reasoning|>` 标记，说明该消息没有 reasoning 字段，则忽略此规则
+    - 只有 message 存在对应字段时才会出现对应标记，所以只有 content 字段的 message 不带任何标记
+    - {message.reasoning}、{message.content}、{message.tool_calls} 都属于模型输出内容，需要被 correcting model 评估
+- {message.tool_calls} 是一组 tool call 记录，每条记录形如：
+    - `<|ON_PANDA_CALL_BEGIN|>
+<|ON_PANDA_CALL_TYPE|>{type}
+<|ON_PANDA_CALL_ID|>{id}
+<|ON_PANDA_CALL_NAME|>{function.name}
+<|ON_PANDA_CALL_ARGUMENTS|>{function.arguments}`
+    - {function.arguments} 是 JSON 字符串，且是记录的最后一个字段，所以其中可以包含真实换行
+    - 要提前结束某个参数值，生成它的右引号即可；要结束整个回答，生成 `<|stop|>`
+- tool 的返回结果通过 `<|ON_PANDA_TOOL_RESPONSE|>{tool_call_id}` 放入 content，其后紧跟 tool 返回的内容
+- 如果没有看到上述任何标记，说明该消息只有 content 字段，则忽略此规则
 
 
 ## 示例
@@ -269,21 +297,35 @@ far_tokenizer_agnostic_system_prompt_en = """\
 - If there are issues in the Chain of Thought, do not skip CoT and directly modify the final result. You should still target only the first inappropriate token; the system will apply multiple correction steps to gradually converge to the optimal response.
 
 
-## Custom format for Reasoning Model
-- To avoid the reasoning field content in messages being removed by the chat template, messages with a reasoning field will be specially processed
-- Use the following template to place reasoning into content:
-    - `{message.reasoning}<|reasoning|>
+## Custom format for Reasoning Model and Tool Calls
+- To avoid the reasoning and tool_calls fields of a message being removed or restructured by the chat template, such a message is specially processed
+- Use the following template to place every output channel into content:
+    - `<|reasoning|>{message.reasoning}<|reasoning|>
 
+<|reasoning|>{message.content}<|tool_calls|>
 
-<|reasoning|>{message.content}{message.tool_calls}<|stop|>`
-    - Here, `<|reasoning|>
-
+<|tool_calls|>{message.tool_calls}<|stop|>`
+    - The leading `<|reasoning|>` indicates that thinking begins, and `<|reasoning|>
 
 <|reasoning|>` is a fixed combination, indicating the reasoning model's thinking has ended and the answer begins
-        - `<|reasoning|>` is the escape of the "thinking end" special token
+        - Only this complete fixed combination represents the "thinking end" boundary; an individual `<|reasoning|>` does not, because the leading one indicates that thinking begins
+    - `<|tool_calls|>
+
+<|tool_calls|>` is a fixed combination, indicating the answer has ended and tool calls begin
+    - When {message.content} is empty, adjacent `<|reasoning|><|tool_calls|>` is the valid connection between these two fixed boundaries, not duplicated markers, and must not be corrected
     - `<|stop|>` indicates the end of content, i.e., the end of the response
-    - {message.reasoning} belongs to the model's output content and needs to be evaluated by the correcting model
-- If you do not see `<|reasoning|>` marker, it means the message has no reasoning field, then ignore this rule
+    - A marker only shows up when the message has that field, so a message with content only carries no marker at all
+    - {message.reasoning}, {message.content} and {message.tool_calls} all belong to the model's output content and need to be evaluated by the correcting model
+- {message.tool_calls} is a list of tool call records, each of which looks like:
+    - `<|ON_PANDA_CALL_BEGIN|>
+<|ON_PANDA_CALL_TYPE|>{type}
+<|ON_PANDA_CALL_ID|>{id}
+<|ON_PANDA_CALL_NAME|>{function.name}
+<|ON_PANDA_CALL_ARGUMENTS|>{function.arguments}`
+    - {function.arguments} is a JSON string, and is the last field of a record, so it may contain real newlines
+    - To end an argument value early, generate its closing quote; to end the whole response, generate `<|stop|>`
+- A tool response is placed into content by `<|ON_PANDA_TOOL_RESPONSE|>{tool_call_id}`, followed by the tool response content
+- If you do not see any of these markers, it means the message has only a content field, then ignore this rule
 
 
 ## Examples
@@ -364,21 +406,35 @@ far_tokenizer_agnostic_system_prompt_cn = """\
 - 你只管定位你认为的 “首个不恰当 token” 并按照最合理的方向去修改；如果 policy model 补全后的回答还有问题，后续系统还会进行多次修改，所以不必担心 policy model 能力不足问题
 - 如果回答的 Chain of Thought 过程有问题，不可以跳过 CoT 直接修改最终结果，你应该只认准 “首个不恰当 token”，系统会通过多次操作来一步步地修改到位，最终达到最优的回答
 
-## Reasoning Model 的定制格式
-- 为了避免 message 的 reasoning 字段内容被 chat template 删掉，带 reasoning 字段的 message 会被特殊处理
-- 通过如下模版把 reasoning 放入 content：
-    - `{message.reasoning}<|reasoning|>
+## Reasoning Model 与 Tool Calls 的定制格式
+- 为了避免 message 的 reasoning、tool_calls 字段被 chat template 删掉或改写，这类 message 会被特殊处理
+- 通过如下模版把模型输出的各个通道都放入 content：
+    - `<|reasoning|>{message.reasoning}<|reasoning|>
 
+<|reasoning|>{message.content}<|tool_calls|>
 
-<|reasoning|>{message.content}{message.tool_calls}<|stop|>`
-    - 其中 `<|reasoning|>
-
+<|tool_calls|>{message.tool_calls}<|stop|>`
+    - 开头的 `<|reasoning|>` 表示 thinking 开始，而 `<|reasoning|>
 
 <|reasoning|>` 是固定搭配，表示 reasoning model 的 thinking 结束，开始正式回答问题。
-        - `<|reasoning|>` 是 “thinking end” special token 的转义
+        - 只有上述完整的固定组合才表示 “thinking end” 边界；单个 `<|reasoning|>` 不固定表示 thinking end，因为开头的 `<|reasoning|>` 表示 thinking 开始
+    - `<|tool_calls|>
+
+<|tool_calls|>` 是固定搭配，表示回答结束，开始调用工具
+    - 当 {message.content} 为空时，相邻的 `<|reasoning|><|tool_calls|>` 是这两组固定边界的合法衔接，不是重复标记，不得对此进行修正
     - `<|stop|>` 表示 content 结束，即回答结束
-    - {message.reasoning} 属于模型输出内容，需要被 correcting model 评估
-- 如果没有看到 `<|reasoning|>` 标记，说明该消息没有 reasoning 字段，则忽略此规则
+    - 只有 message 存在对应字段时才会出现对应标记，所以只有 content 字段的 message 不带任何标记
+    - {message.reasoning}、{message.content}、{message.tool_calls} 都属于模型输出内容，需要被 correcting model 评估
+- {message.tool_calls} 是一组 tool call 记录，每条记录形如：
+    - `<|ON_PANDA_CALL_BEGIN|>
+<|ON_PANDA_CALL_TYPE|>{type}
+<|ON_PANDA_CALL_ID|>{id}
+<|ON_PANDA_CALL_NAME|>{function.name}
+<|ON_PANDA_CALL_ARGUMENTS|>{function.arguments}`
+    - {function.arguments} 是 JSON 字符串，且是记录的最后一个字段，所以其中可以包含真实换行
+    - 要提前结束某个参数值，生成它的右引号即可；要结束整个回答，生成 `<|stop|>`
+- tool 的返回结果通过 `<|ON_PANDA_TOOL_RESPONSE|>{tool_call_id}` 放入 content，其后紧跟 tool 返回的内容
+- 如果没有看到上述任何标记，说明该消息只有 content 字段，则忽略此规则
 
 
 ## 示例

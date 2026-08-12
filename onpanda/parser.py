@@ -14,6 +14,11 @@ with mximport.inpkg():
     from .correcting_model.far_correction_utils import (
         FindAndReplaceCorrectionAdapter,
     )
+    from .response_templates import (
+        FLATTENED_MESSAGE_KEYS,
+        build_messages_location,
+        content_to_text,
+    )
     from .utils import HASH_TEMPLATE_PREFIX, HASH_TEMPLATE_REGEX, RESPONSE_ROLES
     from .dump_utils import dump_panda_json
 
@@ -239,8 +244,9 @@ class PandaTree:
 
     def messages_to_sequence(self, messages):
         if not self.tokenizer:
-            # default
-            return mxlm.messages_to_sequence(messages)
+            # default: mxlm only sequences role and content, which cannot tell two agent
+            # trajectories apart when they only differ in reasoning or in tool calls.
+            return utf8_tokenizer.apply_chat_template(messages, tokenize=False)
         return self.tokenizer.apply_chat_template(messages, tokenize=False)
 
     dump = dump_panda_json
@@ -274,6 +280,10 @@ class PandaTree:
             if data.get("uuid"):
                 onpanda_info["uuid"] = data["uuid"]
             messages[0]["onpanda"] = onpanda_info
+            if dialog.get("tools"):
+                # tools ride on the first message, so the correcting model and the policy can
+                # both see the schema, and the sample stays a plain messages list.
+                messages[0]["tools"] = deepcopy(dialog["tools"])
             sfts.append(messages)
         preferences = []
         for rejected_key, chosen_key in self.outcome_pairs + self.fork_pairs:
@@ -303,8 +313,15 @@ class PandaTree:
             preferences.append(preference)
         return dict(sfts=sfts, preferences=preferences)
 
-    def build_token_level_supervision_data_v1(self, tokenizer=None):
+    def build_token_level_supervision_data_v1(
+        self, tokenizer=None, response_template=None
+    ):
         """
+        `response_template` flattens every output channel into one text, so the fork may land in
+        reasoning or inside a tool call, and `rejected_messages_location` points at that channel.
+        Without it only the content channel is supervised, which is what the policy's own
+        token level training consumes.
+
         token_level supervision data v1 structrue like this:
         tree-token_levels[0]
         └── /: list  2
@@ -366,6 +383,32 @@ class PandaTree:
         assert (
             tokenizer
         ), "token_level_supervision needs to set tokenizer, or you could using onpanda.utf8_tokenizer"
+
+        def apply_last_message(messages):
+            """Without a response template only the content channel is supervised."""
+            message_index = len(messages) - 1
+            if response_template is not None:
+                return dict(
+                    message_index=message_index,
+                    message=messages[-1],
+                    **response_template.apply(messages[-1]),
+                )
+            content = mxlm.get_text_content(messages[-1]["content"])
+            return dict(
+                message_index=message_index,
+                message=messages[-1],
+                templated_prompt=content,
+                key_path_prompt_mapping=[
+                    dict(
+                        key_path=["content"],
+                        text_start=0,
+                        text_end=len(content),
+                        channel_start=0,
+                        channel_end=len(content),
+                    )
+                ],
+            )
+
         token_levels = []
         for rejected_key, chosen_key in self.fork_pairs:
             chosen_msgs = mxlm.normalize_messages(
@@ -374,11 +417,11 @@ class PandaTree:
             rejected_msgs = mxlm.normalize_messages(
                 self.data["dialogs"][rejected_key]["messages"]
             )
-            chosen_content = chosen_msgs[-1]["content"]
-            rejected_content = rejected_msgs[-1]["content"]
+            chosen_applied = apply_last_message(chosen_msgs)
+            rejected_applied = apply_last_message(rejected_msgs)
             token_level_info = compute_token_level_supervision(
-                chosen_content=chosen_content,
-                rejected_content=rejected_content,
+                chosen_content=chosen_applied["templated_prompt"],
+                rejected_content=rejected_applied["templated_prompt"],
                 tokenizer=tokenizer,
             )
             token_level_info["version"] = "1.0"
@@ -390,33 +433,46 @@ class PandaTree:
             token_level_info["rejected_finish_reason"] = rejected_msgs[-1].get(
                 "finish_reason", ""
             )
-            # TODO: 实现 messages level 的多轮 compute_token_level_supervision 返回 messages_location
-            char_index = token_level_info["rejected_text_unicode_range"][0]
-            token_level_info["rejected_messages_location"] = dict(
-                path_keys=[len(chosen_msgs) - 1, "content"],
-                char_index=char_index,
-                left5=rejected_content[max(0, char_index - 5) : char_index],
-                right5=rejected_content[char_index : char_index + 5],
+            token_level_info["rejected_messages_location"] = build_messages_location(
+                rejected_applied, token_level_info["rejected_text_unicode_range"][0]
             )
-            token_level_msgs = chosen_msgs[:-1] + [
-                {
-                    **chosen_msgs[-1],
-                    "content": token_level_info.pop("chosen_content"),
-                    "token_level": token_level_info,
-                }
-            ]
+            if response_template is not None:
+                # Keep the source channel because template parsing may normalize JSON formatting.
+                location_path = token_level_info["rejected_messages_location"][
+                    "path_keys"
+                ]
+                rejected_channel = rejected_msgs[location_path[0]]
+                for key in location_path[1:]:
+                    rejected_channel = rejected_channel[key]
+                token_level_info["rejected_channel_text"] = content_to_text(
+                    rejected_channel
+                )
+            # The chunks below are the flattened text, so the flattened channels must go.
+            chosen_message = {
+                key: value
+                for key, value in chosen_msgs[-1].items()
+                if response_template is None or key not in FLATTENED_MESSAGE_KEYS
+            }
+            chosen_message["content"] = token_level_info.pop("chosen_content")
+            chosen_message["token_level"] = token_level_info
+            token_level_msgs = chosen_msgs[:-1] + [chosen_message]
             token_level_msgs = deepcopy(token_level_msgs)
 
             onpanda_info = {"dialog_pair": (rejected_key, chosen_key)}
             if self.data.get("uuid"):
                 onpanda_info["uuid"] = self.data["uuid"]
             token_level_msgs[0]["onpanda"] = onpanda_info
+            chosen_tools = self.data["dialogs"][chosen_key].get("tools")
+            if chosen_tools:
+                token_level_msgs[0]["tools"] = deepcopy(chosen_tools)
 
             token_levels.append(token_level_msgs)
         # g()
         return token_levels
 
-    def build_token_level_supervision_data_v2(self, tokenizer=None):
+    def build_token_level_supervision_data_v2(
+        self, tokenizer=None, response_template=None
+    ):
         """
         Merge multi token_level_supervision_data_v1 with same chosen_dialog_key into one messages with multi ignore_loss=False tokens (chosen tokens), thus to reduce SFT data number.
         Also gather token_level to token_levels
@@ -424,7 +480,7 @@ class PandaTree:
         Should save as 'xxx.token.json'
         """
         token_level_v1s = self.build_token_level_supervision_data_v1(
-            tokenizer=tokenizer
+            tokenizer=tokenizer, response_template=response_template
         )
         chosen_dialog_key_to_token_level_v1s = {}
         for token_level_v1 in token_level_v1s:
@@ -510,7 +566,8 @@ class PandaTree:
             for sft in sfts
         ]
         token_level_v1s = self.build_token_level_supervision_data_v1(
-            tokenizer=far_adapter.tokenizer
+            tokenizer=far_adapter.tokenizer,
+            response_template=far_adapter.response_template,
         )
         far_corrections += [
             far_adapter.build_correction_data_from_token_level(sft, is_good=False)
