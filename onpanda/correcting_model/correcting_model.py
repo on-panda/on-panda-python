@@ -521,7 +521,7 @@ def build_correcting_model_with_policy(reasoning=True):
     if reasoning:
         correcting_model = build_reasoning_correcting_model()
         new_kwargs["model"] = os.environ.get(
-            "POLICY_API_MODEL", "Qwen/Qwen3.6-35B-A3B"
+            "POLICY_API_MODEL", "Qwen/Qwen3.5-35B-A3B"
         )  # should support continue_final_message
     else:
         correcting_model = build_test_correcting_model()

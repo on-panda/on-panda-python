@@ -566,7 +566,7 @@ def test_complete_early_stop_is_not_rejected_as_no_op():
     correcting_adapter = FindAndReplaceCorrectionAdapter(max_replacement_tokens=20)
     policy_adapter = FindAndReplaceCorrectionAdapter(
         max_replacement_tokens=20,
-        response_template={"name_or_path": "Qwen/Qwen3.6-35B-A3B"},
+        response_template={"name_or_path": "Qwen/Qwen3.5-35B-A3B"},
     )
     split = correcting_adapter.special_tokens["split"]
     stop = correcting_adapter.special_tokens["stop"]
@@ -673,7 +673,7 @@ def test_complete_no_op_is_rejected():
 
 @pytest.mark.parametrize(
     "response_template",
-    [None, {"name_or_path": "Qwen/Qwen3.6-35B-A3B"}],
+    [None, {"name_or_path": "Qwen/Qwen3.5-35B-A3B"}],
 )
 def test_structured_tool_calls_survive_policy_continuation(response_template):
     adapter = FindAndReplaceCorrectionAdapter(
@@ -789,7 +789,7 @@ def test_structured_tool_calls_survive_policy_continuation(response_template):
 def test_mislabeled_content_continuation_does_not_leak_think_end():
     adapter = FindAndReplaceCorrectionAdapter(
         max_replacement_tokens=200,
-        response_template={"name_or_path": "Qwen/Qwen3.6-35B-A3B"},
+        response_template={"name_or_path": "Qwen/Qwen3.5-35B-A3B"},
     )
     correcting_model = CorrectingModel(
         SimpleNamespace(model="correcting"), adapter, max_correction_attempts=1

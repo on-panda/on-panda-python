@@ -661,7 +661,7 @@ def test_reasoning_and_tool_calls_correcting():
     # The policy renders the same partial message with its own template, and the fork against
     # the rejected response is the text the policy has to continue from.
     adapter_policy = FindAndReplaceCorrectionAdapter(
-        response_template=dict(name_or_path="Qwen/Qwen3.6-35B-A3B")
+        response_template=dict(name_or_path="Qwen/Qwen3.5-35B-A3B")
     )
     partial_tool_call_message = dict(
         role="assistant",

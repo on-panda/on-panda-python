@@ -408,7 +408,7 @@ def normalize_message_tool_calls(message, messages=None):
 class Qwen3p5ResponseTemplate:
     """Plain text template: the templated prompt is the model's literal response text."""
 
-    default_name_or_path = "Qwen/Qwen3.6-35B-A3B"
+    default_name_or_path = "Qwen/Qwen3.5-35B-A3B"
     reasoning_content_separator = "\n\n"
     content_tool_calls_separator = "\n\n"
     tool_call_separator = "\n"
@@ -806,7 +806,7 @@ def test_qwen3p5_response_template():
         reasoning_end_text,
         "re-apply reasoning_end",
     )
-    assert Qwen3p5ResponseTemplate.match(dict(name_or_path="Qwen/Qwen3.6-35B-A3B"))
+    assert Qwen3p5ResponseTemplate.match(dict(name_or_path="Qwen/Qwen3.5-35B-A3B"))
     assert not Qwen3p5ResponseTemplate.match(
         dict(name_or_path="Qwen/Qwen2.5-7B-Instruct")
     )
