@@ -3,7 +3,6 @@ from copy import deepcopy
 
 from mximport import inpkg
 
-
 _REASONING_ERROR_TYPES = (
     "stop_reasoning",
     "resume_reasoning",
@@ -110,9 +109,7 @@ def get_test_reasoning_partial_msgs_all():
         )
 
     default_far_refs = {
-        "stop_reasoning": build_far_ref(
-            "wait!", adapter.special_tokens["reasoning"]
-        ),
+        "stop_reasoning": build_far_ref("wait!", adapter.special_tokens["reasoning"]),
         "resume_reasoning": build_far_ref(
             adapter.response_template.reasoning_end_marker, " 14"
         ),
@@ -226,18 +223,22 @@ def get_test_reasoning_tool_calls_msgs1(error_type="bad_reasoning"):
     ]
     if error_type == "no_call":
         del rejected_msgs[-1]["tool_calls"]
-        rejected_msgs[-1]["content"] = "I will call read_file tool to read `/tmp/a.txt` with limit 10."
+        rejected_msgs[-1][
+            "content"
+        ] = "I will call read_file tool to read `/tmp/a.txt` with limit 10."
         rejected_msgs[-1]["finish_reason"] = "stop"
     if error_type == "redundant_call":
-        rejected_msgs[-1]["tool_calls"].append({
-                    "index": 1,
-                    "type": "function",
-                    "id": "functions.read_file:1",
-                    "function": {
-                        "name": "read_file",
-                        "arguments": arguments,
-                    },
-                })
+        rejected_msgs[-1]["tool_calls"].append(
+            {
+                "index": 1,
+                "type": "function",
+                "id": "functions.read_file:1",
+                "function": {
+                    "name": "read_file",
+                    "arguments": arguments,
+                },
+            }
+        )
     return rejected_msgs, tools
 
 
@@ -286,7 +287,7 @@ def get_test_reasoning_tool_calls_partial_msgs_all():
             '"/tmp/a.txt"',
         ),
         "no_call": build_far_ref(stop, TOOL_CALLS_MARKER, -1),
-        "redundant_call": build_far_ref('\n' + CALL_BEGIN_MARKER, stop, -1),
+        "redundant_call": build_far_ref("\n" + CALL_BEGIN_MARKER, stop, -1),
     }
     expected_location_paths = {
         "bad_reasoning": [1, "reasoning"],
@@ -369,9 +370,7 @@ def get_test_reasoning_tool_calls_partial_msgs_all():
     assert call_name["tool_calls"][0]["function"] == {"name": "read_file"}
     assert "finish_reason" not in call_name, call_name
 
-    bad_argument_value = partials["error_type:bad_argument_value"][
-        "partial_message"
-    ]
+    bad_argument_value = partials["error_type:bad_argument_value"]["partial_message"]
     assert bad_argument_value["tool_calls"][0]["function"]["arguments"] == (
         '{"path": "/tmp/a.txt'
     ), bad_argument_value
@@ -440,9 +439,7 @@ def print_response_template_partial_messages(response_template):
     for error_key, partial_ref in get_test_partial_msgs_all().items():
         rejected_message = partial_ref["rejected_messages"][-1]
         partial_message = partial_ref["partial_message"]
-        partial_templated = response_template.apply(partial_message)[
-            "templated_prompt"
-        ]
+        partial_templated = response_template.apply(partial_message)["templated_prompt"]
         rejected_applied = response_template.apply(rejected_message)
         rejected_templated = rejected_applied["templated_prompt"]
         partial_result = adapter.build_partial_templated_prompt(
@@ -481,7 +478,10 @@ def print_response_template_partial_messages(response_template):
             text if len(text) <= 40 else "..." + text[-37:]
             for text in (partial_templated, replacement_tokens_1)
         )
-        print('\x1b[31m%s\x1b[0m' % f"\nERROR_TYPE: {error_key.removeprefix('error_type:')}")
+        print(
+            "\x1b[31m%s\x1b[0m"
+            % f"\nERROR_TYPE: {error_key.removeprefix('error_type:')}"
+        )
         print("rejected_response:")
         print(json.dumps(rejected_message, ensure_ascii=False, indent=2)[2:-2])
         print(
@@ -496,4 +496,5 @@ def print_response_template_partial_messages(response_template):
 
 if __name__ == "__main__":
     from boxx import *
+
     partial_msgs_all = get_test_partial_msgs_all()

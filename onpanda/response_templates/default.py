@@ -74,8 +74,10 @@ def parse_tool_call_records(tool_calls_text):
     """A complete call marker opens a record; a field marker means the key exists."""
     if not tool_calls_text.startswith(CALL_BEGIN_MARKER):
         return []
-    records = tool_calls_text[len(CALL_BEGIN_MARKER) :].removeprefix("\n").split(
-        "\n" + CALL_BEGIN_MARKER + "\n"
+    records = (
+        tool_calls_text[len(CALL_BEGIN_MARKER) :]
+        .removeprefix("\n")
+        .split("\n" + CALL_BEGIN_MARKER + "\n")
     )
     tool_calls = []
     for tool_call_index, record in enumerate(records):

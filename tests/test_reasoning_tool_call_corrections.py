@@ -518,9 +518,7 @@ def test_far_template_fork_keeps_the_first_duplicate_tool_call():
         message=rejected_message,
     )
     first_call = applied["templated_prompt"].find(TOOL_CALL_BEGIN)
-    fork_index = applied["templated_prompt"].find(
-        TOOL_CALL_BEGIN, first_call + 1
-    )
+    fork_index = applied["templated_prompt"].find(TOOL_CALL_BEGIN, first_call + 1)
     rejected_message["token_level"] = {
         "chosen_text": "",
         "rejected_text_unicode_range": [
@@ -543,9 +541,7 @@ def test_far_template_fork_keeps_the_first_duplicate_tool_call():
     assert far_text.split(split)[2] == "1"
 
     find_and_replace = adapter.verifier.parse(far_text)["find_and_replace"]
-    located = adapter.verifier.locate_templated(
-        [rejected_message], find_and_replace
-    )
+    located = adapter.verifier.locate_templated([rejected_message], find_and_replace)
     assert located["templated_char_index"] == fork_index
 
 
@@ -805,9 +801,9 @@ def test_mislabeled_content_continuation_does_not_leak_think_end():
         "reasoning": "think",
         "content": "answer /tmp/a",
     }
-    prefix = adapter.build_partial_templated_prompt(
-        rejected_message, partial_message
-    )["templated_prompt"]
+    prefix = adapter.build_partial_templated_prompt(rejected_message, partial_message)[
+        "templated_prompt"
+    ]
     correcting_model.correct = Mock(
         return_value={
             "correction": {
@@ -828,8 +824,7 @@ def test_mislabeled_content_continuation_does_not_leak_think_end():
                         "role": "assistant",
                         # mxlm echoes the prefix before returning the vLLM response.
                         "content": (
-                            prefix
-                            + "<tool_call>\n"
+                            prefix + "<tool_call>\n"
                             "<function=read_file>\n"
                             "<parameter=path>\n/tmp/a.txt\n</parameter>\n"
                             "</function>\n"

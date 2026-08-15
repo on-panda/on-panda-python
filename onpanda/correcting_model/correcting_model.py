@@ -213,7 +213,8 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                                 "reasoning" in prefix_message
                                 and "content" not in prefix_message
                                 and "tool_calls" not in prefix_message
-                                and prefix_message.get("finish_reason") != "reasoning_end"
+                                and prefix_message.get("finish_reason")
+                                != "reasoning_end"
                             ):
                                 generated_reasoning += (
                                     adapter_policy.response_template.reasoning_end_marker
@@ -534,7 +535,11 @@ def build_correcting_model_with_policy(reasoning=True):
         new_kwargs.update(extra_parameters)
     chat_policy.default_kwargs.update(new_kwargs)
     if os.environ.get("POLICY_API_BASE_URL"):
-        chat_policy = mxlm.ChatAPI(os.environ.get("POLICY_API_BASE_URL"), os.environ.get("POLICY_API_KEY"), **chat_policy.default_kwargs)
+        chat_policy = mxlm.ChatAPI(
+            os.environ.get("POLICY_API_BASE_URL"),
+            os.environ.get("POLICY_API_KEY"),
+            **chat_policy.default_kwargs,
+        )
     # The policy renders its own response template, which is usually named after the policy, and
     # its own tokenizer decides how far a correction may reach into the continuation prefix.
     adapter_policy = onpanda.FindAndReplaceCorrectionAdapter(
@@ -560,15 +565,19 @@ if __name__ == "__main__":
     )
 
     _d = build_correcting_model_with_policy()
-    correcting_model, chat_policy, adapter_policy = _d["correcting_model"], _d["chat_policy"], _d["adapter_policy"]
-    
+    correcting_model, chat_policy, adapter_policy = (
+        _d["correcting_model"],
+        _d["chat_policy"],
+        _d["adapter_policy"],
+    )
+
     if 10:
         correcteds = correcting_model.test(
             chat_policy=chat_policy,
             adapter_policy=adapter_policy,
         )
         tree(correcteds)
-        print(savejson(correcteds , f"/tmp/{localTimeStr()}-correcteds.json"))
+        print(savejson(correcteds, f"/tmp/{localTimeStr()}-correcteds.json"))
 
     msgs = [
         {"role": "user", "content": "5+7="},
@@ -577,7 +586,7 @@ if __name__ == "__main__":
     ]
     msgs = get_test_rejected_msgs1()[0]
     tools = None
-    msgs, tools = get_test_reasoning_tool_calls_msgs1('bad_argument_arg2')
+    msgs, tools = get_test_reasoning_tool_calls_msgs1("bad_argument_arg2")
 
     # msgs = [{"role": "user", "content": "How many `1` in result of 652*8596"},]
 
