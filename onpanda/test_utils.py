@@ -396,7 +396,7 @@ def get_test_reasoning_tool_calls_partial_msgs_all():
     ), bad_argument_json
 
     no_call = partials["error_type:no_call"]["partial_message"]
-    assert no_call["tool_calls"] == [], no_call
+    assert no_call["tool_calls"] == [{}], no_call
     assert no_call["content"].endswith("`/tmp/a.txt` with limit 10."), no_call
     assert "finish_reason" not in no_call, no_call
 

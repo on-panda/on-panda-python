@@ -35,7 +35,11 @@ def take_policy_message(policy_response):
         message.pop("tool_calls", None)
     if choice.get("finish_reason") is not None:
         message["finish_reason"] = choice["finish_reason"]
-        if message["finish_reason"] == "stop" and message.get("tool_calls"):
+        if (
+            message["finish_reason"] == "stop"
+            and message.get("tool_calls")
+            and message["tool_calls"] != [{}]
+        ):
             message["finish_reason"] = "tool_calls"
     return message
 
@@ -226,12 +230,15 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                         tools=tools,
                         finish_reason=policy_choice.get("finish_reason"),
                     )
-                    if policy_message.get("tool_calls"):
+                    policy_tool_calls = policy_message.get("tool_calls")
+                    if policy_tool_calls and policy_tool_calls != [{}]:
                         # vLLM parses generated text before echoing the prefix, so these calls
                         # follow any calls already parsed from response_text.
+                        corrected_tool_calls = corrected_message.get("tool_calls", [])
+                        if corrected_tool_calls == [{}]:
+                            corrected_tool_calls = []
                         corrected_message["tool_calls"] = (
-                            corrected_message.get("tool_calls", [])
-                            + policy_message["tool_calls"]
+                            corrected_tool_calls + policy_tool_calls
                         )
                         corrected_message = adapter_policy.response_template.parse(
                             adapter_policy.response_template.apply(corrected_message)[

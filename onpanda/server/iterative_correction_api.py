@@ -152,10 +152,19 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
 
     def build_hijack_result(final_message, iterative_correction_info):
         finish_reason = final_message.get("finish_reason")
-        if finish_reason == "stop" and final_message.get("tool_calls"):
+        if (
+            finish_reason == "stop"
+            and final_message.get("tool_calls")
+            and final_message["tool_calls"] != [{}]
+        ):
             finish_reason = "tool_calls"
         elif not finish_reason:
-            finish_reason = "tool_calls" if final_message.get("tool_calls") else "stop"
+            finish_reason = (
+                "tool_calls"
+                if final_message.get("tool_calls")
+                and final_message["tool_calls"] != [{}]
+                else "stop"
+            )
         message = {
             "role": final_message.get("role", "assistant"),
             "content": final_message.get("content", ""),

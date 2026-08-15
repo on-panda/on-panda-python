@@ -412,11 +412,10 @@ def test_length_finish_reason_is_not_coerced_to_tool_calls(template):
 def test_qwen_template_round_trips_open_tool_call_states():
     template = Qwen3p5ResponseTemplate()
 
-    empty_channel = {"role": "assistant", "content": "", "tool_calls": []}
-    assert (
-        template.parse(template.apply(empty_channel)["templated_prompt"])["tool_calls"]
-        == []
-    )
+    empty_channel = {"role": "assistant", "content": "", "tool_calls": [{}]}
+    assert template.parse(template.apply(empty_channel)["templated_prompt"])[
+        "tool_calls"
+    ] == [{}]
 
     open_call = {
         "role": "assistant",
@@ -432,12 +431,12 @@ def test_default_template_parses_partial_tool_calls_boundary():
     assert template.parse("answer<|tool_calls|>") == {
         "role": "assistant",
         "content": "answer",
-        "tool_calls": [],
+        "tool_calls": [{}],
     }
     assert template.parse("answer<|tool_calls|>\n") == {
         "role": "assistant",
         "content": "answer",
-        "tool_calls": [],
+        "tool_calls": [{}],
     }
     for marker_prefix in ("<", "<<", "<|to", "<|tool_call", "<|tool_calls|"):
         assert template.parse("answer" + marker_prefix) == {
@@ -464,7 +463,7 @@ def test_default_template_requires_complete_call_begin_marker():
         assert template.parse(tool_calls_begin + marker_prefix) == {
             "role": "assistant",
             "content": "",
-            "tool_calls": [],
+            "tool_calls": [{}],
         }
 
 

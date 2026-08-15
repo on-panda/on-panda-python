@@ -73,7 +73,7 @@ def _matched_suffix_length(text, marker):
 def parse_tool_call_records(tool_calls_text):
     """A complete call marker opens a record; a field marker means the key exists."""
     if not tool_calls_text.startswith(CALL_BEGIN_MARKER):
-        return []
+        return [{}]
     records = (
         tool_calls_text[len(CALL_BEGIN_MARKER) :]
         .removeprefix("\n")
@@ -105,7 +105,8 @@ class DefaultResponseTemplate:
     A marker means the channel exists, so a content only message stays marker free and
     renders exactly as before this template existed. The reasoning and stop markers come
     from `special_tokens`, because the tokenizer aware correcting model needs them to be
-    single tokens of its own tokenizer.
+    single tokens of its own tokenizer. `tool_calls=[{}]` is the open-channel sentinel
+    until the first call record begins.
     """
 
     def __init__(self, response_template=None, special_tokens=None):
@@ -166,16 +167,20 @@ class DefaultResponseTemplate:
             append_mapped(["content"], content_to_text(message["content"]))
         if message.get("tool_calls") is not None:
             append_raw(self.tool_calls_begin_marker)
-            for tool_call_index, tool_call in enumerate(message["tool_calls"]):
-                append_raw(("\n" if tool_call_index else "") + CALL_BEGIN_MARKER + "\n")
-                is_first_field = True
-                for key_path, marker in CALL_FIELD_MARKERS:
-                    value = _get_by_key_path(tool_call, key_path)
-                    if value is None:
-                        continue
-                    append_raw(("" if is_first_field else "\n") + marker)
-                    append_mapped(["tool_calls", tool_call_index] + key_path, value)
-                    is_first_field = False
+            # [{}] is the open-channel sentinel, not a call record.
+            if message["tool_calls"] != [{}]:
+                for tool_call_index, tool_call in enumerate(message["tool_calls"]):
+                    append_raw(
+                        ("\n" if tool_call_index else "") + CALL_BEGIN_MARKER + "\n"
+                    )
+                    is_first_field = True
+                    for key_path, marker in CALL_FIELD_MARKERS:
+                        value = _get_by_key_path(tool_call, key_path)
+                        if value is None:
+                            continue
+                        append_raw(("" if is_first_field else "\n") + marker)
+                        append_mapped(["tool_calls", tool_call_index] + key_path, value)
+                        is_first_field = False
         if not is_partial:
             append_raw(self.stop_marker)
         return dict(
@@ -221,12 +226,16 @@ class DefaultResponseTemplate:
             opened_length = _matched_suffix_length(text, self.tool_calls_begin_marker)
             if opened_length >= len(TOOL_CALLS_MARKER):
                 message["content"] = text[: len(text) - opened_length]
-                message["tool_calls"] = []
+                message["tool_calls"] = [{}]
             else:
                 message["content"] = text
         if finish_reason:
             message["finish_reason"] = finish_reason
-            if finish_reason == "stop" and message.get("tool_calls"):
+            if (
+                finish_reason == "stop"
+                and message.get("tool_calls")
+                and message["tool_calls"] != [{}]
+            ):
                 message["finish_reason"] = "tool_calls"
         return message
 
@@ -273,10 +282,10 @@ def test_default_response_template():
             ),
             reasoning_marker + "think" + reasoning_end + "answer" + stop,
         ),
-        (dict(role="assistant", content="", tool_calls=[]), tool_calls_begin),
+        (dict(role="assistant", content="", tool_calls=[{}]), tool_calls_begin),
         (
             # Thinking ended and the tool call channel opened, but nothing is written yet.
-            dict(role="assistant", reasoning="think", content="", tool_calls=[]),
+            dict(role="assistant", reasoning="think", content="", tool_calls=[{}]),
             reasoning_marker + "think" + reasoning_end + tool_calls_begin,
         ),
         (
@@ -397,7 +406,7 @@ def test_default_response_template():
     )
     assert_equal(
         {key: channel_switch[key] for key in ("reasoning", "content", "tool_calls")},
-        dict(reasoning="think", content="", tool_calls=[]),
+        dict(reasoning="think", content="", tool_calls=[{}]),
         "replacement switches from reasoning to tool calls",
     )
     arguments_cut = template.parse(

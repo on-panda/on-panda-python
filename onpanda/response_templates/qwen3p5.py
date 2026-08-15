@@ -357,10 +357,14 @@ def parse_qwen_response_text(text, tools=None, reasoning_content_separator="\n\n
     else:
         tool_calls = parse_tool_calls(remaining_text[tool_call_begin:], tools)
         message["content"] = re.sub(r"\n+$", "", remaining_text[:tool_call_begin])
-        message["tool_calls"] = tool_calls
+        message["tool_calls"] = tool_calls or [{}]
 
     if has_im_end:
-        message["finish_reason"] = "tool_calls" if message.get("tool_calls") else "stop"
+        message["finish_reason"] = (
+            "tool_calls"
+            if message.get("tool_calls") and message["tool_calls"] != [{}]
+            else "stop"
+        )
     elif (
         reasoning_closed and not message.get("content") and "tool_calls" not in message
     ):
@@ -377,12 +381,14 @@ def parse_qwen_response_text(text, tools=None, reasoning_content_separator="\n\n
 
 def normalize_message_tool_calls(message, messages=None):
     """Qwen3.5 does not emit tool call ids, so synthesize ids unique across the trajectory."""
-    if not message.get("tool_calls"):
+    if not message.get("tool_calls") or message["tool_calls"] == [{}]:
         return message
     used_tool_call_ids = set()
     previous_tool_call_count = 0
     for previous_message in messages or []:
         for tool_call in previous_message.get("tool_calls") or []:
+            if not tool_call:
+                continue
             previous_tool_call_count += 1
             if tool_call.get("id"):
                 used_tool_call_ids.add(tool_call["id"])
@@ -502,9 +508,12 @@ class Qwen3p5ResponseTemplate:
         if tool_calls is not None:
             if message.get("content"):
                 append_raw(self.content_tool_calls_separator)
-            if not tool_calls:
+            # [{}] is the open-channel sentinel, not a call record.
+            if not tool_calls or tool_calls == [{}]:
                 append_raw(TOOL_CALL_BEGIN)
-            for tool_call_position, tool_call in enumerate(tool_calls):
+            for tool_call_position, tool_call in enumerate(
+                [] if tool_calls == [{}] else tool_calls
+            ):
                 if tool_call_position:
                     append_raw(self.tool_call_separator)
                 function = tool_call.get("function") or {}
@@ -593,7 +602,11 @@ class Qwen3p5ResponseTemplate:
         )
         if finish_reason:
             message["finish_reason"] = finish_reason
-            if finish_reason == "stop" and message.get("tool_calls"):
+            if (
+                finish_reason == "stop"
+                and message.get("tool_calls")
+                and message["tool_calls"] != [{}]
+            ):
                 message["finish_reason"] = "tool_calls"
         return normalize_message_tool_calls(message, messages)
 

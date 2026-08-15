@@ -342,6 +342,8 @@ class BestOfNMixin:
                     json.dumps(content, ensure_ascii=False, indent=2, default=str)
                 )
             for tool_call in message.get("tool_calls") or []:
+                if not tool_call:
+                    continue
                 function = tool_call["function"]
                 arguments = function.get("arguments", {})
                 invalid_json_arguments = False
