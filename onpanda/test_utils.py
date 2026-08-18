@@ -8,6 +8,7 @@ _REASONING_ERROR_TYPES = (
     "resume_reasoning",
     "stop_content",
     "resume_content",
+    "bad_previous_turn",
 )
 
 ERROR_TYPES = _REASONING_ERROR_TYPES + (
@@ -55,7 +56,7 @@ def get_test_rejected_msgs1():
 
 
 def get_test_reasoning_msgs1(error_type="stop_reasoning"):
-    """A rejected reasoning response exercising channel-ending and resumption corrections."""
+    """Build rejected reasoning responses for channel and historical-turn corrections."""
     rejected_message = {"role": "assistant"}
     if error_type == "stop_reasoning":
         rejected_message.update(
@@ -81,10 +82,33 @@ def get_test_reasoning_msgs1(error_type="stop_reasoning"):
             content="The answer is",
             finish_reason="stop",
         )
-    return [
+    elif error_type == "bad_previous_turn":
+        rejected_message.update(
+            reasoning="2 × 5 + 4 = 2 × 9 = 18.",
+            content="The answer is 18.",
+            finish_reason="stop",
+        )
+
+    messages = [
         {"role": "user", "content": "Calculate 2 × 5 + 4."},
         rejected_message,
     ]
+    if error_type == "bad_previous_turn":
+        messages.extend(
+            [
+                {"role": "user", "content": "Wrong! Do multiplication first"},
+                {
+                    "role": "assistant",
+                    "reasoning": (
+                        "The user pointed out my mistake in the last round, so I will "
+                        "recalculate.. 2 × 5 + 4 = 10 + 4  = 14."
+                    ),
+                    "content": "You are right, the corrected answer is 14.",
+                    "finish_reason": "stop",
+                },
+            ]
+        )
+    return messages
 
 
 def get_test_reasoning_tool_calls_msgs1(error_type="bad_reasoning"):
@@ -203,6 +227,7 @@ def get_test_trajectories(error_type=None):
         "resume_content": build_far_ref(stop, " 14"),
         "bad_reasoning": build_far_ref("b.txt", "a.txt"),
         "bad_content": build_far_ref("`/tmp/b.txt`", "`/tmp/a.txt`"),
+        "bad_previous_turn": build_far_ref("2 × 9 = 18.", "10 + 4 = 14."),
         "call_name": build_far_ref(
             "read\n" + call_arguments_marker,
             "read_file",
@@ -225,6 +250,7 @@ def get_test_trajectories(error_type=None):
         "resume_content": ["content"],
         "bad_reasoning": ["reasoning"],
         "bad_content": ["content"],
+        "bad_previous_turn": ["reasoning"],
         "call_name": ["tool_calls", 0, "function", "name"],
         "bad_argument_value": [
             "tool_calls",
@@ -377,6 +403,12 @@ def get_test_trajectories(error_type=None):
         "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
         "content": "The answer is 14",
     }
+
+    bad_previous_turn = partial_message("bad_previous_turn")
+    assert bad_previous_turn == {
+        "role": "assistant",
+        "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
+    }, bad_previous_turn
 
     reasoning = partial_message("bad_reasoning")
     assert reasoning == {
