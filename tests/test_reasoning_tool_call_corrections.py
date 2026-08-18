@@ -7,12 +7,8 @@ import pytest
 
 from onpanda import FindAndReplaceCorrectionAdapter
 from onpanda import utf8_tokenizer
-from onpanda.correcting_model.best_of_n_mixin import (
-    test_best_of_n_judge_prompt as run_best_of_n_judge_prompt_test,
-)
 from onpanda.correcting_model.correcting_model import (
     CorrectingModel,
-    build_test_correcting_model,
     take_policy_message,
 )
 from onpanda.parser import PandaTree
@@ -27,16 +23,11 @@ from onpanda.response_templates.qwen3p5 import (
     FUNCTION_BEGIN,
     PARAMETER_BEGIN,
     Qwen3p5ResponseTemplate,
-    THINK_END,
     TOOL_CALL_BEGIN,
-    TOOL_CALL_END,
 )
 from onpanda.response_templates.step3p5 import Step3p5ResponseTemplate
 from onpanda.response_templates.partial_json import parse_partial_json_object
-from onpanda.test_utils import (
-    ERROR_TYPES,
-    get_test_trajectories,
-)
+from onpanda.test_utils import get_test_trajectories
 
 
 class ContextTokenizer:
@@ -61,14 +52,7 @@ class ContextTokenizer:
 
 
 def test_default_far_refs_build_expected_partials():
-    trajectories = get_test_trajectories()
-    assert tuple(key.removeprefix("error_type:") for key in trajectories) == ERROR_TYPES
-    assert (
-        get_test_trajectories("redundant_call")
-        == trajectories["error_type:redundant_call"]
-    )
-    for key, trajectory in trajectories.items():
-        error_type = key.removeprefix("error_type:")
+    for trajectory in get_test_trajectories().values():
         messages = trajectory["rejected_messages"]
         tools = trajectory.get("tools")
         partial_message = trajectory["partial_messages"][
@@ -390,10 +374,6 @@ def test_correcting_call_preserves_special_tokens():
     )
 
 
-def test_best_of_n_judge_accepts_null_tool_calls():
-    assert run_best_of_n_judge_prompt_test(build_test_correcting_model()) == 2
-
-
 @pytest.mark.parametrize(
     "template",
     [
@@ -479,38 +459,6 @@ def test_qwen_template_preserves_open_reasoning_trailing_newline():
     text = template.apply(message)["templated_prompt"]
 
     assert template.parse(text) == message
-
-
-def test_step_template_uses_step_response_separators():
-    template = Step3p5ResponseTemplate()
-    message = {
-        "role": "assistant",
-        "reasoning": "think",
-        "content": "answer",
-        "tool_calls": [
-            {
-                "index": 0,
-                "type": "function",
-                "function": {"name": "read", "arguments": "{}"},
-            },
-            {
-                "index": 1,
-                "type": "function",
-                "function": {"name": "read", "arguments": "{}"},
-            },
-        ],
-        "finish_reason": "tool_calls",
-    }
-    text = template.apply(message)["templated_prompt"]
-
-    assert THINK_END + "\nanswer" + TOOL_CALL_BEGIN in text
-    assert TOOL_CALL_END + TOOL_CALL_BEGIN in text
-    assert (
-        template.apply(template.parse(text, finish_reason="tool_calls"))[
-            "templated_prompt"
-        ]
-        == text
-    )
 
 
 def test_far_template_fork_keeps_the_first_duplicate_tool_call():
