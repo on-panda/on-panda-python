@@ -30,7 +30,7 @@ response back with `Policy-RT` produces `corrected_messages`, which can seed a l
 correction round.
 
 ```mermaid
-flowchart LR
+flowchart TB
     policy_messages["Policy messages"]
     cm_messages["CM request messages"]
     far["FAR correction"]

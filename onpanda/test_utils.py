@@ -87,83 +87,6 @@ def get_test_reasoning_msgs1(error_type="stop_reasoning"):
     ]
 
 
-def get_test_reasoning_partial_msgs_all():
-    """Build reference FAR partials for reasoning and content boundaries."""
-    with inpkg():
-        from .correcting_model.far_correction_utils import (
-            FindAndReplaceCorrectionAdapter,
-        )
-        from .response_templates import DefaultResponseTemplate
-
-    adapter = FindAndReplaceCorrectionAdapter(
-        response_template=DefaultResponseTemplate(),
-        max_replacement_tokens=20,
-    )
-    split = adapter.special_tokens["split"]
-    stop = adapter.special_tokens["stop"]
-
-    def build_far_ref(location_text, replacement_token, location_index=0):
-        return (
-            f"{split}{location_text}{split}{location_index}"
-            f"{split}{replacement_token}{split}"
-        )
-
-    default_far_refs = {
-        "stop_reasoning": build_far_ref("wait!", adapter.special_tokens["reasoning"]),
-        "resume_reasoning": build_far_ref(
-            adapter.response_template.reasoning_end_marker, " 14"
-        ),
-        "stop_content": build_far_ref("wait!", stop),
-        "resume_content": build_far_ref(stop, " 14"),
-    }
-    expected_location_paths = {
-        "stop_reasoning": [1, "reasoning"],
-        "resume_reasoning": [1, "reasoning"],
-        "stop_content": [1, "content"],
-        "resume_content": [1, "content"],
-    }
-
-    partials = {}
-    for error_type, default_far_ref in default_far_refs.items():
-        messages = get_test_reasoning_msgs1(error_type)
-        apply_result = adapter.apply(messages, default_far_ref)
-        location = apply_result["correction"]["messages_location"]
-        assert location.get("path_keys") == expected_location_paths[error_type], (
-            error_type,
-            location,
-        )
-        assert not location.get("not_found"), (error_type, location)
-        error_key = "error_type:" + error_type
-        partials[error_key] = {
-            "rejected_messages": messages,
-            "default_far_ref": default_far_ref,
-            "partial_message": apply_result["partial_messages"][-1],
-        }
-
-    assert partials["error_type:stop_reasoning"]["partial_message"] == {
-        "role": "assistant",
-        "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
-        "content": "",
-        "finish_reason": "reasoning_end",
-    }
-    assert partials["error_type:resume_reasoning"]["partial_message"] == {
-        "role": "assistant",
-        "reasoning": "2 × 5 + 4 = 10 + 4 = 14",
-    }
-    assert partials["error_type:stop_content"]["partial_message"] == {
-        "role": "assistant",
-        "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
-        "content": "The answer is 14.",
-        "finish_reason": "stop",
-    }
-    assert partials["error_type:resume_content"]["partial_message"] == {
-        "role": "assistant",
-        "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
-        "content": "The answer is 14",
-    }
-    return partials
-
-
 def get_test_reasoning_tool_calls_msgs1(error_type="bad_reasoning"):
     """A rejected reasoning tool call response, whose thinking picks the wrong file path."""
     tools = [
@@ -242,8 +165,8 @@ def get_test_reasoning_tool_calls_msgs1(error_type="bad_reasoning"):
     return rejected_msgs, tools
 
 
-def get_test_reasoning_tool_calls_partial_msgs_all():
-    """Build reference FAR partials in the canonical default response template."""
+def get_test_trajectories(error_type=None):
+    """Build rejected/chosen trajectories and their reference FAR partials."""
     with inpkg():
         from .correcting_model.far_correction_utils import (
             FindAndReplaceCorrectionAdapter,
@@ -272,6 +195,12 @@ def get_test_reasoning_tool_calls_partial_msgs_all():
         )
 
     default_far_refs = {
+        "stop_reasoning": build_far_ref("wait!", adapter.special_tokens["reasoning"]),
+        "resume_reasoning": build_far_ref(
+            adapter.response_template.reasoning_end_marker, " 14"
+        ),
+        "stop_content": build_far_ref("wait!", stop),
+        "resume_content": build_far_ref(stop, " 14"),
         "bad_reasoning": build_far_ref("b.txt", "a.txt"),
         "bad_content": build_far_ref("`/tmp/b.txt`", "`/tmp/a.txt`"),
         "call_name": build_far_ref(
@@ -290,48 +219,46 @@ def get_test_reasoning_tool_calls_partial_msgs_all():
         "redundant_call": build_far_ref("\n" + CALL_BEGIN_MARKER, stop, -1),
     }
     expected_location_paths = {
-        "bad_reasoning": [1, "reasoning"],
-        "bad_content": [1, "content"],
-        "call_name": [1, "tool_calls", 0, "function", "name"],
+        "stop_reasoning": ["reasoning"],
+        "resume_reasoning": ["reasoning"],
+        "stop_content": ["content"],
+        "resume_content": ["content"],
+        "bad_reasoning": ["reasoning"],
+        "bad_content": ["content"],
+        "call_name": ["tool_calls", 0, "function", "name"],
         "bad_argument_value": [
-            1,
             "tool_calls",
             0,
             "function",
             "arguments",
         ],
         "bad_argument_key": [
-            1,
             "tool_calls",
             0,
             "function",
             "arguments",
         ],
         "bad_argument_num": [
-            1,
             "tool_calls",
             0,
             "function",
             "arguments",
         ],
         "bad_argument_arg2": [
-            1,
             "tool_calls",
             0,
             "function",
             "arguments",
         ],
         "bad_argument_json": [
-            1,
             "tool_calls",
             0,
             "function",
             "arguments",
         ],
         # Template scaffolding maps to the channel immediately before the marker.
-        "no_call": [1, "content"],
+        "no_call": ["content"],
         "redundant_call": [
-            1,
             "tool_calls",
             0,
             "function",
@@ -339,88 +266,177 @@ def get_test_reasoning_tool_calls_partial_msgs_all():
         ],
     }
 
-    partials = {}
-    for error_type, default_far_ref in default_far_refs.items():
-        messages, tools = get_test_reasoning_tool_calls_msgs1(error_type)
-        apply_result = adapter.apply(messages, default_far_ref, tools=tools)
+    chosen_reasoning_messages = [
+        {"role": "user", "content": "Calculate 2 × 5 + 4."},
+        {
+            "role": "assistant",
+            "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
+            "content": "The answer is 14.",
+            "finish_reason": "stop",
+        },
+    ]
+    chosen_tool_messages = [
+        {"role": "user", "content": "Read the first 10 lines of /tmp/a.txt for me."},
+        {
+            "role": "assistant",
+            "reasoning": (
+                "The user wants /tmp/a.txt, so I should read /tmp/a.txt with limit 10."
+            ),
+            "content": "",
+            "tool_calls": [
+                {
+                    "index": 0,
+                    "type": "function",
+                    "id": "functions.read_file:0",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": '{"path": "/tmp/a.txt", "limit": 10}',
+                    },
+                }
+            ],
+            "finish_reason": "tool_calls",
+        },
+    ]
+
+    trajectories = {}
+    for current_error_type, default_far_ref in default_far_refs.items():
+        if current_error_type in _REASONING_ERROR_TYPES:
+            rejected_messages = get_test_reasoning_msgs1(current_error_type)
+            trajectory = {
+                "rejected_messages": rejected_messages,
+                "chosen_messages": deepcopy(chosen_reasoning_messages),
+                "default_far_ref": default_far_ref,
+                "fork_message_index": 1,
+            }
+        else:
+            rejected_messages, tools = get_test_reasoning_tool_calls_msgs1(
+                current_error_type
+            )
+            chosen_messages = deepcopy(chosen_tool_messages)
+            # Keep the corrected content because these forks precede the tool-call marker.
+            if current_error_type in ("bad_content", "no_call"):
+                chosen_messages[1][
+                    "content"
+                ] = "I will call read_file tool to read `/tmp/a.txt` with limit 10."
+            trajectory = {
+                "tools": tools,
+                "rejected_messages": rejected_messages,
+                "chosen_messages": chosen_messages,
+                "default_far_ref": default_far_ref,
+                "fork_message_index": 1,
+            }
+
+        apply_result = adapter.apply(
+            rejected_messages,
+            default_far_ref,
+            tools=trajectory.get("tools"),
+        )
         location = apply_result["correction"]["messages_location"]
-        assert location.get("path_keys") == expected_location_paths[error_type], (
-            error_type,
+        assert (
+            location.get("path_keys")
+            == [trajectory["fork_message_index"]]
+            + expected_location_paths[current_error_type]
+        ), (
+            current_error_type,
             location,
         )
-        assert not location.get("not_found"), (error_type, location)
-        error_key = "error_type:" + error_type
-        partials[error_key] = {
-            "rejected_messages": messages,
-            "default_far_ref": default_far_ref,
-            "partial_message": apply_result["partial_messages"][-1],
-        }
+        assert not location.get("not_found"), (current_error_type, location)
+        trajectory["partial_messages"] = apply_result["partial_messages"]
+        fork_message_index = trajectory["fork_message_index"]
+        partial_templated = adapter.response_template.apply(
+            trajectory["partial_messages"][fork_message_index]
+        )["templated_prompt"]
+        chosen_templated = adapter.response_template.apply(
+            trajectory["chosen_messages"][fork_message_index]
+        )["templated_prompt"]
+        assert chosen_templated.startswith(partial_templated), current_error_type
+        trajectories["error_type:" + current_error_type] = trajectory
 
-    reasoning = partials["error_type:bad_reasoning"]["partial_message"]
+    def partial_message(current_error_type):
+        trajectory = trajectories["error_type:" + current_error_type]
+        return trajectory["partial_messages"][trajectory["fork_message_index"]]
+
+    assert partial_message("stop_reasoning") == {
+        "role": "assistant",
+        "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
+        "content": "",
+        "finish_reason": "reasoning_end",
+    }
+    assert partial_message("resume_reasoning") == {
+        "role": "assistant",
+        "reasoning": "2 × 5 + 4 = 10 + 4 = 14",
+    }
+    assert partial_message("stop_content") == {
+        "role": "assistant",
+        "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
+        "content": "The answer is 14.",
+        "finish_reason": "stop",
+    }
+    assert partial_message("resume_content") == {
+        "role": "assistant",
+        "reasoning": "2 × 5 + 4 = 10 + 4 = 14.",
+        "content": "The answer is 14",
+    }
+
+    reasoning = partial_message("bad_reasoning")
     assert reasoning == {
         "role": "assistant",
         "reasoning": "The user wants /tmp/a.txt, so I should read /tmp/a.txt",
     }, reasoning
 
-    content = partials["error_type:bad_content"]["partial_message"]
+    content = partial_message("bad_content")
     assert content["content"] == "I will call read_file tool to read `/tmp/a.txt`"
     assert "tool_calls" not in content and "finish_reason" not in content, content
 
-    call_name = partials["error_type:call_name"]["partial_message"]
+    call_name = partial_message("call_name")
     assert call_name["tool_calls"][0]["function"] == {"name": "read_file"}
     assert "finish_reason" not in call_name, call_name
 
-    bad_argument_value = partials["error_type:bad_argument_value"]["partial_message"]
+    bad_argument_value = partial_message("bad_argument_value")
     assert bad_argument_value["tool_calls"][0]["function"]["arguments"] == (
         '{"path": "/tmp/a.txt'
     ), bad_argument_value
 
-    bad_argument_key = partials["error_type:bad_argument_key"]["partial_message"]
+    bad_argument_key = partial_message("bad_argument_key")
     assert bad_argument_key["tool_calls"][0]["function"]["arguments"] == (
         '{"path"'
     ), bad_argument_key
 
-    bad_argument_num = partials["error_type:bad_argument_num"]["partial_message"]
+    bad_argument_num = partial_message("bad_argument_num")
     assert bad_argument_num["tool_calls"][0]["function"]["arguments"] == (
         '{"path": "/tmp/a.txt", "limit"'
     ), bad_argument_num
 
-    bad_argument_arg2 = partials["error_type:bad_argument_arg2"]["partial_message"]
+    bad_argument_arg2 = partial_message("bad_argument_arg2")
     assert bad_argument_arg2["tool_calls"][0]["function"]["arguments"] == (
         '{"path": "/tmp/a.txt", "limit": 10'
     ), bad_argument_arg2
 
-    bad_argument_json = partials["error_type:bad_argument_json"]["partial_message"]
+    bad_argument_json = partial_message("bad_argument_json")
     assert bad_argument_json["tool_calls"][0]["function"]["arguments"] == (
         '{"path": "/tmp/a.txt"'
     ), bad_argument_json
 
-    no_call = partials["error_type:no_call"]["partial_message"]
+    no_call = partial_message("no_call")
     assert no_call["tool_calls"] == [{}], no_call
     assert no_call["content"].endswith("`/tmp/a.txt` with limit 10."), no_call
     assert "finish_reason" not in no_call, no_call
 
-    redundant_call = partials["error_type:redundant_call"]["partial_message"]
+    redundant_call = partial_message("redundant_call")
     assert len(redundant_call["tool_calls"]) == 1, redundant_call
     assert redundant_call["tool_calls"][0]["function"]["arguments"] == (
         '{"path": "/tmp/a.txt", "limit": 10}'
     ), redundant_call
     assert redundant_call["finish_reason"] == "tool_calls", redundant_call
 
-    return partials
+    if error_type is not None:
+        return trajectories["error_type:" + error_type]
+    return trajectories
 
 
 def get_test_msgs(error_type):
-    if error_type in _REASONING_ERROR_TYPES:
-        return get_test_reasoning_msgs1(error_type), None
-    return get_test_reasoning_tool_calls_msgs1(error_type)
-
-
-def get_test_partial_msgs_all():
-    return {
-        **get_test_reasoning_partial_msgs_all(),
-        **get_test_reasoning_tool_calls_partial_msgs_all(),
-    }
+    trajectory = get_test_trajectories(error_type)
+    return trajectory["rejected_messages"], trajectory.get("tools")
 
 
 def print_response_template_partial_messages(response_template):
@@ -436,9 +452,10 @@ def print_response_template_partial_messages(response_template):
         tokenizer=response_template.name_or_path or "utf8_tokenizer",
         max_replacement_tokens=1,
     )
-    for error_key, partial_ref in get_test_partial_msgs_all().items():
-        rejected_message = partial_ref["rejected_messages"][-1]
-        partial_message = partial_ref["partial_message"]
+    for error_key, trajectory in get_test_trajectories().items():
+        message_index = trajectory["fork_message_index"]
+        rejected_message = trajectory["rejected_messages"][message_index]
+        partial_message = trajectory["partial_messages"][message_index]
         partial_templated = response_template.apply(partial_message)["templated_prompt"]
         rejected_applied = response_template.apply(rejected_message)
         rejected_templated = rejected_applied["templated_prompt"]
@@ -485,7 +502,7 @@ def print_response_template_partial_messages(response_template):
         print("rejected_response:")
         print(json.dumps(rejected_message, ensure_ascii=False, indent=2)[2:-2])
         print(
-            f"default_far_ref: {partial_ref['default_far_ref']!r}",
+            f"default_far_ref: {trajectory['default_far_ref']!r}",
             f"partial____templated: '''{partial_templated}'''",
             f"replacement_tokens_1: '''{replacement_tokens_1}'''",
             f"templated_far: {templated_far!r}",
@@ -497,4 +514,4 @@ def print_response_template_partial_messages(response_template):
 if __name__ == "__main__":
     from boxx import *
 
-    partial_msgs_all = get_test_partial_msgs_all()
+    trajectories = get_test_trajectories()

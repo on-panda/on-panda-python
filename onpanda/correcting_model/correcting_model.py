@@ -17,7 +17,7 @@ with mximport.inpkg():
     from ..test_utils import (
         ERROR_TYPES,
         build_test_tokenizer,
-        get_test_msgs,
+        get_test_trajectories,
     )
     from ..utils import RESPONSE_ROLES
 
@@ -433,9 +433,12 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
 
         correcteds = {}
         print("test error_types:", error_types)
+        trajectories = get_test_trajectories()
 
         def f(error_type):
-            msgs, tools = get_test_msgs(error_type)
+            trajectory = trajectories["error_type:" + error_type]
+            msgs = deepcopy(trajectory["rejected_messages"])
+            tools = deepcopy(trajectory.get("tools"))
 
             correcteds[error_type] = self.iterative_correction(
                 msgs,
@@ -568,7 +571,7 @@ if __name__ == "__main__":
     from boxx import *
     from onpanda.test_utils import (
         get_test_rejected_msgs1,
-        get_test_reasoning_tool_calls_msgs1,
+        get_test_trajectories,
     )
 
     _d = build_correcting_model_with_policy()
@@ -593,7 +596,9 @@ if __name__ == "__main__":
     ]
     msgs = get_test_rejected_msgs1()[0]
     tools = None
-    msgs, tools = get_test_reasoning_tool_calls_msgs1("bad_argument_arg2")
+    trajectory = get_test_trajectories("bad_argument_arg2")
+    msgs = trajectory["rejected_messages"]
+    tools = trajectory.get("tools")
 
     # msgs = [{"role": "user", "content": "How many `1` in result of 652*8596"},]
 

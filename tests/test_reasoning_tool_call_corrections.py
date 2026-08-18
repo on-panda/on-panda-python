@@ -35,8 +35,7 @@ from onpanda.response_templates.step3p5 import Step3p5ResponseTemplate
 from onpanda.response_templates.partial_json import parse_partial_json_object
 from onpanda.test_utils import (
     ERROR_TYPES,
-    get_test_msgs,
-    get_test_partial_msgs_all,
+    get_test_trajectories,
 )
 
 
@@ -62,17 +61,24 @@ class ContextTokenizer:
 
 
 def test_default_far_refs_build_expected_partials():
-    partials = get_test_partial_msgs_all()
-    assert tuple(key.removeprefix("error_type:") for key in partials) == ERROR_TYPES
-    for key, partial_ref in partials.items():
+    trajectories = get_test_trajectories()
+    assert tuple(key.removeprefix("error_type:") for key in trajectories) == ERROR_TYPES
+    assert (
+        get_test_trajectories("redundant_call")
+        == trajectories["error_type:redundant_call"]
+    )
+    for key, trajectory in trajectories.items():
         error_type = key.removeprefix("error_type:")
-        messages, tools = get_test_msgs(error_type)
-        partial_message = partial_ref["partial_message"]
+        messages = trajectory["rejected_messages"]
+        tools = trajectory.get("tools")
+        partial_message = trajectory["partial_messages"][
+            trajectory["fork_message_index"]
+        ]
         for template in (Qwen3p5ResponseTemplate(), Step3p5ResponseTemplate()):
             text = template.apply(partial_message)["templated_prompt"]
             parsed_message = template.parse(
                 text,
-                messages=messages[:-1],
+                messages=messages[: trajectory["fork_message_index"]],
                 tools=tools,
                 finish_reason=partial_message.get("finish_reason"),
             )
@@ -508,8 +514,9 @@ def test_step_template_uses_step_response_separators():
 
 
 def test_far_template_fork_keeps_the_first_duplicate_tool_call():
-    rejected_messages, _ = get_test_msgs("redundant_call")
-    rejected_message = deepcopy(rejected_messages[-1])
+    trajectory = get_test_trajectories("redundant_call")
+    fork_message_index = trajectory["fork_message_index"]
+    rejected_message = deepcopy(trajectory["rejected_messages"][fork_message_index])
     template = Step3p5ResponseTemplate()
     applied = dict(
         template.apply(rejected_message),
