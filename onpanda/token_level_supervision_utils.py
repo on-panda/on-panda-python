@@ -14,7 +14,7 @@ def _minimal_reversible_patch(
     • contains ``center_idx`` and
     • round‑trips through decode‑then‑encode unchanged, i.e.
       ``tokens[start:end] == tokenizer.encode(
-           tokenizer.decode(tokens[start:end], skip_special_tokens=True),
+           tokenizer.decode(tokens[start:end], skip_special_tokens=False),
            add_special_tokens=False
       )``
 
@@ -28,7 +28,7 @@ def _minimal_reversible_patch(
 
     def reversible(s: int, e: int) -> bool:
         sub = tokens[s:e]
-        text = tokenizer.decode(sub, skip_special_tokens=True)
+        text = tokenizer.decode(sub, skip_special_tokens=False)
         return tokenizer.encode(text, add_special_tokens=False) == sub
 
     if reversible(start, end):
@@ -118,12 +118,12 @@ def compute_token_level_supervision(
         """
         pre = {
             "type": "text",
-            "text": tokenizer.decode(tokens[:s], skip_special_tokens=True),
+            "text": tokenizer.decode(tokens[:s], skip_special_tokens=False),
             "ignore_loss": True,
         }
         patch = {
             "type": "text",
-            "text": tokenizer.decode(tokens[s:e], skip_special_tokens=True),
+            "text": tokenizer.decode(tokens[s:e], skip_special_tokens=False),
             "ignore_loss": ignore_patch_loss,
             "tokens": tokens[s:e],
         }
@@ -131,7 +131,7 @@ def compute_token_level_supervision(
             patch["rejected_loss"] = True
         post = {
             "type": "text",
-            "text": tokenizer.decode(tokens[e:], skip_special_tokens=True),
+            "text": tokenizer.decode(tokens[e:], skip_special_tokens=False),
             "ignore_loss": True,
         }
         if is_fork_on_stop:
