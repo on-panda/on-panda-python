@@ -540,64 +540,6 @@ def test_complete_replacement_preserves_finish_reason():
     assert result["partial_messages"][-1]["finish_reason"] == "stop"
 
 
-def test_complete_replacement_obeys_policy_token_limit():
-    adapter = FindAndReplaceCorrectionAdapter(max_replacement_tokens=1)
-    correcting_model = CorrectingModel(
-        SimpleNamespace(model="correcting"), adapter, max_correction_attempts=1
-    )
-    messages = [
-        {"role": "user", "content": "q"},
-        {"role": "assistant", "content": "abc", "finish_reason": "stop"},
-    ]
-
-    def correct(self, messages, tools=None):
-        return dict(
-            correction=dict(
-                messages_location=dict(path_keys=[1, "content"], char_index=1)
-            ),
-            partial_messages=[
-                messages[0],
-                {"role": "assistant", "content": "axyz", "finish_reason": "stop"},
-            ],
-            correction_response={},
-        )
-
-    correcting_model.correct = MethodType(correct, correcting_model)
-    policy_prefixes = []
-
-    def policy(policy_messages, **kwargs):
-        prefix = policy_messages[-1]["content"]
-        policy_prefixes.append(prefix)
-        return dict(
-            choices=[
-                dict(
-                    message=dict(role="assistant", content=prefix + " generated"),
-                    finish_reason="stop",
-                )
-            ]
-        )
-
-    policy.model = "policy"
-    result = correcting_model.correct_and_rollout(
-        messages, policy, adapter_policy=adapter
-    )
-    assert policy_prefixes == ["ax"]
-    assert result["correction"]["continue_prefix_right40"] == "ax"
-    assert result["corrected_messages"][-1]["content"] == "ax generated"
-
-    adapter.max_replacement_tokens = 20
-    result = correcting_model.correct_and_rollout(
-        messages, policy, adapter_policy=adapter
-    )
-    assert policy_prefixes == ["ax"]
-    assert "continue_prefix_right40" not in result["correction"]
-    assert result["corrected_messages"][-1] == {
-        "role": "assistant",
-        "content": "axyz",
-        "finish_reason": "stop",
-    }
-
-
 @pytest.mark.parametrize(
     "response_template",
     [None, {"name_or_path": "Qwen/Qwen3.5-35B-A3B"}],

@@ -156,11 +156,15 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                 corrected_result["generate_new"] = True
             elif corrected_result["correction"]["messages_location"].get("is_good"):
                 corrected_messages = messages
-            else:
+            else:  # has correction
                 partial_messages = correction_result["partial_messages"]
                 corrected_message_index = len(partial_messages) - 1
                 partial_templated = adapter_policy.build_partial_templated_prompt(
                     messages[corrected_message_index], partial_messages[-1]
+                )
+                prefix = partial_templated["templated_prompt"]
+                corrected_result["correction"]["continue_prefix_right40"] = (
+                    prefix if len(prefix) <= 40 else "..." + prefix[-37:]
                 )
                 complete_templated_prompt = adapter_policy.response_template.apply(
                     partial_messages[-1]
@@ -169,18 +173,18 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                     "stop",
                     "tool_calls",
                 ) and adapter_policy.tokenizer.encode(
-                    partial_templated["templated_prompt"], add_special_tokens=False
+                    prefix, add_special_tokens=False
                 ) == adapter_policy.tokenizer.encode(
                     complete_templated_prompt, add_special_tokens=False
-                ):
+                ):  # correction to stop
                     corrected_messages = partial_messages
-                else:
+                else:  # continue_final_message with policy response_template
                     policy_choice = chat_policy(
                         partial_messages[:-1]
                         + [
                             dict(
                                 role="assistant",
-                                content=partial_templated["templated_prompt"],
+                                content=prefix,
                             )
                         ],
                         continue_final_message=True,
@@ -189,10 +193,6 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                         return_dict=True,
                         **continuation_kwargs,
                     )["choices"][0]
-                    prefix = partial_templated["templated_prompt"]
-                    corrected_result["correction"]["continue_prefix_right40"] = (
-                        prefix if len(prefix) <= 40 else "..." + prefix[-37:]
-                    )
                     policy_message = policy_choice["message"]
                     response_text = policy_message.get("content") or prefix
                     generated_reasoning = policy_message.get(
@@ -330,7 +330,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
             if correction is not None:
                 if corrected_result["generate_new"]:
                     applied_corrections = 0
-                elif self._is_applied_correction(correction):
+                elif correction["messages_location"].get("path_keys"):
                     applied_corrections += 1
                 if correction["messages_location"].get("is_good"):
                     break
@@ -408,9 +408,6 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         return not messages_location.get("is_good") and messages_location.get(
             "not_found"
         )
-
-    def _is_applied_correction(self, correction):
-        return bool(correction["messages_location"].get("path_keys"))
 
     def test(
         self,
