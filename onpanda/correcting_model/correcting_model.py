@@ -55,7 +55,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         self.adapter = adapter
         self.max_correction_attempts = max_correction_attempts
 
-    def correct(self, messages, tools=None, adapter_policy=None):
+    def correct(self, messages, tools=None):
         correction_prompt = self.adapter.build_correction_prompt(messages)
         correction_response = self.chat_correcting(
             correction_prompt,
@@ -69,9 +69,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         far_text = message["content"]
         if "new_messages" in correction_response:
             del correction_response["new_messages"]
-        apply_res = self.adapter.apply(
-            messages, far_text, tools=tools, adapter_policy=adapter_policy
-        )
+        apply_res = self.adapter.apply(messages, far_text, tools=tools)
         correction = apply_res["correction"]
         correction["response_info"] = dict(
             model=correction_response.get("model"),
@@ -129,9 +127,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
             else:
                 corrected_result["correcting_model_name"] = self.chat_correcting.model
                 for _try_idx in range(self.max_correction_attempts):
-                    correction_result = self.correct(
-                        messages, tools=tools, adapter_policy=adapter_policy
-                    )
+                    correction_result = self.correct(messages, tools=tools)
                     if not self._is_not_found_correction(
                         correction_result["correction"]
                     ):

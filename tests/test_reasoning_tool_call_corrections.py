@@ -353,7 +353,7 @@ def test_correcting_call_preserves_special_tokens():
         def build_correction_prompt(self, messages):
             return messages
 
-        def apply(self, messages, far_text, tools=None, adapter_policy=None):
+        def apply(self, messages, far_text, tools=None):
             return {"correction": {}, "partial_messages": messages}
 
     def chat_correcting(messages, **kwargs):
@@ -512,12 +512,8 @@ def test_policy_prefix_is_a_prefix_of_the_corrected_token_sequence():
     assert partial == {"templated_prompt": "bs", "replacement": "bs"}
 
 
-def test_complete_early_stop_is_not_rejected_as_no_op():
+def test_complete_replacement_preserves_finish_reason():
     correcting_adapter = FindAndReplaceCorrectionAdapter(max_replacement_tokens=20)
-    policy_adapter = FindAndReplaceCorrectionAdapter(
-        max_replacement_tokens=20,
-        response_template={"name_or_path": "Qwen/Qwen3.5-35B-A3B"},
-    )
     split = correcting_adapter.special_tokens["split"]
     stop = correcting_adapter.special_tokens["stop"]
     result = correcting_adapter.apply(
@@ -526,7 +522,6 @@ def test_complete_early_stop_is_not_rejected_as_no_op():
             {"role": "assistant", "content": "abc", "finish_reason": "stop"},
         ],
         split + "bc" + split + "0" + split + stop + split,
-        adapter_policy=policy_adapter,
     )
 
     assert result["partial_messages"][-1] == {
@@ -541,7 +536,6 @@ def test_complete_early_stop_is_not_rejected_as_no_op():
             {"role": "assistant", "content": "abc", "finish_reason": "length"},
         ],
         split + "bc" + split + "0" + split + "bc" + stop + split,
-        adapter_policy=policy_adapter,
     )
     assert result["partial_messages"][-1]["finish_reason"] == "stop"
 
@@ -556,7 +550,7 @@ def test_complete_replacement_obeys_policy_token_limit():
         {"role": "assistant", "content": "abc", "finish_reason": "stop"},
     ]
 
-    def correct(self, messages, tools=None, adapter_policy=None):
+    def correct(self, messages, tools=None):
         return dict(
             correction=dict(
                 messages_location=dict(path_keys=[1, "content"], char_index=1)
@@ -604,23 +598,6 @@ def test_complete_replacement_obeys_policy_token_limit():
     }
 
 
-def test_complete_no_op_is_rejected():
-    adapter = FindAndReplaceCorrectionAdapter(max_replacement_tokens=20)
-    split = adapter.special_tokens["split"]
-    stop = adapter.special_tokens["stop"]
-    messages = [
-        {"role": "user", "content": "q"},
-        {"role": "assistant", "content": "abc", "finish_reason": "stop"},
-    ]
-    result = adapter.apply(
-        messages,
-        split + "bc" + split + "0" + split + "bc" + stop + split,
-    )
-
-    assert result["correction"]["messages_location"]["not_found"] is True
-    assert result["partial_messages"] == messages
-
-
 @pytest.mark.parametrize(
     "response_template",
     [None, {"name_or_path": "Qwen/Qwen3.5-35B-A3B"}],
@@ -633,7 +610,7 @@ def test_structured_tool_calls_survive_policy_continuation(response_template):
         SimpleNamespace(model="correcting"), adapter, max_correction_attempts=1
     )
 
-    def correct(self, messages, tools=None, adapter_policy=None):
+    def correct(self, messages, tools=None):
         return {
             "correction": {
                 "messages_location": {"path_keys": [1, "content"], "char_index": 0}

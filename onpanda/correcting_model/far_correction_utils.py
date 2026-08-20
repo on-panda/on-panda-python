@@ -392,11 +392,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         ]
         return far_correction
 
-    def apply(self, messages, correction_or_far_text, tools=None, adapter_policy=None):
+    def apply(self, messages, correction_or_far_text, tools=None):
         """
         Cut in the response template's text space and parse back, so a replacement can end any
-        channel and every downstream channel is truncated by construction. adapter_policy decides
-        whether the correction survives the policy's own template, defaults to this adapter.
+        channel and every downstream channel is truncated by construction.
         """
         if isinstance(correction_or_far_text, str):
             parse_result = self.verifier.parse(correction_or_far_text)
@@ -481,31 +480,6 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
             messages=messages,
             tools=tools,
         )
-        policy_templated = (adapter_policy or self).build_partial_templated_prompt(
-            messages[message_index], partial_message
-        )
-        if not policy_templated["replacement"] and (
-            partial_message.get("finish_reason") not in ("stop", "tool_calls")
-            or (
-                messages[message_index].get("finish_reason") in ("stop", "tool_calls")
-                and policy_templated["templated_prompt"]
-                == (adapter_policy or self).response_template.apply(
-                    messages[message_index]
-                )["templated_prompt"]
-            )
-        ):
-            # A no-op correction: continuing it would reproduce the rejected response. Either the
-            # replacement only repeats the rejected text, or the policy's response template cannot
-            # express it, e.g. an opened but still empty tool call channel. Let the caller retry.
-            messages_location.update(
-                not_found=True,
-                find_feedback="no-op correction: partial response is a prefix of the rejected one",
-            )
-            return dict(
-                correction=correction,
-                partial_messages=messages,
-            )
-
         partial_messages = deepcopy(messages[:message_index]) + [partial_message]
         return dict(
             correction=correction,
@@ -518,7 +492,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         model's own token boundary: diff the complete token sequences and keep only the first
         `max_replacement_tokens` tokens after their fork.
 
-        An empty replacement means this template's round trip normalized the correction away.
+        An empty replacement means continuation starts at the fork without an injected token.
         """
         templated_prompt = self.response_template.apply(partial_message)[
             "templated_prompt"
@@ -646,18 +620,6 @@ def test_reasoning_and_tool_calls_correcting():
         correction["partial_messages"][-1]["finish_reason"] == "tool_calls"
     ), correction
 
-    # A no-op correction is retryable instead of silently rolling out the rejected response.
-    no_op_messages = [
-        dict(role="user", content="Name three kinds of fruit:"),
-        dict(role="assistant", content="Apple, potato, banana.", finish_reason="stop"),
-    ]
-    no_op_location = adapter.apply(no_op_messages, build_far_text(" potato", " p"))[
-        "correction"
-    ]["messages_location"]
-    assert (
-        no_op_location.get("not_found") and "no-op" in no_op_location["find_feedback"]
-    ), no_op_location
-
     # The policy renders the same partial message with its own template, and the fork against
     # the rejected response is the text the policy has to continue from.
     adapter_policy = FindAndReplaceCorrectionAdapter(
@@ -709,7 +671,7 @@ def test_reasoning_and_tool_calls_correcting():
     assert (
         correction_prompt[2]["content"].count("<|ON_PANDA_TOOL_RESPONSE|>") == 2
     ), correction_prompt[2]
-    return 7
+    return 6
 
 
 def test_agent_panda_json_far_correction(far_adapter, panda_json):
