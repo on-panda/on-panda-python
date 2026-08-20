@@ -314,7 +314,7 @@ class PandaTree:
         return dict(sfts=sfts, preferences=preferences)
 
     def build_token_level_supervision_data_v1(
-        self, tokenizer=None, response_template=None
+        self, tokenizer=None, response_template=None, max_chosen_tokens=1
     ):
         """
         `response_template` flattens every output channel into one text, so the fork may land in
@@ -346,10 +346,14 @@ class PandaTree:
                 │       ├── text: .
                 │       └── ignore_loss: True
                 ├── finish_reason: stop
-                └── token_level: dict  12
+                └── token_level: dict  17
                     ├── fork_token_idx: 15
                     ├── chosen_token_id: 99473
                     ├── rejected_token_id: 26288
+                    ├── max_chosen_tokens: 1
+                    ├── chosen_token_ids: list  1
+                    │   └── 0: 99473
+                    ├── chosen_tokens_include_stop: False
                     ├── version: 1.0
                     ├── tokenizer: dict  1
                     │   └── name_or_path: Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4
@@ -362,6 +366,9 @@ class PandaTree:
                     │   ├── left5: 1+1=
                     │   └── right5: three
                     ├── chosen_text: two
+                    ├── rejected_text: three
+                    ├── chosen_text_unicode_range: list  2
+                    ├── rejected_text_unicode_range: list  2
                     └── rejected_content: list  3
                         ├── 0: dict  3
                         │   ├── type: text
@@ -378,6 +385,8 @@ class PandaTree:
                             ├── type: text
                             ├── text: .
                             └── ignore_loss: True
+
+        With ``response_template`` set, ``rejected_channel_text`` is also included (18 keys).
         """
         tokenizer = tokenizer or self.tokenizer
         assert (
@@ -423,6 +432,7 @@ class PandaTree:
                 chosen_content=chosen_applied["templated_prompt"],
                 rejected_content=rejected_applied["templated_prompt"],
                 tokenizer=tokenizer,
+                max_chosen_tokens=max_chosen_tokens,
             )
             token_level_info["version"] = "1.0"
             token_level_info["tokenizer"] = dict(
@@ -514,7 +524,7 @@ class PandaTree:
                 )
                 ignore_loss_unicode_mask += [
                     content[-1].get("ignore_loss", False)
-                ]  # concat stop token's mask
+                ]  # Reuse content[-1]'s loss flag for the out-of-band stop token.
                 ignore_loss_unicode_masks.append(ignore_loss_unicode_mask)
                 token_level_infos.append(token_level_v1[-1]["token_level"])
             # ignore_loss_unicode_masks = np.array(ignore_loss_unicode_masks)
@@ -546,7 +556,7 @@ class PandaTree:
         │   ├── ignore_loss: True
         │   ├── content: To determine how many times the digit 1 ap...
         │   ├── finish_reason: stop
-        │   └── token_level: dict  12
+        │   └── token_level: dict  18
         ├── 3: dict  2
         │   ├── role: system
         │   └── content: {correcting SFT system prompt}...
