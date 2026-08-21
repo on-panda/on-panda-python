@@ -26,7 +26,7 @@ ERROR_TYPES = _REASONING_ERROR_TYPES + (
 )
 
 
-def build_test_tokenizer(name_or_path="Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4"):
+def build_test_tokenizer(name_or_path="Qwen/Qwen3.5-35B-A3B"):
     with inpkg():
         from .token_level_supervision_utils import _from_pretrained_local_first
 

@@ -450,7 +450,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
 def build_test_correcting_model(
     chat_correcting=None,
     adapter=None,
-    tokenizer="Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
+    tokenizer="Qwen/Qwen3.5-35B-A3B",
 ):
     import onpanda
 
@@ -470,7 +470,7 @@ def build_test_correcting_model(
         adapter = onpanda.FindAndReplaceCorrectionAdapter(
             tokenizer=tokenizer,
             special_tokens=dict(
-                split="<|fim_pad|>",  # for qwen 2.5
+                split="<|fim_pad|>",  # for qwen
                 stop="<|fim_suffix|>",
                 is_good="<|fim_prefix|>",
                 reasoning="<|fim_middle|>",
@@ -485,7 +485,7 @@ def build_test_correcting_model(
 def build_reasoning_correcting_model(
     chat_correcting=None,
     adapter=None,
-    tokenizer="Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
+    tokenizer="Qwen/Qwen3.5-35B-A3B",
 ):
     from dotenv import load_dotenv
     from pathlib import Path

@@ -356,7 +356,7 @@ class PandaTree:
                     ├── chosen_tokens_include_stop: False
                     ├── version: 1.0
                     ├── tokenizer: dict  1
-                    │   └── name_or_path: Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4
+                    │   └── name_or_path: Qwen/Qwen3.5-35B-A3B
                     ├── chosen_dialog_key: 3
                     ├── rejected_dialog_key: 2
                     ├── rejected_finish_reason: stop
@@ -602,7 +602,7 @@ if __name__ == "__main__":
 
     # tokenizer = None
     tokenizer = __import__("transformers").AutoTokenizer.from_pretrained(
-        "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4"
+        "Qwen/Qwen3.5-35B-A3B"
     )
     # %%
 

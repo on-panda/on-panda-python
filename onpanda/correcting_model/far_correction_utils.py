@@ -680,6 +680,8 @@ def test_agent_panda_json_far_correction(far_adapter, panda_json):
     which closes the loop parser -> ground truth FAR -> locate -> apply -> reward across the
     reasoning, tool call and content channels.
     """
+    from boxx import g
+
     with mximport.inpkg():
         from ..parser import build_test_panda_tree
         from ..utils import remove_msgs_after_last_response_role
@@ -709,6 +711,7 @@ def test_agent_panda_json_far_correction(far_adapter, panda_json):
         path_keys = gt_correction["messages_location"].get("path_keys")
         if path_keys:
             located_channels.add(tuple(path_keys[1:]))
+    g()
     assert located_channels == {
         ("reasoning",),
         ("content",),
