@@ -9,6 +9,7 @@ _REASONING_ERROR_TYPES = (
     "stop_content",
     "resume_content",
     "bad_previous_turn",
+    "is_good",
 )
 
 ERROR_TYPES = _REASONING_ERROR_TYPES + (
@@ -190,7 +191,7 @@ def get_test_reasoning_tool_calls_msgs1(error_type="bad_reasoning"):
 
 
 def get_test_trajectories(error_type=None):
-    """Build rejected/chosen trajectories and their reference FAR partials."""
+    """Build test trajectories and their reference correction data."""
     with inpkg():
         from .correcting_model.far_correction_utils import (
             FindAndReplaceCorrectionAdapter,
@@ -225,9 +226,10 @@ def get_test_trajectories(error_type=None):
         ),
         "stop_content": build_far_ref("wait!", stop),
         "resume_content": build_far_ref(stop, " 14"),
+        "bad_previous_turn": build_far_ref("2 × 9 = 18.", "10 + 4 = 14."),
+        "is_good": None,
         "bad_reasoning": build_far_ref("b.txt", "a.txt"),
         "bad_content": build_far_ref("`/tmp/b.txt`", "`/tmp/a.txt`"),
-        "bad_previous_turn": build_far_ref("2 × 9 = 18.", "10 + 4 = 14."),
         "call_name": build_far_ref(
             "read\n" + call_arguments_marker,
             "read_file",
@@ -292,7 +294,7 @@ def get_test_trajectories(error_type=None):
         ],
     }
 
-    chosen_reasoning_messages = [
+    corrected_reasoning_messages = [
         {"role": "user", "content": "Calculate 2 × 5 + 4."},
         {
             "role": "assistant",
@@ -301,7 +303,7 @@ def get_test_trajectories(error_type=None):
             "finish_reason": "stop",
         },
     ]
-    chosen_tool_messages = [
+    corrected_tool_messages = [
         {"role": "user", "content": "Read the first 10 lines of /tmp/a.txt for me."},
         {
             "role": "assistant",
@@ -325,62 +327,77 @@ def get_test_trajectories(error_type=None):
     ]
 
     trajectories = {}
-    for current_error_type, default_far_ref in default_far_refs.items():
+    for current_error_type in ERROR_TYPES:
+        default_far_ref = default_far_refs[current_error_type]
         if current_error_type in _REASONING_ERROR_TYPES:
-            rejected_messages = get_test_reasoning_msgs1(current_error_type)
-            trajectory = {
-                "rejected_messages": rejected_messages,
-                "chosen_messages": deepcopy(chosen_reasoning_messages),
-                "default_far_ref": default_far_ref,
-                "fork_message_index": 1,
-            }
+            if current_error_type == "is_good":
+                # An explicit None fork marks a no-op correction.
+                messages = deepcopy(corrected_reasoning_messages)
+                trajectories["error_type:" + current_error_type] = {
+                    "messages": messages,
+                    "corrections": [
+                        {
+                            "fork_message_index": None,
+                        }
+                    ],
+                }
+                continue
+            messages = get_test_reasoning_msgs1(current_error_type)
+            corrected_messages = deepcopy(corrected_reasoning_messages)
+            tools = None
         else:
-            rejected_messages, tools = get_test_reasoning_tool_calls_msgs1(
-                current_error_type
-            )
-            chosen_messages = deepcopy(chosen_tool_messages)
+            messages, tools = get_test_reasoning_tool_calls_msgs1(current_error_type)
+            corrected_messages = deepcopy(corrected_tool_messages)
             # Keep the corrected content because these forks precede the tool-call marker.
             if current_error_type in ("bad_content", "no_call"):
-                chosen_messages[1][
+                corrected_messages[1][
                     "content"
                 ] = "I will call read_file tool to read `/tmp/a.txt` with limit 10."
-            trajectory = {
-                "tools": tools,
-                "rejected_messages": rejected_messages,
-                "chosen_messages": chosen_messages,
-                "default_far_ref": default_far_ref,
-                "fork_message_index": 1,
-            }
+
+        trajectory = {
+            "messages": messages,
+            "corrections": [
+                {
+                    "fork_message_index": 1,
+                    "corrected_messages": corrected_messages,
+                    "default_far_ref": default_far_ref,
+                }
+            ],
+        }
+        correction = trajectory["corrections"][0]
+        if tools is not None:
+            trajectory["tools"] = tools
 
         apply_result = adapter.apply(
-            rejected_messages,
-            default_far_ref,
+            messages,
+            correction["default_far_ref"],
             tools=trajectory.get("tools"),
         )
         location = apply_result["correction"]["messages_location"]
         assert (
             location.get("path_keys")
-            == [trajectory["fork_message_index"]]
+            == [correction["fork_message_index"]]
             + expected_location_paths[current_error_type]
         ), (
             current_error_type,
             location,
         )
         assert not location.get("not_found"), (current_error_type, location)
-        trajectory["partial_messages"] = apply_result["partial_messages"]
-        fork_message_index = trajectory["fork_message_index"]
+        correction["partial_messages"] = apply_result["partial_messages"]
+        fork_message_index = correction["fork_message_index"]
         partial_templated = adapter.response_template.apply(
-            trajectory["partial_messages"][fork_message_index]
+            correction["partial_messages"][fork_message_index]
         )["templated_prompt"]
-        chosen_templated = adapter.response_template.apply(
-            trajectory["chosen_messages"][fork_message_index]
+        corrected_templated = adapter.response_template.apply(
+            correction["corrected_messages"][fork_message_index]
         )["templated_prompt"]
-        assert chosen_templated.startswith(partial_templated), current_error_type
+        assert corrected_templated.startswith(partial_templated), current_error_type
         trajectories["error_type:" + current_error_type] = trajectory
 
     def partial_message(current_error_type):
         trajectory = trajectories["error_type:" + current_error_type]
-        return trajectory["partial_messages"][trajectory["fork_message_index"]]
+        correction = trajectory["corrections"][0]
+        return correction["partial_messages"][correction["fork_message_index"]]
 
     assert partial_message("stop_reasoning") == {
         "role": "assistant",
@@ -466,11 +483,6 @@ def get_test_trajectories(error_type=None):
     return trajectories
 
 
-def get_test_msgs(error_type):
-    trajectory = get_test_trajectories(error_type)
-    return trajectory["rejected_messages"], trajectory.get("tools")
-
-
 def print_response_template_partial_messages(response_template):
     with inpkg():
         from .correcting_model.far_correction_utils import (
@@ -485,65 +497,75 @@ def print_response_template_partial_messages(response_template):
         max_replacement_tokens=1,
     )
     for error_key, trajectory in get_test_trajectories().items():
-        message_index = trajectory["fork_message_index"]
-        rejected_message = trajectory["rejected_messages"][message_index]
-        partial_message = trajectory["partial_messages"][message_index]
-        partial_templated = response_template.apply(partial_message)["templated_prompt"]
-        rejected_applied = response_template.apply(rejected_message)
-        rejected_templated = rejected_applied["templated_prompt"]
-        partial_result = adapter.build_partial_templated_prompt(
-            rejected_message, partial_message
-        )
-        replacement_tokens_1 = partial_result["templated_prompt"]
-        token_level = compute_token_level_supervision(
-            chosen_content=partial_templated,
-            rejected_content=rejected_templated,
-            tokenizer=adapter.tokenizer,
-        )
-        token_level["chosen_text"] = partial_result["replacement"]
-        token_level["messages_location"] = build_messages_location(
-            dict(
-                message_index=0,
-                message=rejected_message,
-                **rejected_applied,
-            ),
-            token_level["rejected_text_unicode_range"][0],
-        )
-        if token_level["rejected_text"]:
-            templated_message = deepcopy(rejected_message)
-            templated_message["token_level"] = token_level
-            templated_far = adapter.build_correction_from_rejected_messages(
-                [templated_message],
-                templated_char_index=token_level["rejected_text_unicode_range"][0],
-            )["find_and_replace"]["far_text"]
-        else:
-            split = adapter.special_tokens["split"]
-            stop = adapter.special_tokens["stop"]
-            templated_far = (
-                f"{split}{stop}{split}0{split}"
-                f"{partial_result['replacement'] or stop}{split}"
+        for correction_index, correction in enumerate(trajectory["corrections"]):
+            message_index = correction["fork_message_index"]
+            if message_index is None:
+                continue
+            rejected_message = trajectory["messages"][message_index]
+            partial_message = correction["partial_messages"][message_index]
+            partial_templated = response_template.apply(partial_message)[
+                "templated_prompt"
+            ]
+            rejected_applied = response_template.apply(rejected_message)
+            rejected_templated = rejected_applied["templated_prompt"]
+            partial_result = adapter.build_partial_templated_prompt(
+                rejected_message, partial_message
             )
-        partial_templated, replacement_tokens_1 = (
-            text if len(text) <= 40 else "..." + text[-37:]
-            for text in (partial_templated, replacement_tokens_1)
-        )
-        print(
-            "\x1b[31m%s\x1b[0m"
-            % f"\nERROR_TYPE: {error_key.removeprefix('error_type:')}"
-        )
-        print("rejected_response:")
-        print(json.dumps(rejected_message, ensure_ascii=False, indent=2)[2:-2])
-        print(
-            f"default_far_ref: {trajectory['default_far_ref']!r}",
-            f"partial____templated: '''{partial_templated}'''",
-            f"replacement_tokens_1: '''{replacement_tokens_1}'''",
-            f"templated_far: {templated_far!r}",
-            sep="\n",
-        )
-        print()
+            replacement_tokens_1 = partial_result["templated_prompt"]
+            token_level = compute_token_level_supervision(
+                chosen_content=partial_templated,
+                rejected_content=rejected_templated,
+                tokenizer=adapter.tokenizer,
+            )
+            token_level["chosen_text"] = partial_result["replacement"]
+            token_level["messages_location"] = build_messages_location(
+                dict(
+                    message_index=0,
+                    message=rejected_message,
+                    **rejected_applied,
+                ),
+                token_level["rejected_text_unicode_range"][0],
+            )
+            if token_level["rejected_text"]:
+                templated_message = deepcopy(rejected_message)
+                templated_message["token_level"] = token_level
+                templated_far = adapter.build_correction_from_rejected_messages(
+                    [templated_message],
+                    templated_char_index=token_level["rejected_text_unicode_range"][0],
+                )["find_and_replace"]["far_text"]
+            else:
+                split = adapter.special_tokens["split"]
+                stop = adapter.special_tokens["stop"]
+                templated_far = (
+                    f"{split}{stop}{split}0{split}"
+                    f"{partial_result['replacement'] or stop}{split}"
+                )
+            partial_templated, replacement_tokens_1 = (
+                text if len(text) <= 40 else "..." + text[-37:]
+                for text in (partial_templated, replacement_tokens_1)
+            )
+            correction_label = (
+                f"{error_key.removeprefix('error_type:')}"
+                if len(trajectory["corrections"]) == 1
+                else f"{error_key.removeprefix('error_type:')}[{correction_index}]"
+            )
+            print("\x1b[31m%s\x1b[0m" % f"\nERROR_TYPE: {correction_label}")
+            print("rejected_response:")
+            print(json.dumps(rejected_message, ensure_ascii=False, indent=2)[2:-2])
+            print(
+                f"default_far_ref: {correction['default_far_ref']!r}",
+                f"partial____templated: '''{partial_templated}'''",
+                f"replacement_tokens_1: '''{replacement_tokens_1}'''",
+                f"templated_far: {templated_far!r}",
+                sep="\n",
+            )
+            print()
 
 
 if __name__ == "__main__":
     from boxx import *
 
     trajectories = get_test_trajectories()
+    tree(trajectories)
+    trajectory = trajectories["error_type:is_good"]
+    assert trajectory["corrections"][0]["fork_message_index"] is None

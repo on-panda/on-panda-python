@@ -430,7 +430,7 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
 
         def f(error_type):
             trajectory = trajectories["error_type:" + error_type]
-            msgs = deepcopy(trajectory["rejected_messages"])
+            msgs = deepcopy(trajectory["messages"])
             tools = deepcopy(trajectory.get("tools"))
 
             correcteds[error_type] = self.iterative_correction(
@@ -590,7 +590,7 @@ if __name__ == "__main__":
     msgs = get_test_rejected_msgs1()[0]
     tools = None
     trajectory = get_test_trajectories("bad_argument_arg2")
-    msgs = trajectory["rejected_messages"]
+    msgs = trajectory["messages"]
     tools = trajectory.get("tools")
 
     # msgs = [{"role": "user", "content": "How many `1` in result of 652*8596"},]

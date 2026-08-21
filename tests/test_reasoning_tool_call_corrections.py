@@ -53,20 +53,31 @@ class ContextTokenizer:
 
 def test_default_far_refs_build_expected_partials():
     for trajectory in get_test_trajectories().values():
-        messages = trajectory["rejected_messages"]
+        messages = trajectory["messages"]
         tools = trajectory.get("tools")
-        partial_message = trajectory["partial_messages"][
-            trajectory["fork_message_index"]
-        ]
-        for template in (Qwen3p5ResponseTemplate(), Step3p5ResponseTemplate()):
-            text = template.apply(partial_message)["templated_prompt"]
-            parsed_message = template.parse(
-                text,
-                messages=messages[: trajectory["fork_message_index"]],
-                tools=tools,
-                finish_reason=partial_message.get("finish_reason"),
-            )
-            assert template.apply(parsed_message)["templated_prompt"] == text
+        for correction in trajectory["corrections"]:
+            fork_message_index = correction["fork_message_index"]
+            if fork_message_index is None:
+                continue
+            partial_message = correction["partial_messages"][fork_message_index]
+            for template in (Qwen3p5ResponseTemplate(), Step3p5ResponseTemplate()):
+                text = template.apply(partial_message)["templated_prompt"]
+                parsed_message = template.parse(
+                    text,
+                    messages=messages[:fork_message_index],
+                    tools=tools,
+                    finish_reason=partial_message.get("finish_reason"),
+                )
+                assert template.apply(parsed_message)["templated_prompt"] == text
+
+
+def test_is_good_trajectory_has_no_partial_messages():
+    trajectory = get_test_trajectories("is_good")
+    correction = trajectory["corrections"][0]
+
+    assert correction["fork_message_index"] is None
+    assert "corrected_messages" not in correction
+    assert "partial_messages" not in correction
 
 
 @pytest.mark.parametrize(
@@ -463,8 +474,9 @@ def test_qwen_template_preserves_open_reasoning_trailing_newline():
 
 def test_far_template_fork_keeps_the_first_duplicate_tool_call():
     trajectory = get_test_trajectories("redundant_call")
-    fork_message_index = trajectory["fork_message_index"]
-    rejected_message = deepcopy(trajectory["rejected_messages"][fork_message_index])
+    correction = trajectory["corrections"][0]
+    fork_message_index = correction["fork_message_index"]
+    rejected_message = deepcopy(trajectory["messages"][fork_message_index])
     template = Step3p5ResponseTemplate()
     applied = dict(
         template.apply(rejected_message),
