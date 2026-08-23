@@ -2,7 +2,8 @@ from copy import deepcopy
 
 import pytest
 
-from onpanda import CorrectionVerifier, FindAndReplaceCodecMixin, utf8_tokenizer
+from onpanda import CorrectionVerifier, utf8_tokenizer
+from onpanda.correcting_model.far_text_parse import FindAndReplaceCodecMixin
 
 
 class BoundaryTokenizer:

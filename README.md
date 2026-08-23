@@ -81,7 +81,8 @@ panda_json = onpanda.messages_to_panda_tree(messages, uuid="demo")
 - `onpanda/response_templates/`: `apply`/`parse` between an assistant message and the model's own response text, so correcting reaches the reasoning and tool call channels
 - `onpanda/token_level_supervision_utils.py`: token-level patch extraction and masks
 - `onpanda/correcting_model/far_correction_utils.py`: FAR data builder and apply logic
-- `onpanda/correcting_model/verifier.py`: FAR parser/locator/reward computation
+- `onpanda/correcting_model/far_text_parse.py`: FAR parser/locator/reward computation
+- `onpanda/correcting_model/verifier.py`: trajectory correction verification
 - `onpanda/correcting_model/panda_score_mixin.py`: evaluation correction ability on Panda JSON
 - `onpanda/correcting_model/correcting_model.py`: iterative correction workflow
 - `onpanda/server/iterative_correction_api.py`: Flask wrapper for correction service

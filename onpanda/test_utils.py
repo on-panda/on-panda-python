@@ -56,6 +56,158 @@ def get_test_rejected_msgs1():
     return rejected_msgs1, far_text_gt1
 
 
+def get_test_far_text_cases(adapter=None):
+    """Build shared legacy FAR and trajectory verification cases.
+
+    Each case's ``gt_far`` field stores the ground-truth FAR text.
+    """
+    if adapter is None:
+        with inpkg():
+            from .correcting_model.far_correction_utils import (
+                FindAndReplaceCorrectionAdapter,
+            )
+
+        adapter = FindAndReplaceCorrectionAdapter(
+            tokenizer=build_test_tokenizer(),
+            special_tokens=dict(
+                split="<|fim_pad|>",
+                stop="<|fim_suffix|>",
+                is_good="<|fim_prefix|>",
+                reasoning="<|fim_middle|>",
+            ),
+        )
+
+    rejected_messages, gt_far = get_test_rejected_msgs1()
+    gt_apply = adapter.apply(rejected_messages, gt_far)
+    gt_correction = deepcopy(gt_apply["correction"])
+    gt_correction.update(
+        status="partial",
+        fork_message_index=gt_correction["messages_location"]["path_keys"][0],
+        corrected_messages=gt_apply["partial_messages"],
+    )
+    gt_trajectory = dict(
+        messages=deepcopy(rejected_messages),
+        tools=None,
+        corrections=[gt_correction],
+    )
+
+    split = adapter.special_tokens["split"]
+    is_good = adapter.special_tokens["is_good"]
+    location_text = gt_correction["find_and_replace"]["location_text"]
+    location_index = gt_correction["find_and_replace"]["location_index"]
+    replacement_token = gt_correction["find_and_replace"]["replacement_token"]
+    far_specs = [
+        (
+            "case1_all_correct",
+            gt_far,
+            dict(
+                format_reward=1.0,
+                location_reward=1.0,
+                replacement_reward=1.0,
+                is_good_cls_reward=1.0,
+            ),
+        ),
+        (
+            "case2_wrong_replacement",
+            f"{split}{location_text}{split}{location_index}{split} banana{split}",
+            dict(
+                format_reward=1.0,
+                location_reward=1.0,
+                replacement_reward=0.0,
+                is_good_cls_reward=1.0,
+            ),
+        ),
+        (
+            "case3_wrong_location_index",
+            f"{split} {split}{location_index + 1}{split}{replacement_token}{split}",
+            dict(
+                format_reward=1.0,
+                location_reward=0.0,
+                replacement_reward=0.0,
+                is_good_cls_reward=1.0,
+            ),
+        ),
+        (
+            "case4_is_good_prediction",
+            f"{split}{is_good}{split}",
+            dict(
+                format_reward=1.0,
+                location_reward=0.0,
+                replacement_reward=0.0,
+                is_good_cls_reward=0.0,
+            ),
+        ),
+        (
+            "case5_bad_format_missing_end_split",
+            f"{split}{location_text}{split}{location_index}{split}{replacement_token}",
+            dict(
+                format_reward=0.0,
+                location_reward=0.0,
+                replacement_reward=0.0,
+                is_good_cls_reward=0.0,
+            ),
+        ),
+        (
+            "case6_parse_success_but_locate_not_found",
+            f"{split} no_such_text{split}0{split}{replacement_token}{split}",
+            dict(
+                format_reward=0.5,
+                location_reward=0.0,
+                replacement_reward=0.0,
+                is_good_cls_reward=1.0,
+            ),
+        ),
+        (
+            "case7_loose_token_reward",
+            f"{split}potato, banana{split}{location_index}{split}orange, pineapple{split}",
+            dict(
+                format_reward=1.0,
+                location_reward=1.0,
+                replacement_reward=1.0,
+                is_good_cls_reward=1.0,
+            ),
+        ),
+    ]
+
+    cases = []
+    for name, pred_far, expected_rewards in far_specs:
+        pred_apply = adapter.apply(rejected_messages, pred_far)
+        pred_correction = deepcopy(pred_apply["correction"])
+        pred_correction["parse_and_locate"] = adapter.parse_and_locate(
+            rejected_messages, pred_far
+        )
+        if pred_correction["find_and_replace"].get("is_good"):
+            pred_correction.update(status="is_good", fork_message_index=None)
+        elif (
+            pred_correction["parse_and_locate"]["reward_with_feedback"]["parse_reward"]
+            == 0.0
+        ):
+            pred_correction["status"] = "parse_failed"
+        elif pred_correction["messages_location"].get("not_found"):
+            pred_correction["status"] = "not_found"
+        else:
+            pred_correction.update(
+                status="partial",
+                fork_message_index=pred_correction["messages_location"]["path_keys"][0],
+                corrected_messages=pred_apply["partial_messages"],
+            )
+        cases.append(
+            dict(
+                name=name,
+                pred_far=pred_far,
+                gt_far=gt_far,
+                expected_rewards=expected_rewards,
+                pred_trajectory=dict(
+                    messages=deepcopy(rejected_messages),
+                    tools=None,
+                    corrections=[pred_correction],
+                ),
+                gt_trajectory=deepcopy(gt_trajectory),
+            )
+        )
+    return cases
+
+
 def get_test_reasoning_msgs1(error_type="stop_reasoning"):
     """Build rejected reasoning responses for channel and historical-turn corrections."""
     rejected_message = {"role": "assistant"}

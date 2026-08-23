@@ -23,7 +23,6 @@ from .correcting_model.system_prompts import (
 )
 from .correcting_model.verifier import (
     CorrectionVerifier,
-    FindAndReplaceCodecMixin,
     ON_PANDA_PLACEHOLDER,
     ON_PANDA_TRUNCATE_PREFIX,
 )
