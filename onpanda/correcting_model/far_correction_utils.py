@@ -12,7 +12,7 @@ from copy import deepcopy
 
 with mximport.inpkg():
     from ..token_level_supervision_utils import build_tokenizer
-    from .verifier import FindAndReplaceVerifier
+    from .far_text_parse import FindAndReplaceCodecMixin
     from ..response_templates import (
         build_messages_location,
         build_templated_char_index,
@@ -53,7 +53,7 @@ class CorrectionAdapter:
     __repr__ = __str__
 
 
-class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
+class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixin):
     """
     Adapter of one model: its tokenizer, its response template and the FAR answer format.
 
@@ -72,12 +72,11 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         system_prompt_language=None,
         response_template=None,
     ):
-        self.verifier = FindAndReplaceVerifier(
+        FindAndReplaceCodecMixin.__init__(
+            self,
             special_tokens=special_tokens,
             response_template=response_template,
         )
-        self.special_tokens = self.verifier.special_tokens
-        self.response_template = self.verifier.response_template
         self.tokenizer = build_tokenizer(tokenizer)
         self.info = self.far_info = dict(
             tokenizer=dict(name_or_path=getattr(self.tokenizer, "name_or_path", "")),
@@ -90,6 +89,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         self.max_replacement_tokens = max_replacement_tokens
         self.tokenizer_aware = tokenizer_aware
         self.system_prompt_language = system_prompt_language
+
+    @property
+    def verifier(self):
+        return self
 
     def build_correction_prompt(self, messages):
         """
@@ -191,7 +194,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         find_and_replace = deepcopy(find_and_replace)
         location_text = find_and_replace["location_text"]
         matches = []
-        for templated_location in self.verifier._iter_assistant_templated_prompts(
+        for templated_location in self._iter_assistant_templated_prompts(
             rejected_messages
         ):
             templated_prompt = templated_location["templated_prompt"]
@@ -235,7 +238,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         messages_location = self.convert_token_level_to_messages_location(
             rejected_messages
         )
-        templated_location = self.verifier.build_templated_location(
+        templated_location = self.build_templated_location(
             rejected_messages, messages_location["path_keys"][0]
         )
         target_char_index = (
@@ -276,9 +279,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
 
         find_and_replace["location_tokens"] = suffix_tokens[:decodable_num]
         if "assert_location_consistency":
-            messages_location2 = self.verifier.locate(
-                rejected_messages, find_and_replace
-            )
+            messages_location2 = self.locate(rejected_messages, find_and_replace)
             assert (
                 messages_location["path_keys"] == messages_location2["path_keys"]
                 and messages_location["char_index"] == messages_location2["char_index"]
@@ -398,7 +399,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
         channel and every downstream channel is truncated by construction.
         """
         if isinstance(correction_or_far_text, str):
-            parse_result = self.verifier.parse(correction_or_far_text)
+            parse_result = self.parse(correction_or_far_text)
             find_and_replace = parse_result["find_and_replace"]
             correction = dict(
                 find_and_replace=find_and_replace,
@@ -421,7 +422,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
 
         if find_and_replace.get("is_good"):
             correction.setdefault(
-                "messages_location", self.verifier.locate(messages, find_and_replace)
+                "messages_location", self.locate(messages, find_and_replace)
             )
             return dict(
                 correction=correction,
@@ -440,32 +441,28 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter):
                     correction=correction,
                     partial_messages=messages,
                 )
-            templated_location = self.verifier.build_templated_location(
+            templated_location = self.build_templated_location(
                 messages, messages_location["path_keys"][0]
             )
             templated_char_index = build_templated_char_index(
                 templated_location, messages_location
             )
         else:
-            templated_location = self.verifier.locate_templated(
-                messages, find_and_replace
-            )
+            templated_location = self.locate_templated(messages, find_and_replace)
             if templated_location.get("not_found"):
                 correction["messages_location"] = templated_location
                 return dict(
                     correction=correction,
                     partial_messages=messages,
                 )
-            messages_location = self.verifier.build_messages_location(
+            messages_location = self.build_messages_location(
                 templated_location, find_and_replace
             )
             correction["messages_location"] = messages_location
             templated_char_index = templated_location["templated_char_index"]
 
         normalized_replacement_token, has_stop_token = (
-            self.verifier._normalize_replacement_token(
-                find_and_replace["replacement_token"]
-            )
+            self._normalize_replacement_token(find_and_replace["replacement_token"])
         )
         # No truncation here: the replacement lives in this template's marker space, where a cut
         # inside a marker means the intermediate representation stops parsing. Fitting it to a
@@ -703,7 +700,7 @@ def test_agent_panda_json_far_correction(far_adapter, panda_json):
             for message in remove_msgs_after_last_response_role(far_correction[:-2])
         ]
         far_text = gt_correction["find_and_replace"]["far_text"]
-        reward = far_adapter.verifier.compute_reward(messages, far_text, gt_correction)
+        reward = far_adapter.compute_reward(messages, far_text, gt_correction)
         assert reward["reward_with_feedback"]["final_reward"] == 1.0, (
             far_text,
             reward["reward_with_feedback"]["feedback"],

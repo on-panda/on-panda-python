@@ -506,8 +506,8 @@ def test_far_template_fork_keeps_the_first_duplicate_tool_call():
     assert far_text.split(split)[1].startswith(TOOL_CALL_BEGIN)
     assert far_text.split(split)[2] == "1"
 
-    find_and_replace = adapter.verifier.parse(far_text)["find_and_replace"]
-    located = adapter.verifier.locate_templated([rejected_message], find_and_replace)
+    find_and_replace = adapter.parse(far_text)["find_and_replace"]
+    located = adapter.locate_templated([rejected_message], find_and_replace)
     assert located["templated_char_index"] == fork_index
 
 

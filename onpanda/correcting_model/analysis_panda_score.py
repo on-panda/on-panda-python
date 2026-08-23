@@ -250,7 +250,7 @@ def _build_fuzzy_context(
 
 
 def _build_location_context(score_result: Dict[str, Any]) -> str:
-    from onpanda.correcting_model.verifier import FindAndReplaceVerifier
+    from onpanda.correcting_model.far_text_parse import FindAndReplaceCodecMixin
 
     trimmed_messages = score_result.get("correction_result", {}).get(
         "trimmed_messages", []
@@ -259,10 +259,10 @@ def _build_location_context(score_result: Dict[str, Any]) -> str:
         return ""
 
     find_and_replace = score_result.get("find_and_replace", {})
-    verifier = FindAndReplaceVerifier(
+    codec = FindAndReplaceCodecMixin(
         special_tokens=_infer_verifier_special_tokens(find_and_replace)
     )
-    correction = verifier.parse_and_locate(
+    correction = codec.parse_and_locate(
         trimmed_messages, str(find_and_replace.get("far_text", ""))
     )
     parsed_find_and_replace = correction.get("find_and_replace", {})
@@ -274,7 +274,7 @@ def _build_location_context(score_result: Dict[str, Any]) -> str:
         and messages_location.get("find_feedback") == "location_text not found"
     ):
         return _build_fuzzy_context(
-            verifier,
+            codec,
             trimmed_messages,
             location_text=str(parsed_find_and_replace.get("location_text", "")),
         )
@@ -288,7 +288,7 @@ def _build_location_context(score_result: Dict[str, Any]) -> str:
         text = trimmed_messages
         for key in path_keys:
             text = text[key]
-        text = verifier._content_to_text(text)
+        text = codec._content_to_text(text)
         return _build_context_text(
             text,
             char_index=char_index,

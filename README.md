@@ -9,7 +9,7 @@ Python package for *onPanda: Efficient Annotation of On-Policy Alignment Data fo
 - [x] Build token-level supervision data (`build_token_level_supervision_data_v1/v2`)
 - [x] Build Find-and-Replace correction training data (`build_far_correction_data_v1`)
 - [x] Token-level correcting on the reasoning and tool call channels, not only content
-- [x] Verify and score Find-and-Replace outputs (`FindAndReplaceVerifier`)
+- [x] Verify trajectory corrections (`CorrectionVerifier`)
 - [x] Benchmark [Panda-CVL dataset](https://on-panda.github.io/Panda-CVL/)
 - [x] Run iterative correction as a Proxy API (`onpanda.server.iterative_correction_api`)
 - [x] Build `panda battle` data from two arena result sets (`build_panda_battle`)
