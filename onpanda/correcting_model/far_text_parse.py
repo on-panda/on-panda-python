@@ -523,4 +523,4 @@ if __name__ == "__main__":
             reward_res[key] == expected
             for key, expected in case["expected_rewards"].items()
         ), f"{case['name']}, {case['pred_far']}, {case['expected_rewards']}\n\n{reward_res}"
-        print(f"\n\n{case['name']} passed: {reward_res['feedback']}")
+        print(f"\n\n{case['name']} passed: \n{case['pred_far']}\n{reward_res['feedback']}")

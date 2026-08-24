@@ -167,6 +167,16 @@ def get_test_far_text_cases(adapter=None):
                 is_good_cls_reward=1.0,
             ),
         ),
+        (
+            "case8_same_prefix",
+            f"{split}Apple, potato{split}{location_index}{split}Apple, orange, pineapple.<|fim_suffix|>{split}",
+            dict(
+                format_reward=1.0,
+                location_reward=1.0,
+                replacement_reward=1.0,
+                is_good_cls_reward=1.0,
+            ),
+        ),
     ]
 
     cases = []
