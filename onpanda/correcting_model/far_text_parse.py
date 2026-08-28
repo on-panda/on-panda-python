@@ -195,14 +195,13 @@ class FindAndReplaceCodecMixin:
                 yield self.build_templated_location(messages, message_index)
 
     def build_messages_location(self, templated_location, find_and_replace):
-        """messages_location of a located match, with the find feedback of that match."""
+        """Build the structured location of a matched FAR location."""
         return dict(
             build_messages_location(
                 templated_location, templated_location["templated_char_index"]
             ),
             match_num=templated_location["match_num"],
             patch_length=len(find_and_replace["location_text"]),
-            find_feedback="matched",
         )
 
     def assert_messages_location_context_valid(self, messages, messages_location):
@@ -275,29 +274,71 @@ class FindAndReplaceCodecMixin:
 
     def locate(self, messages, find_and_replace):
         if find_and_replace.get("is_good"):
-            return dict(
+            messages_location = dict(
                 not_found=True,
                 is_good=True,
                 match_num=0,
-                find_feedback="is_good: skip find",
             )
-        templated_location = self.locate_templated(messages, find_and_replace)
-        if templated_location.get("not_found"):
-            return dict(
-                not_found=True,
-                match_num=templated_location["match_num"],
-                find_feedback=templated_location["find_feedback"],
-            )
-        return self.build_messages_location(templated_location, find_and_replace)
+            find_reward = 1.0
+            find_feedback = "is_good: skip find"
+        else:
+            templated_location = self.locate_templated(messages, find_and_replace)
+            if templated_location.get("not_found"):
+                messages_location = dict(
+                    not_found=True,
+                    match_num=templated_location["match_num"],
+                )
+                find_reward = 0.0
+                find_feedback = templated_location["find_feedback"]
+            else:
+                messages_location = self.build_messages_location(
+                    templated_location, find_and_replace
+                )
+                find_reward = 1.0
+                find_feedback = templated_location["find_feedback"]
+        return dict(
+            messages_location=messages_location,
+            reward_with_feedback=dict(
+                find_reward=find_reward,
+                find_feedback=find_feedback,
+            ),
+        )
 
     def parse_and_locate(self, messages, far_text):
         parse_res = self.parse(far_text)
         find_and_replace = parse_res["find_and_replace"]
-        messages_location = self.locate(messages, find_and_replace)
+        locate_res = self.locate(messages, find_and_replace)
+        messages_location = locate_res["messages_location"]
+        parse_reward = parse_res["reward_with_feedback"]["parse_reward"]
+        parse_feedback = parse_res["reward_with_feedback"]["parse_feedback"]
+        find_reward = locate_res["reward_with_feedback"]["find_reward"]
+        find_feedback = locate_res["reward_with_feedback"]["find_feedback"]
+        if parse_reward == 0.0:
+            format_reward = 0.0
+            format_feedback = f'format failed: "{parse_feedback}"'
+        elif find_and_replace.get("is_good"):
+            format_reward = self._mean([parse_reward, find_reward])
+            format_feedback = "format success: is_good format"
+        elif find_reward:
+            format_reward = self._mean([parse_reward, find_reward])
+            format_feedback = f"format success: find matched (match_num={messages_location['match_num']})"
+        else:
+            format_reward = self._mean([parse_reward, find_reward])
+            format_feedback = (
+                "format half: find not matched "
+                f'(reason="{find_feedback}", match_num={messages_location["match_num"]})'
+            )
         return dict(
             find_and_replace=find_and_replace,
             messages_location=messages_location,
-            reward_with_feedback=parse_res["reward_with_feedback"],
+            reward_with_feedback=dict(
+                parse_reward=parse_reward,
+                parse_feedback=parse_feedback,
+                find_reward=find_reward,
+                find_feedback=find_feedback,
+                format_reward=format_reward,
+                format_feedback=format_feedback,
+            ),
         )
 
     # TODO: Remove after PandaScoreMixin and legacy FAR data migrate to trajectories.
@@ -335,13 +376,13 @@ class FindAndReplaceCodecMixin:
         correction = self.parse_and_locate(messages, far_text)
         reward_with_feedback = correction.pop("reward_with_feedback")
         parse_reward = reward_with_feedback["parse_reward"]
-        parse_feedback = reward_with_feedback["parse_feedback"]
+        find_reward = reward_with_feedback["find_reward"]
+        format_reward = reward_with_feedback["format_reward"]
+        format_feedback = reward_with_feedback["format_feedback"]
         pred_find_and_replace = correction["find_and_replace"]
         gt_find_and_replace = gt_correction["find_and_replace"]
         gt_messages_location = gt_correction["messages_location"]
         pred_location = correction["messages_location"]
-        match_num = pred_location.get("match_num", 0)
-        find_feedback = pred_location.get("find_feedback", "")
         gt_is_good = bool(
             gt_find_and_replace.get("is_good") or gt_messages_location.get("is_good")
         )
@@ -351,28 +392,6 @@ class FindAndReplaceCodecMixin:
         is_good_cls_reward = (
             float(gt_is_good == pred_is_good) if parse_reward > 0.0 else 0.0
         )
-
-        # Compute format_reward
-        if pred_find_and_replace.get("is_good"):
-            find_reward = 1.0 if parse_reward > 0.0 else 0.0
-            format_reward = self._mean([parse_reward, find_reward])
-            format_feedback = "format success: is_good format"
-        elif parse_reward == 0.0:
-            find_reward = 0.0
-            format_reward = 0.0
-            format_feedback = f'format failed: "{parse_feedback}"'
-        else:
-            find_reward = 1.0 if not pred_location.get("not_found") else 0.0
-            format_reward = self._mean([parse_reward, find_reward])
-            if find_reward:
-                format_feedback = (
-                    f"format success: find matched (match_num={match_num})"
-                )
-            else:
-                format_feedback = (
-                    "format half: find not matched "
-                    f'(reason="{find_feedback}", match_num={match_num})'
-                )
 
         if gt_is_good:
             location_reward = 1.0 if pred_find_and_replace.get("is_good") else 0.0
@@ -483,7 +502,9 @@ class FindAndReplaceCodecMixin:
         reward_with_feedback = dict(
             final_reward=final_reward,
             parse_reward=parse_reward,
+            parse_feedback=reward_with_feedback["parse_feedback"],
             find_reward=find_reward,
+            find_feedback=reward_with_feedback["find_feedback"],
             format_reward=format_reward,
             location_reward=location_reward,
             replacement_reward=replacement_reward,
@@ -523,4 +544,6 @@ if __name__ == "__main__":
             reward_res[key] == expected
             for key, expected in case["expected_rewards"].items()
         ), f"{case['name']}, {case['pred_far']}, {case['expected_rewards']}\n\n{reward_res}"
-        print(f"\n\n{case['name']} passed: \n{case['pred_far']}\n{reward_res['feedback']}")
+        print(
+            f"\n\n{case['name']} passed: \n{case['pred_far']}\n{reward_res['feedback']}"
+        )

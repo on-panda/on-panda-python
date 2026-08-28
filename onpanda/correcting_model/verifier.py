@@ -436,7 +436,7 @@ class CorrectionVerifier:
         )
         pred_is_good = pred_status == "is_good"
         gt_is_good = gt_status == "is_good"
-        format_reward, protocol_reward = self._protocol_reward(
+        format_reward, protocol_diagnostics = self._protocol_reward(
             pred_correction, pred_status
         )
         if pred_status == "parse_failed":
@@ -510,7 +510,7 @@ class CorrectionVerifier:
                 )
 
         final_reward = (format_reward + location_reward + replacement_reward) / 3
-        format_feedback = protocol_reward.get("format_feedback")
+        format_feedback = protocol_diagnostics.get("format_feedback")
         if not format_feedback:
             format_feedback = (
                 "format success: trajectory correction"
@@ -553,8 +553,8 @@ class CorrectionVerifier:
             "find_reward",
             "find_feedback",
         ):
-            if key in protocol_reward:
-                reward_with_feedback[key] = protocol_reward[key]
+            if key in protocol_diagnostics:
+                reward_with_feedback[key] = protocol_diagnostics[key]
         result = deepcopy(pred_correction.get("parse_and_locate") or {})
         for key in ("find_and_replace", "messages_location"):
             result[key] = deepcopy(pred_correction.get(key, result.get(key, {})))
@@ -608,6 +608,7 @@ class CorrectionVerifier:
 
 
 if __name__ == "__main__":
+    from boxx import *
     from onpanda.correcting_model.far_correction_utils import (
         FindAndReplaceCorrectionAdapter,
     )
@@ -625,7 +626,7 @@ if __name__ == "__main__":
     )
     far_text_cases = get_test_far_text_cases(adapter)
     verifier = CorrectionVerifier(tokenizer=tokenizer, max_replacement_tokens=2)
-    for case in far_text_cases:
+    for case in far_text_cases[:]:
         verify_results = verifier.verify(case["pred_trajectory"], case["gt_trajectory"])
         assert len(verify_results) == 1
         verification_result = verify_results[0]

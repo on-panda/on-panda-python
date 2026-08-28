@@ -279,7 +279,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
 
         find_and_replace["location_tokens"] = suffix_tokens[:decodable_num]
         if "assert_location_consistency":
-            messages_location2 = self.locate(rejected_messages, find_and_replace)
+            messages_location2 = self.locate(rejected_messages, find_and_replace)[
+                "messages_location"
+            ]
             assert (
                 messages_location["path_keys"] == messages_location2["path_keys"]
                 and messages_location["char_index"] == messages_location2["char_index"]
@@ -399,12 +401,8 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
         channel and every downstream channel is truncated by construction.
         """
         if isinstance(correction_or_far_text, str):
-            parse_result = self.parse(correction_or_far_text)
-            find_and_replace = parse_result["find_and_replace"]
-            correction = dict(
-                find_and_replace=find_and_replace,
-                reward_with_feedback=parse_result["reward_with_feedback"],
-            )
+            correction = self.parse_and_locate(messages, correction_or_far_text)
+            find_and_replace = correction["find_and_replace"]
         else:
             correction = deepcopy(correction_or_far_text)
             if "find_and_replace" in correction:
@@ -421,9 +419,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
                 )
 
         if find_and_replace.get("is_good"):
-            correction.setdefault(
-                "messages_location", self.locate(messages, find_and_replace)
-            )
+            if "messages_location" not in correction:
+                correction["messages_location"] = self.locate(
+                    messages, find_and_replace
+                )["messages_location"]
             return dict(
                 correction=correction,
                 partial_messages=messages,
@@ -433,7 +432,16 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
             "replacement_token" in find_and_replace
         ), f"`replacement_token` not found in find_and_replace: {find_and_replace}"
 
-        if "messages_location" in correction:
+        if isinstance(correction_or_far_text, str):
+            templated_location = self.locate_templated(messages, find_and_replace)
+            if templated_location.get("not_found"):
+                return dict(
+                    correction=correction,
+                    partial_messages=messages,
+                )
+            messages_location = correction["messages_location"]
+            templated_char_index = templated_location["templated_char_index"]
+        elif "messages_location" in correction:
             # A ground truth correction only carries its structured location.
             messages_location = correction["messages_location"]
             if messages_location.get("not_found"):
@@ -449,16 +457,14 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
             )
         else:
             templated_location = self.locate_templated(messages, find_and_replace)
+            locate_res = self.locate(messages, find_and_replace)
+            correction.update(locate_res)
             if templated_location.get("not_found"):
-                correction["messages_location"] = templated_location
                 return dict(
                     correction=correction,
                     partial_messages=messages,
                 )
-            messages_location = self.build_messages_location(
-                templated_location, find_and_replace
-            )
-            correction["messages_location"] = messages_location
+            messages_location = locate_res["messages_location"]
             templated_char_index = templated_location["templated_char_index"]
 
         normalized_replacement_token, has_stop_token = (

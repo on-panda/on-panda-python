@@ -183,15 +183,9 @@ def get_test_far_text_cases(adapter=None):
     for name, pred_far, expected_rewards in far_specs:
         pred_apply = adapter.apply(rejected_messages, pred_far)
         pred_correction = deepcopy(pred_apply["correction"])
-        pred_correction["parse_and_locate"] = adapter.parse_and_locate(
-            rejected_messages, pred_far
-        )
         if pred_correction["find_and_replace"].get("is_good"):
             pred_correction.update(status="is_good", fork_message_index=None)
-        elif (
-            pred_correction["parse_and_locate"]["reward_with_feedback"]["parse_reward"]
-            == 0.0
-        ):
+        elif pred_correction["reward_with_feedback"]["parse_reward"] == 0.0:
             pred_correction["status"] = "parse_failed"
         elif pred_correction["messages_location"].get("not_found"):
             pred_correction["status"] = "not_found"

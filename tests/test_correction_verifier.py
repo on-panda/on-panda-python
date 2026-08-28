@@ -196,6 +196,61 @@ def test_verify_accepts_far_apply_corrections_and_preserves_diagnostics():
     )[0]
     assert result["find_and_replace"] == correction["find_and_replace"]
     assert result["messages_location"] == correction["messages_location"]
+    assert result["reward_with_feedback"]["find_feedback"] == "matched"
+
+
+def test_far_parse_and_locate_composes_stage_rewards():
+    from onpanda import FindAndReplaceCorrectionAdapter
+    from onpanda.test_utils import build_test_tokenizer, get_test_rejected_msgs1
+
+    adapter = FindAndReplaceCorrectionAdapter(
+        tokenizer=build_test_tokenizer(),
+        special_tokens={
+            "split": "<|fim_pad|>",
+            "stop": "<|fim_suffix|>",
+            "is_good": "<|fim_prefix|>",
+            "reasoning": "<|fim_middle|>",
+        },
+    )
+    messages, far_text = get_test_rejected_msgs1()
+
+    parse_res = adapter.parse(far_text)
+    locate_res = adapter.locate(messages, parse_res["find_and_replace"])
+    assert parse_res["reward_with_feedback"] == {
+        "parse_reward": 1.0,
+        "parse_feedback": "parse success",
+    }
+    assert locate_res["reward_with_feedback"] == {
+        "find_reward": 1.0,
+        "find_feedback": "matched",
+    }
+    assert "find_feedback" not in locate_res["messages_location"]
+
+    parse_and_locate = adapter.parse_and_locate(messages, far_text)
+    assert parse_and_locate["reward_with_feedback"] == {
+        "parse_reward": 1.0,
+        "parse_feedback": "parse success",
+        "find_reward": 1.0,
+        "find_feedback": "matched",
+        "format_reward": 1.0,
+        "format_feedback": "format success: find matched (match_num=1)",
+    }
+    assert adapter.apply(messages, far_text)["correction"]["reward_with_feedback"] == (
+        parse_and_locate["reward_with_feedback"]
+    )
+
+    split = adapter.special_tokens["split"]
+    is_good_res = adapter.parse_and_locate(
+        messages, f"{split}{adapter.special_tokens['is_good']}{split}"
+    )
+    assert is_good_res["reward_with_feedback"]["find_reward"] == 1.0
+    assert is_good_res["reward_with_feedback"]["format_reward"] == 1.0
+
+    not_found_res = adapter.parse_and_locate(
+        messages, f"{split}no_such_text{split}0{split}replacement{split}"
+    )
+    assert not_found_res["reward_with_feedback"]["find_reward"] == 0.0
+    assert not_found_res["reward_with_feedback"]["format_reward"] == 0.5
 
 
 def test_tools_are_always_passed_to_the_native_template():

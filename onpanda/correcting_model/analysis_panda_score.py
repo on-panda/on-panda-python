@@ -267,11 +267,12 @@ def _build_location_context(score_result: Dict[str, Any]) -> str:
     )
     parsed_find_and_replace = correction.get("find_and_replace", {})
     messages_location = correction.get("messages_location", {})
+    locate_reward = correction.get("reward_with_feedback", {})
     format_reward = score_result.get("reward_with_feedback", {}).get("format_reward")
 
     if (
         messages_location.get("not_found")
-        and messages_location.get("find_feedback") == "location_text not found"
+        and locate_reward.get("find_feedback") == "location_text not found"
     ):
         return _build_fuzzy_context(
             codec,
