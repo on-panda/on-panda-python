@@ -179,14 +179,14 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                 ):  # correction to stop
                     corrected_messages = partial_messages
                 else:  # continue_final_message with policy response_template
+                    continuation_message = dict(role="assistant", content=prefix)
+                    model_name = chat_policy.model.lower()
+                    if "kimi" in model_name or "qwen" in model_name:
+                        continuation_message["partial"] = True
+                    if "deepseek" in model_name:
+                        continuation_message["prefix"] = True
                     policy_choice = chat_policy(
-                        partial_messages[:-1]
-                        + [
-                            dict(
-                                role="assistant",
-                                content=prefix,
-                            )
-                        ],
+                        partial_messages[:-1] + [continuation_message],
                         continue_final_message=True,
                         add_generation_prompt=False,
                         echo=True,
@@ -574,7 +574,7 @@ if __name__ == "__main__":
         _d["adapter_policy"],
     )
 
-    if 10:
+    if 0:
         correcteds = correcting_model.test(
             chat_policy=chat_policy,
             adapter_policy=adapter_policy,
@@ -590,6 +590,7 @@ if __name__ == "__main__":
     msgs = get_test_rejected_msgs1()[0]
     tools = None
     trajectory = get_test_trajectories("bad_argument_arg2")
+    # trajectory = get_test_trajectories("bad_reasoning")
     msgs = trajectory["messages"]
     tools = trajectory.get("tools")
 
