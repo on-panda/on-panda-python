@@ -632,8 +632,8 @@ if __name__ == "__main__":
         verification_result = verify_results[0]
         assert {"find_and_replace", "messages_location"} <= verification_result.keys()
         reward_res = verification_result["reward_with_feedback"]
+        print(f"\n\n{case['name']} passed: \n{case['pred_far']}\n{reward_res['feedback']}")
         assert all(
             reward_res[key] == expected
             for key, expected in case["expected_rewards"].items()
         ), f"{case['name']}, {case['pred_far']}, {case['expected_rewards']}\n\n{reward_res}"
-        print(f"\n\n{case['name']} passed: \n{case['pred_far']}\n{reward_res['feedback']}")

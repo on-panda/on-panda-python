@@ -109,7 +109,7 @@ def get_test_far_text_cases(adapter=None):
         ),
         (
             "case2_wrong_replacement",
-            f"{split}{location_text}{split}{location_index}{split} banana{split}",
+            f"{split}{location_text}{split}{location_index}{split} tomato{split}",
             dict(
                 format_reward=1.0,
                 location_reward=1.0,
