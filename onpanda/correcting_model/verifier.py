@@ -379,28 +379,30 @@ class CorrectionVerifier:
             return 0.0, reward or {}
         return 1.0, reward or {}
 
-    def _render_correction(self, base_messages, correction, tools, role):
+    def _render_correction(self, trajectory, correction, role):
         fork_message_index = correction["fork_message_index"]
         assert isinstance(fork_message_index, int), fork_message_index
         corrected_messages = correction["corrected_messages"]
-        assert 0 <= fork_message_index < len(base_messages)
+        assert 0 <= fork_message_index < len(trajectory["messages"])
         assert 0 <= fork_message_index < len(corrected_messages)
         assert (
             corrected_messages[:fork_message_index]
-            == base_messages[:fork_message_index]
+            == trajectory["messages"][:fork_message_index]
         )
         render_context = [{"role": "user", "content": self.query_placeholder}]
-        base_message = self._prepare_message(base_messages[fork_message_index])
+        base_message = self._prepare_message(trajectory["messages"][fork_message_index])
         corrected_message = corrected_messages[fork_message_index]
-        base_text = self._render_messages(render_context + [base_message], tools)
+        base_text = self._render_messages(
+            render_context + [base_message], trajectory.get("tools")
+        )
         if self._is_partial(correction, corrected_message, role):
             corrected_text = self._render_partial_messages(
-                render_context, corrected_message, tools
+                render_context, corrected_message, trajectory.get("tools")
             )
         else:
             corrected_text = self._render_messages(
                 render_context + [self._prepare_message(corrected_message)],
-                tools,
+                trajectory.get("tools"),
             )
         diff = self._rendered_diff(base_text, corrected_text)
         return diff
@@ -418,7 +420,11 @@ class CorrectionVerifier:
             return float(pred_tokens[: len(expected)] == expected)
         return float(pred_tokens == expected)
 
-    def _verify_pair(self, base_messages, tools, pred_correction, gt_correction):
+    def verify_one(self, trajectory, pred_correction, gt_correction):
+        """Compare one correction pair using the trajectory's messages and tools.
+
+        The trajectory's corrections are not used.
+        """
         pred_status = self._status(pred_correction)
         gt_status = self._status(gt_correction)
         pred_fork_message_index = (
@@ -471,12 +477,8 @@ class CorrectionVerifier:
                 )
                 replacement_feedback = "replacement skipped: is_good"
             elif fork_message_index_reward:
-                gt_diff = self._render_correction(
-                    base_messages, gt_correction, tools, "gt"
-                )
-                pred_diff = self._render_correction(
-                    base_messages, pred_correction, tools, "pred"
-                )
+                gt_diff = self._render_correction(trajectory, gt_correction, "gt")
+                pred_diff = self._render_correction(trajectory, pred_correction, "pred")
                 location_reward = float(
                     gt_diff["fork_token_index"] == pred_diff["fork_token_index"]
                 )
@@ -565,11 +567,8 @@ class CorrectionVerifier:
             for gt_correction_index, gt_correction in enumerate(
                 gt_trajectory["corrections"]
             ):
-                result = self._verify_pair(
-                    pred_trajectory["messages"],
-                    pred_trajectory.get("tools"),
-                    pred_correction,
-                    gt_correction,
+                result = self.verify_one(
+                    pred_trajectory, pred_correction, gt_correction
                 )
                 result.update(
                     pred_correction_index=pred_correction_index,
