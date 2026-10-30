@@ -333,6 +333,14 @@ class CorrectionVerifier:
 
     @staticmethod
     def _status(correction):
+        """
+        "status" is the internal state of Verifier. It is derived from the correction's "fork_message_index" and optional "status" field.
+        The "fork_message_index" determines the internal status: 
+        - A None fork means is_good; 
+        - An integer fork requires corrected_messages and means applied.
+        Optional input "status" distinguishes failures without a "fork_message_index";
+        "partial" only controls message completeness in _is_partial.
+        """
         status = correction.get("status")
         if "fork_message_index" not in correction:
             if status in ("parse_failed", "not_found", "no_op"):
@@ -340,9 +348,8 @@ class CorrectionVerifier:
             return "parse_failed"
         if correction["fork_message_index"] is None:
             return "is_good"
-        if "corrected_messages" not in correction:
-            return "parse_failed"
         assert isinstance(correction["fork_message_index"], int), correction
+        assert "corrected_messages" in correction, correction
         return "applied"
 
     def _is_partial(self, correction, message, trajectory_role):
