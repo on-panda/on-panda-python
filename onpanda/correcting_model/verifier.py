@@ -441,8 +441,8 @@ class CorrectionVerifier:
 
         location_reward = 0.0
         replacement_reward = 0.0
-        location_feedback = "location mismatch"
-        replacement_feedback = "replacement mismatch"
+        location_feedback = f"location skipped: pred={pred_status}, gt={gt_status}"
+        replacement_feedback = f"replacement skipped: pred={pred_status}, gt={gt_status}"
         if pred_status not in (
             "parse_failed",
             "not_found",
@@ -452,6 +452,8 @@ class CorrectionVerifier:
             "not_found",
             "no_op",
         ):
+            location_feedback = "location mismatch"
+            replacement_feedback = "replacement skipped: location mismatch"
             if pred_is_good or gt_is_good:
                 location_reward = float(pred_is_good and gt_is_good)
                 replacement_reward = location_reward
@@ -460,11 +462,7 @@ class CorrectionVerifier:
                     if location_reward
                     else "location mismatch: is_good"
                 )
-                replacement_feedback = (
-                    "replacement skipped: is_good"
-                    if replacement_reward
-                    else "replacement mismatch: is_good"
-                )
+                replacement_feedback = "replacement skipped: is_good"
             elif fork_message_index_reward:
                 gt_diff = self._render_correction(
                     base_messages, gt_correction, tools, "gt"
@@ -489,15 +487,14 @@ class CorrectionVerifier:
                     else 0.0
                 )
                 location_feedback = (
-                    "location matched: token fork"
-                    if location_reward
-                    else "location mismatch: token fork"
+                    "location matched" if location_reward else "location mismatch"
                 )
-                replacement_feedback = (
-                    "replacement matched: tokens"
-                    if replacement_reward
-                    else "replacement mismatch: tokens"
-                )
+                if location_reward:
+                    replacement_feedback = (
+                        "replacement matched"
+                        if replacement_reward
+                        else "replacement mismatch"
+                    )
 
         final_reward = (format_reward + location_reward + replacement_reward) / 3
         format_feedback = protocol_diagnostics.get("format_feedback")
