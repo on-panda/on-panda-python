@@ -57,7 +57,7 @@ def build_trajectory(base_messages, corrected_messages, fork_message_index=1, **
     return dict(messages=deepcopy(base_messages), tools=None, corrections=[correction])
 
 
-def test_verify_one_accepts_partial_prediction_covering_truncated_gt_tokens():
+def test_verify_accepts_partial_prediction_covering_truncated_gt_tokens():
     base = [
         {"role": "user", "content": "Q"},
         {"role": "assistant", "content": "bad", "finish_reason": "stop"},
@@ -74,9 +74,14 @@ def test_verify_one_accepts_partial_prediction_covering_truncated_gt_tokens():
         [base[0], {"role": "assistant", "content": "go"}],
     )
 
-    result = CorrectionVerifier(
+    verification = CorrectionVerifier(
         tokenizer=utf8_tokenizer, max_replacement_tokens=2
-    ).verify_one(pred, gt)
+    ).verify(pred, gt)
+    assert verification["multi_correction_mode"] == "all"
+    assert len(verification["results"]) == 1
+    result = verification["results"][0]
+    assert result["pred_correction_index"] == 0
+    assert result["gt_correction_index"] == 0
     rewards = result["reward_with_feedback"]
     assert rewards["final_reward"] == 1.0
     assert rewards["is_good_cls_reward"] == 1.0
@@ -86,7 +91,8 @@ def test_verify_one_accepts_partial_prediction_covering_truncated_gt_tokens():
     assert result["messages_location"] == {}
 
 
-def test_verify_max_selects_the_best_equal_candidate_pair():
+@pytest.mark.parametrize("mode", ["all", "max"])
+def test_verify_modes_select_candidate_pairs(mode):
     base = [
         {"role": "user", "content": "Q"},
         {"role": "assistant", "content": "bad", "finish_reason": "stop"},
@@ -135,16 +141,28 @@ def test_verify_max_selects_the_best_equal_candidate_pair():
     verifier = CorrectionVerifier(
         tokenizer=utf8_tokenizer,
         max_replacement_tokens=2,
-        multi_correction_gt_mode="max",
+        multi_correction_mode=mode,
     )
-    results = verifier.verify(pred, gt)
-    assert len(results) == 1
-    rewards = results[0]["reward_with_feedback"]
-    assert rewards["final_reward"] == 1.0
-    assert rewards["pred_correction_index"] == 1
-    assert rewards["gt_correction_index"] == 1
-    assert results[0]["find_and_replace"] == {}
-    assert results[0]["messages_location"] == {}
+    verification = verifier.verify(pred, gt)
+    assert verification["multi_correction_mode"] == mode
+    results = verification["results"]
+    assert [
+        (result["pred_correction_index"], result["gt_correction_index"])
+        for result in results
+    ] == ([(1, 1)] if mode == "max" else [(0, 0), (0, 1), (1, 0), (1, 1)])
+    assert [result["reward_with_feedback"]["final_reward"] for result in results] == (
+        [1.0] if mode == "max" else [2 / 3, 1 / 3, 1 / 3, 1.0]
+    )
+    for result in results:
+        assert result["find_and_replace"] == {}
+        assert result["messages_location"] == {}
+        assert {
+            "pred_correction_index",
+            "gt_correction_index",
+            "pred_correction_indexes",
+            "gt_correction_indexes",
+            "multi_correction_mode",
+        }.isdisjoint(result["reward_with_feedback"])
 
 
 def test_verify_requires_tools_to_match_the_base_identity():
@@ -161,7 +179,7 @@ def test_verify_requires_tools_to_match_the_base_identity():
     gt["tools"] = [{"type": "function", "function": {"name": "read"}}]
 
     with pytest.raises(AssertionError):
-        CorrectionVerifier(tokenizer=utf8_tokenizer).verify_one(pred, gt)
+        CorrectionVerifier(tokenizer=utf8_tokenizer).verify(pred, gt)
 
 
 def test_verify_accepts_far_apply_corrections_and_preserves_diagnostics():
@@ -193,7 +211,7 @@ def test_verify_accepts_far_apply_corrections_and_preserves_diagnostics():
 
     result = CorrectionVerifier(tokenizer=utf8_tokenizer).verify(
         trajectory, trajectory
-    )[0]
+    )["results"][0]
     assert result["find_and_replace"] == correction["find_and_replace"]
     assert result["messages_location"] == correction["messages_location"]
     assert result["reward_with_feedback"]["find_feedback"] == "matched"
@@ -281,9 +299,9 @@ def test_parse_failed_correction_is_scored_without_fabricating_messages():
         "corrections": [{"status": "parse_failed", "raw_response": "invalid"}],
     }
 
-    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify_one(pred, gt)[
-        "reward_with_feedback"
-    ]
+    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify(pred, gt)["results"][
+        0
+    ]["reward_with_feedback"]
     assert rewards["pred_status"] == "parse_failed"
     assert rewards["format_reward"] == 0.0
     assert rewards["final_reward"] == 0.0
@@ -309,9 +327,9 @@ def test_not_found_correction_gets_half_format_reward():
         ],
     }
 
-    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify_one(pred, gt)[
-        "reward_with_feedback"
-    ]
+    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify(pred, gt)["results"][
+        0
+    ]["reward_with_feedback"]
     assert rewards["pred_status"] == "not_found"
     assert rewards["format_reward"] == 0.5
     assert rewards["location_reward"] == 0.0
@@ -334,9 +352,9 @@ def test_parse_failed_does_not_report_a_matching_fork_index_for_is_good():
         "corrections": [{"fork_message_index": None}],
     }
 
-    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify_one(pred, gt)[
-        "reward_with_feedback"
-    ]
+    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify(pred, gt)["results"][
+        0
+    ]["reward_with_feedback"]
     assert rewards["fork_message_index_reward"] == 0.0
 
 
@@ -365,9 +383,9 @@ def test_missing_fork_index_is_parse_failed_even_with_corrected_messages():
         ],
     }
 
-    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify_one(pred, gt)[
-        "reward_with_feedback"
-    ]
+    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify(pred, gt)["results"][
+        0
+    ]["reward_with_feedback"]
     assert rewards["pred_status"] == "parse_failed"
     assert rewards["format_reward"] == 0.0
     assert rewards["final_reward"] == 0.0
@@ -399,9 +417,9 @@ def test_open_tool_call_sentinel_is_renderable_without_a_partial_marker():
     ]
     trajectory = build_trajectory(base, corrected)
 
-    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify_one(
+    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify(
         trajectory, trajectory
-    )["reward_with_feedback"]
+    )["results"][0]["reward_with_feedback"]
     assert rewards["final_reward"] == 1.0
 
 
@@ -479,7 +497,7 @@ def test_unparseable_tool_arguments_do_not_match_valid_ground_truth():
     pred = build_trajectory(base, [base[0], pred_message])
     gt = build_trajectory(base, gt)
 
-    result = CorrectionVerifier(tokenizer=utf8_tokenizer).verify_one(pred, gt)
+    result = CorrectionVerifier(tokenizer=utf8_tokenizer).verify(pred, gt)["results"][0]
     assert result["reward_with_feedback"]["replacement_reward"] == 0.0
 
 
@@ -516,7 +534,7 @@ def test_text_prefix_with_different_bpe_tokens_is_not_rewarded():
 
     rewards = CorrectionVerifier(
         tokenizer=BoundaryTokenizer(), max_replacement_tokens=2
-    ).verify_one(pred, gt)["reward_with_feedback"]
+    ).verify(pred, gt)["results"][0]["reward_with_feedback"]
     assert rewards["location_reward"] == 1.0
     assert rewards["replacement_reward"] == 0.0
 
@@ -537,7 +555,7 @@ def test_text_prefix_with_different_bpe_tokens_does_not_reuse_marker_boundary():
 
     rewards = CorrectionVerifier(
         tokenizer=BoundaryTokenizer(), max_replacement_tokens=20
-    ).verify_one(pred, gt)["reward_with_feedback"]
+    ).verify(pred, gt)["results"][0]["reward_with_feedback"]
     assert rewards["location_reward"] == 1.0
     assert rewards["replacement_reward"] == 0.0
 
@@ -565,7 +583,7 @@ def test_long_partial_prediction_matches_truncated_gt_tokens():
 
     rewards = CorrectionVerifier(
         tokenizer=BoundaryTokenizer(), max_replacement_tokens=1
-    ).verify_one(pred, gt)["reward_with_feedback"]
+    ).verify(pred, gt)["results"][0]["reward_with_feedback"]
     assert rewards["replacement_reward"] == 1.0
 
 
@@ -582,7 +600,7 @@ def test_partial_prediction_shorter_than_truncated_gt_gets_no_replacement_reward
 
     rewards = CorrectionVerifier(
         tokenizer=utf8_tokenizer, max_replacement_tokens=2
-    ).verify_one(pred, gt)["reward_with_feedback"]
+    ).verify(pred, gt)["results"][0]["reward_with_feedback"]
     assert rewards["replacement_reward"] == 0.0
 
 
@@ -605,7 +623,7 @@ def test_partial_prediction_cannot_extend_beyond_a_short_complete_gt():
 
     rewards = CorrectionVerifier(
         tokenizer=utf8_tokenizer, max_replacement_tokens=100
-    ).verify_one(pred, gt)["reward_with_feedback"]
+    ).verify(pred, gt)["results"][0]["reward_with_feedback"]
     assert rewards["location_reward"] == 1.0
     assert rewards["replacement_reward"] == 0.0
 
@@ -627,7 +645,7 @@ def test_partial_gt_can_be_a_prefix_of_a_longer_prediction_under_the_limit():
 
     rewards = CorrectionVerifier(
         tokenizer=utf8_tokenizer, max_replacement_tokens=100
-    ).verify_one(pred, gt)["reward_with_feedback"]
+    ).verify(pred, gt)["results"][0]["reward_with_feedback"]
     assert rewards["replacement_reward"] == 1.0
 
 
@@ -654,11 +672,13 @@ def test_complete_replacement_compares_the_truncated_gt_prefix():
     verifier = CorrectionVerifier(tokenizer=utf8_tokenizer, max_replacement_tokens=2)
 
     assert (
-        verifier.verify_one(pred, gt)["reward_with_feedback"]["replacement_reward"]
+        verifier.verify(pred, gt)["results"][0]["reward_with_feedback"][
+            "replacement_reward"
+        ]
         == 1.0
     )
     assert (
-        verifier.verify_one(wrong_pred, gt)["reward_with_feedback"][
+        verifier.verify(wrong_pred, gt)["results"][0]["reward_with_feedback"][
             "replacement_reward"
         ]
         == 0.0
@@ -695,7 +715,7 @@ def test_mapping_tool_arguments_are_preserved_for_partial_rendering():
     pred = build_trajectory(base, [base[0], pred_message])
     gt = build_trajectory(base, [base[0], gt_message])
 
-    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify_one(pred, gt)[
-        "reward_with_feedback"
-    ]
+    rewards = CorrectionVerifier(tokenizer=utf8_tokenizer).verify(pred, gt)["results"][
+        0
+    ]["reward_with_feedback"]
     assert rewards["final_reward"] == 1.0

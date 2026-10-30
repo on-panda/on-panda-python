@@ -345,8 +345,7 @@ class FindAndReplaceCodecMixin:
     def compute_reward(self, messages, far_text, gt_correction):
         """Deprecated: score a legacy FAR correction for compatibility only.
 
-        New trajectory scoring should use ``CorrectionVerifier.verify`` or
-        ``CorrectionVerifier.verify_one``.
+        New trajectory scoring should use ``CorrectionVerifier.verify``.
 
         reward computation logic:
         ```python

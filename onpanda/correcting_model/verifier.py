@@ -34,14 +34,14 @@ class CorrectionVerifier:
         tokenizer=None,
         max_replacement_tokens=None,
         *,
-        multi_correction_gt_mode="mean",
+        multi_correction_mode="all",
     ):
         self.tokenizer = build_tokenizer(tokenizer)
         if max_replacement_tokens is None:
             max_replacement_tokens = 2 if tokenizer is None else 1
         self.max_replacement_tokens = max_replacement_tokens
-        assert multi_correction_gt_mode in ("max", "mean")
-        self.multi_correction_gt_mode = multi_correction_gt_mode
+        assert multi_correction_mode in ("all", "max")
+        self.multi_correction_mode = multi_correction_mode
         self._tool_arguments_type = None
 
     @classmethod
@@ -411,17 +411,7 @@ class CorrectionVerifier:
             return float(pred_tokens[: len(expected)] == expected)
         return float(pred_tokens == expected)
 
-    def _verify_pair(
-        self,
-        pred_trajectory,
-        gt_trajectory,
-        pred_correction,
-        gt_correction,
-        pred_correction_index,
-        gt_correction_index,
-    ):
-        base_messages = pred_trajectory["messages"]
-        tools = pred_trajectory.get("tools")
+    def _verify_pair(self, base_messages, tools, pred_correction, gt_correction):
         pred_status = self._status(pred_correction)
         gt_status = self._status(gt_correction)
         pred_fork_message_index = (
@@ -534,11 +524,6 @@ class CorrectionVerifier:
             replacement_reward=replacement_reward,
             is_good_cls_reward=is_good_cls_reward,
             fork_message_index_reward=fork_message_index_reward,
-            pred_correction_index=pred_correction_index,
-            gt_correction_index=gt_correction_index,
-            pred_correction_indexes=[pred_correction_index],
-            gt_correction_indexes=[gt_correction_index],
-            multi_correction_gt_mode=self.multi_correction_gt_mode,
             tokenizer=dict(name_or_path=getattr(self.tokenizer, "name_or_path", "")),
             pred_status=pred_status,
             gt_status=gt_status,
@@ -561,54 +546,48 @@ class CorrectionVerifier:
         result["reward_with_feedback"] = reward_with_feedback
         return result
 
-    def verify_one(
-        self,
-        pred_trajectory,
-        gt_trajectory,
-        *,
-        pred_correction_index=0,
-        gt_correction_index=0,
-    ):
-        assert pred_trajectory["messages"] == gt_trajectory["messages"]
-        assert pred_trajectory.get("tools") == gt_trajectory.get("tools")
-        pred_corrections = pred_trajectory["corrections"]
-        gt_corrections = gt_trajectory["corrections"]
-        assert pred_corrections and gt_corrections
-        return self._verify_pair(
-            pred_trajectory,
-            gt_trajectory,
-            pred_corrections[pred_correction_index],
-            gt_corrections[gt_correction_index],
-            pred_correction_index,
-            gt_correction_index,
-        )
-
     def verify(self, pred_trajectory, gt_trajectory):
+        """Return pair results and the multi-correction mode.
+
+        ``all`` returns all pred/GT pairs; ``max`` returns the highest-scoring pair.
+        """
         assert pred_trajectory["messages"] == gt_trajectory["messages"]
         assert pred_trajectory.get("tools") == gt_trajectory.get("tools")
         assert pred_trajectory["corrections"] and gt_trajectory["corrections"]
-        results = [
-            self.verify_one(
-                pred_trajectory,
-                gt_trajectory,
-                pred_correction_index=pred_correction_index,
-                gt_correction_index=gt_correction_index,
-            )
-            for pred_correction_index in range(len(pred_trajectory["corrections"]))
-            for gt_correction_index in range(len(gt_trajectory["corrections"]))
-        ]
-        if self.multi_correction_gt_mode == "max":
-            return [
+        results = []
+        for pred_correction_index, pred_correction in enumerate(
+            pred_trajectory["corrections"]
+        ):
+            for gt_correction_index, gt_correction in enumerate(
+                gt_trajectory["corrections"]
+            ):
+                result = self._verify_pair(
+                    pred_trajectory["messages"],
+                    pred_trajectory.get("tools"),
+                    pred_correction,
+                    gt_correction,
+                )
+                result.update(
+                    pred_correction_index=pred_correction_index,
+                    gt_correction_index=gt_correction_index,
+                )
+                results.append(result)
+        if self.multi_correction_mode == "max":
+            results = [
                 max(
                     results,
                     key=lambda result: result["reward_with_feedback"]["final_reward"],
                 )
             ]
-        return results
+        verified = dict(
+            multi_correction_mode=self.multi_correction_mode, results=results
+        )
+        return verified
 
 
 if __name__ == "__main__":
     from boxx import *
+    from boxx import tree
     from onpanda.correcting_model.far_correction_utils import (
         FindAndReplaceCorrectionAdapter,
     )
@@ -627,13 +606,17 @@ if __name__ == "__main__":
     far_text_cases = get_test_far_text_cases(adapter)
     verifier = CorrectionVerifier(tokenizer=tokenizer, max_replacement_tokens=2)
     for case in far_text_cases[:]:
-        verify_results = verifier.verify(case["pred_trajectory"], case["gt_trajectory"])
+        verified = verifier.verify(case["pred_trajectory"], case["gt_trajectory"])
+        verify_results = verified["results"]
         assert len(verify_results) == 1
         verification_result = verify_results[0]
         assert {"find_and_replace", "messages_location"} <= verification_result.keys()
         reward_res = verification_result["reward_with_feedback"]
-        print(f"\n\n{case['name']} passed: \n{case['pred_far']}\n{reward_res['feedback']}")
+        print(
+            f"\n\n{case['name']} passed: \n{case['pred_far']}\n{reward_res['feedback']}"
+        )
         assert all(
             reward_res[key] == expected
             for key, expected in case["expected_rewards"].items()
         ), f"{case['name']}, {case['pred_far']}, {case['expected_rewards']}\n\n{reward_res}"
+    tree(verified)
