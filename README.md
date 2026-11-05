@@ -2,7 +2,7 @@
 
 Python package for *onPanda: Efficient Annotation of On-Policy Alignment Data for LLMs and Agents via Token-Level Correction* [[project page](https://on-panda.github.io/research/)]
 
-### Contents: [Features](#-features) | [Install](#-install) | [Example Data](#-example-data) | [Quick Start](#-quick-start) | [Main Modules](#-main-modules) | [Iterative Correction](#-iterative-correction-one-step) | [Iterative Correction API](#-iterative-correction-api) | [Data Assumptions](#-data-assumptions)
+### Contents: [Features](#-features) | [Install](#-install) | [Example Data](#-example-data) | [Quick Start](#-quick-start) | [Main Modules](#-main-modules) | [Iterative Correction](#-iterative-correction-one-step) | [Iterative Correction API](#-iterative-correction-api) | [Data Assumptions](#-data-assumptions) | [Resources](#-resources)
 
 ## ▮ Features
 - [x] Parse `.panda.json` into SFT and preference-pair data (`build_legacy_data_v1`)
@@ -146,3 +146,10 @@ python -m onpanda.server.iterative_correction_api --help
     - Top-level field `update_time` exists
     - At least one dialog ends with an `assistant` message
     - If `annotate.is_good` is missing, latest dialog is treated as default good
+
+## ▮ Resources
+
+- [onPanda](https://github.com/on-panda/on-panda): the web app to steer LLMs and agents at the token level, which annotates the `.panda.json` data parsed by this package. [Try it online](https://onpanda.diyer22.com/).
+- For batch LLM data annotation or agent trajectory annotation, see the [research page](https://on-panda.github.io/research/) and [packages/annotate](https://github.com/on-panda/on-panda/blob/main/packages/annotate/README.md).
+- [on-panda-example-data](https://github.com/on-panda/on-panda-example-data): example `.panda.json` data for the demos.
+- [on-panda-docs](https://github.com/on-panda/on-panda-docs): onPanda developer documentation, including the [`.panda.json` data format specification](https://github.com/on-panda/on-panda-docs/blob/main/content/en/panda_json_format.md).

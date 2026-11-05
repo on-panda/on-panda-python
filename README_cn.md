@@ -4,7 +4,7 @@
 
 *onPanda: Efficient Annotation of On-Policy Alignment Data for LLMs and Agents via Token-Level Correction* 的 Python 包 [[项目主页](https://on-panda.github.io/research/)]
 
-### 目录：[功能](#-功能) | [安装](#-安装) | [示例数据](#-示例数据) | [快速上手](#-快速上手) | [主要模块](#-主要模块) | [迭代修正](#-迭代修正单步) | [迭代修正 API](#-迭代修正-api) | [数据假设](#-数据假设)
+### 目录：[功能](#-功能) | [安装](#-安装) | [示例数据](#-示例数据) | [快速上手](#-快速上手) | [主要模块](#-主要模块) | [迭代修正](#-迭代修正单步) | [迭代修正 API](#-迭代修正-api) | [数据假设](#-数据假设) | [资源](#-资源)
 
 ## ▮ 功能
 - [x] 将 `.panda.json` 解析为 SFT 和偏好对数据（`build_legacy_data_v1`）
@@ -148,3 +148,10 @@ python -m onpanda.server.iterative_correction_api --help
     - 存在顶层字段 `update_time`
     - 至少有一个 dialog 以 `assistant` message 结尾
     - 若缺少 `annotate.is_good`，最新的 dialog 默认视为 good
+
+## ▮ 资源
+
+- [onPanda](https://github.com/on-panda/on-panda)：在 token 级别操控 LLM 和 agent 的 Web 应用，本包解析的 `.panda.json` 数据即由它标注，可 [在线体验](https://onpanda.diyer22.com/)。
+- 批量标注 LLM 数据或者 agent 轨迹请参阅 [研究页面](https://on-panda.github.io/research/) 和 [packages/annotate](https://github.com/on-panda/on-panda/blob/main/packages/annotate/README.md)。
+- [on-panda-example-data](https://github.com/on-panda/on-panda-example-data)：demo 用的 `.panda.json` 示例数据。
+- [on-panda-docs](https://github.com/on-panda/on-panda-docs)：onPanda 开发文档，包括 [`.panda.json` 数据格式规范](https://github.com/on-panda/on-panda-docs/blob/main/content/zh-cn/panda_json_format.md)。
