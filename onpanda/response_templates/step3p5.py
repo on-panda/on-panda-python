@@ -98,6 +98,8 @@ def test_step3p5_response_template():
 if __name__ == "__main__":
     with mximport.inpkg():
         from ..test_utils import print_response_template_partial_messages
+        from .consistency import test_consistency_with_tokenizer
 
     print("test_step3p5_response_template passed:", test_step3p5_response_template())
+    test_consistency_with_tokenizer(Step3p5ResponseTemplate())
     print_response_template_partial_messages(Step3p5ResponseTemplate())
