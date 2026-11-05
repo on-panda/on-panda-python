@@ -72,13 +72,8 @@ Example: `{"scores":{"1":{"score":3,"comment":"comment_str1","is_best":false},"2
 }
 
 
-def validate_best_of_n_judge_score(judge_response, candidate_num):
-    try:
-        message = judge_response["choices"][0]["message"]
-    except (KeyError, IndexError, TypeError) as e:
-        raise ValueError(f"judge_response missing choices[0].message: {repr(e)}")
-
-    tool_calls = message.get("tool_calls")
+def validate_best_of_n_judge_score(judge_message, candidate_num):
+    tool_calls = judge_message.get("tool_calls")
     if not tool_calls:
         raise ValueError("judge_response has no tool_calls")
     if not isinstance(tool_calls, list):
@@ -276,7 +271,6 @@ class BestOfNMixin:
             correction_step["corrected_messages"]
             for correction_step in correction_steps
         ]
-        assert __import__("mxlm").__version__ >= "0.2.8", "pip3 install -U mxlm"
         if self.chat_correcting.is_reasoning:
             choice_result = self.choose_best_of_n_by_judge(
                 candidate_messages_list, candidate_tools=correction_steps[0]["tools"]
@@ -396,18 +390,17 @@ class BestOfNMixin:
         max_attempts = 3
 
         for attempt_idx in range(1, max_attempts + 1):
-            judge_response = None
+            judge_trajectory = None
             try:
-                judge_response = self.chat_correcting(
-                    judge_messages,
-                    return_dict=True,
-                    tools=[BEST_OF_N_JUDGE_TOOL],
-                )
+                judge_trajectory = self.chat_correcting(
+                    dict(messages=judge_messages, tools=[BEST_OF_N_JUDGE_TOOL]),
+                    return_traj=True,
+                )["trajectory"]
                 # __import__("boxx").savejson(dict(messages=judge_messages, tools=[BEST_OF_N_JUDGE_TOOL]),"/tmp/judge_response.panda.json",)
                 validated = validate_best_of_n_judge_score(
-                    judge_response, len(candidates)
+                    judge_trajectory["messages"][-1], len(candidates)
                 )
-                judge_message = judge_response["choices"][0]["message"].copy()
+                judge_message = judge_trajectory["messages"][-1].copy()
                 judge_message.pop("tool_calls", None)
                 judge_result = dict(
                     scores=validated["scores"],
@@ -426,22 +419,16 @@ class BestOfNMixin:
                         "call. Use the same candidate_index values from the "
                         "candidate list and return valid JSON arguments."
                     )
-                    message = (
-                        judge_response["choices"][0]["message"]
-                        if judge_response
+                    tool_calls = (
+                        judge_trajectory["messages"][-1].get("tool_calls")
+                        if judge_trajectory
                         else None
                     )
-                    tool_calls = message.get("tool_calls") if message else None
                     if tool_calls and all(
                         tool_call.get("id") for tool_call in tool_calls
                     ):
-                        judge_messages.append(
-                            {
-                                "role": "assistant",
-                                "content": message.get("content") or "",
-                                "tool_calls": tool_calls,
-                            }
-                        )
+                        # Continue the returned trajectory to keep the judge's reasoning and sidecar
+                        judge_messages = judge_trajectory["messages"]
                         for tool_call in tool_calls:
                             judge_messages.append(
                                 {
@@ -485,8 +472,8 @@ def test_best_of_n_judge_prompt(correcting_model):
     """
     captured = {}
 
-    def capture_judge_messages(messages, **kwargs):
-        captured.setdefault("judge_messages", copy.deepcopy(messages))
+    def capture_judge_messages(trajectory, **kwargs):
+        captured.setdefault("judge_messages", copy.deepcopy(trajectory["messages"]))
         raise ValueError("stop after the judge prompt is built")
 
     chat_correcting = correcting_model.chat_correcting

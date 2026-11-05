@@ -4,13 +4,11 @@ from types import MethodType, SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+import mxlm
 
 from onpanda import FindAndReplaceCorrectionAdapter
 from onpanda import utf8_tokenizer
-from onpanda.correcting_model.correcting_model import (
-    CorrectingModel,
-    take_policy_message,
-)
+from onpanda.correcting_model.correcting_model import CorrectingModel
 from onpanda.parser import PandaTree
 from onpanda.response_templates import (
     DefaultResponseTemplate,
@@ -301,44 +299,58 @@ def test_structured_location_snaps_inside_json_escape_to_left_boundary():
 
 
 def test_policy_message_normalizes_api_channels_and_finish_reason():
-    policy_response = {
-        "choices": [
-            {
-                "finish_reason": "stop",
-                "message": {
-                    "role": "assistant",
-                    "content": "answer",
-                    "reasoning_content": "",
-                    "tool_calls": None,
-                },
-            }
-        ]
-    }
+    # mxlm drops empty channels, since response templates read a present `reasoning` or
+    # `tool_calls` key as a channel.
+    chat_policy = mxlm.ChatAPI(base_url="http://policy/v1", model="policy")
+    choices = [
+        {
+            "finish_reason": "stop",
+            "message": {
+                "role": "assistant",
+                "content": "answer",
+                "reasoning": None,
+                "reasoning_content": "",
+                "tool_calls": [],
+            },
+        },
+        {
+            "finish_reason": "stop",
+            "message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {"name": "read", "arguments": "{}"},
+                    }
+                ],
+            },
+        },
+        # An old API ignores echo of a continuation
+        {"finish_reason": "stop", "message": {"role": "assistant", "content": "wer"}},
+    ]
+    chat_policy.client.chat.completions.create = lambda **kwargs: SimpleNamespace(
+        dict=lambda: {"choices": [choices.pop(0)]}
+    )
+    trajectory = {"messages": [{"role": "user", "content": "q"}]}
 
-    assert take_policy_message(policy_response) == {
-        "role": "assistant",
-        "content": "answer",
-        "finish_reason": "stop",
+    assert chat_policy(trajectory, return_traj=True)["trajectory"] == {
+        "messages": trajectory["messages"]
+        + [{"role": "assistant", "content": "answer", "finish_reason": "stop"}]
     }
-
-    tool_call_response = {
-        "choices": [
-            {
-                "finish_reason": "stop",
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "type": "function",
-                            "function": {"name": "read", "arguments": "{}"},
-                        }
-                    ],
-                },
-            }
-        ]
+    tool_call_trajectory = chat_policy(trajectory, return_traj=True)["trajectory"]
+    assert tool_call_trajectory["messages"][-1]["finish_reason"] == "tool_calls"
+    # A continuation completes the final assistant message instead of appending one
+    continuation = {
+        "messages": trajectory["messages"]
+        + [{"role": "assistant", "content": "ans", "partial": True}]
     }
-    assert take_policy_message(tool_call_response)["finish_reason"] == "tool_calls"
+    assert chat_policy(
+        continuation, continue_final_message=True, echo=True, return_traj=True
+    )["trajectory"] == {
+        "messages": trajectory["messages"]
+        + [{"role": "assistant", "content": "answer", "finish_reason": "stop"}]
+    }
 
 
 def test_reasoning_content_is_flattened_as_reasoning():
@@ -367,16 +379,16 @@ def test_correcting_call_preserves_special_tokens():
         def apply(self, messages, far_text, tools=None):
             return {"correction": {}, "partial_messages": messages}
 
-    def chat_correcting(messages, **kwargs):
+    def chat_correcting(trajectory, **kwargs):
+        assert trajectory["tools"] == ["tool"]
         assert kwargs == {
-            "return_dict": True,
+            "return_traj": True,
             "skip_special_tokens": False,
-            "tools": ["tool"],
             "tool_choice": "none",
         }
         return {
-            "model": "correcting",
-            "choices": [{"message": {"content": "far"}}],
+            "trajectory": {"messages": [{"role": "assistant", "content": "far"}]},
+            "response": {"model": "correcting"},
         }
 
     chat_correcting.model = "correcting"
@@ -607,15 +619,14 @@ def test_structured_tool_calls_survive_policy_continuation(response_template):
     class Policy:
         model = "policy"
 
-        def __call__(self, messages, **kwargs):
+        def __call__(self, trajectory, **kwargs):
             assert kwargs["skip_special_tokens"] is False
             assert kwargs["tool_choice"] == "none"
-            assert kwargs["tools"] == tools
+            assert trajectory["tools"] == tools
             return {
-                "choices": [
-                    {
-                        "finish_reason": "tool_calls",
-                        "message": {
+                "trajectory": {
+                    "messages": [
+                        {
                             "role": "assistant",
                             "content": None,
                             "tool_calls": [
@@ -629,9 +640,10 @@ def test_structured_tool_calls_survive_policy_continuation(response_template):
                                     },
                                 }
                             ],
-                        },
-                    }
-                ]
+                            "finish_reason": "tool_calls",
+                        }
+                    ]
+                }
             }
 
     corrected = correcting_model.correct_and_rollout(
@@ -702,10 +714,9 @@ def test_mislabeled_content_continuation_does_not_leak_think_end():
     )
     policy = Mock(
         return_value={
-            "choices": [
-                {
-                    "finish_reason": "stop",
-                    "message": {
+            "trajectory": {
+                "messages": [
+                    {
                         "role": "assistant",
                         # mxlm echoes the prefix before returning the vLLM response.
                         "content": (
@@ -716,11 +727,10 @@ def test_mislabeled_content_continuation_does_not_leak_think_end():
                             "</tool_call>"
                         ),
                         "reasoning": ".txt\n",
-                        "reasoning_content": ".txt\n",
-                        "tool_calls": [],
-                    },
-                }
-            ]
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
         }
     )
     policy.model = "policy"
