@@ -17,10 +17,17 @@ with mximport.inpkg():
         content_to_text,
         test_default_response_template,
     )
+    from .deepseek_v4 import DeepSeekV4ResponseTemplate
+    from .deepseek_v4p1 import DeepSeekV4p1ResponseTemplate
     from .qwen3p5 import Qwen3p5ResponseTemplate, test_qwen3p5_response_template
     from .step3p5 import Step3p5ResponseTemplate, test_step3p5_response_template
 
-RESPONSE_TEMPLATE_CLASSES = [Qwen3p5ResponseTemplate, Step3p5ResponseTemplate]
+RESPONSE_TEMPLATE_CLASSES = [
+    Qwen3p5ResponseTemplate,
+    Step3p5ResponseTemplate,
+    DeepSeekV4ResponseTemplate,
+    DeepSeekV4p1ResponseTemplate,
+]
 FLATTENED_MESSAGE_KEYS = (
     "reasoning",
     "reasoning_content",
