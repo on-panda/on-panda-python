@@ -448,9 +448,20 @@ def test_default_response_template():
 
 if __name__ == "__main__":
     import mximport
+    from boxx import tree
 
     with mximport.inpkg():
-        from ..test_utils import print_response_template_partial_messages
+        from ..test_utils import (
+            print_response_template_partial_messages,
+            get_test_reasoning_tool_calls_msgs1,
+        )
 
     print("test_default_response_template passed:", test_default_response_template())
-    print_response_template_partial_messages(DefaultResponseTemplate())
+    templ = DefaultResponseTemplate()
+    print_response_template_partial_messages(templ)
+
+    msgs = get_test_reasoning_tool_calls_msgs1("bad_content")[0]
+    applied = templ.apply(msgs[-1])
+    tree(applied)
+    print("templated_prompt:")
+    print(applied["templated_prompt"])

@@ -716,6 +716,7 @@ def print_response_template_partial_messages(response_template):
                 sep="\n",
             )
             print()
+    import boxx.g
 
 
 if __name__ == "__main__":

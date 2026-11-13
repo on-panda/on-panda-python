@@ -335,8 +335,8 @@ class CorrectionVerifier:
     def _status(correction):
         """
         "status" is the internal state of Verifier. It is derived from the correction's "fork_message_index" and optional "status" field.
-        The "fork_message_index" determines the internal status: 
-        - A None fork means is_good; 
+        The "fork_message_index" determines the internal status:
+        - A None fork means is_good;
         - An integer fork requires corrected_messages and means applied.
         Optional input "status" distinguishes failures without a "fork_message_index";
         "partial" only controls message completeness in _is_partial.
@@ -455,7 +455,9 @@ class CorrectionVerifier:
         location_reward = 0.0
         replacement_reward = 0.0
         location_feedback = f"location skipped: pred={pred_status}, gt={gt_status}"
-        replacement_feedback = f"replacement skipped: pred={pred_status}, gt={gt_status}"
+        replacement_feedback = (
+            f"replacement skipped: pred={pred_status}, gt={gt_status}"
+        )
         if pred_status not in (
             "parse_failed",
             "not_found",
