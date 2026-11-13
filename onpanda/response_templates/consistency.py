@@ -250,9 +250,12 @@ def test_consistency_with_tokenizer(response_template):
 
 if __name__ == "__main__":
     with mximport.inpkg():
-        from . import RESPONSE_TEMPLATE_CLASSES
+        from . import RESPONSE_TEMPLATE_CLASSES, CorrectionCallResponseTemplate
 
     for template_class in RESPONSE_TEMPLATE_CLASSES:
+        # This serialization format has no corresponding native model tokenizer.
+        if template_class is CorrectionCallResponseTemplate:
+            continue
         response_template = template_class()
         test_consistency_with_tokenizer(response_template)
         print("test_consistency_with_tokenizer passed:", response_template.name_or_path)

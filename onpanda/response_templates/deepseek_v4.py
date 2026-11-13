@@ -20,9 +20,21 @@ with mximport.inpkg():
 
 class DeepSeekV4ResponseTemplate:
     default_name_or_path = "deepseek-ai/DeepSeek-V4-Flash"
+    namespace = "｜DSML｜"
     tool_calls_block_name = "tool_calls"
     tool_call_tag_name = "invoke"
     parameter_tag_name = "parameter"
+    parameter_key_attribute = "name"
+    string_attribute = "string"
+    string_values = ("false", "true")
+    reasoning_begin_marker = THINK_BEGIN
+    reasoning_end_marker = THINK_END
+    content_begin_marker = ""
+    content_end_marker = ""
+    reasoning_content_separator = ""
+    content_tool_calls_separator = "\n\n"
+    eos = "".join(["<｜", "end▁of▁sentence", "｜>"])
+    emit_eos = False
 
     @staticmethod
     def match(response_template=None):
@@ -37,22 +49,27 @@ class DeepSeekV4ResponseTemplate:
     def __init__(self, response_template=None, special_tokens=None):
         self.config = response_template or {}
         self.name_or_path = self.config.get("name_or_path") or self.default_name_or_path
-        self.reasoning_end_marker = THINK_END
-        self.eos = "".join(["<｜", "end▁of▁sentence", "｜>"])
         self.tool_calls_begin = "".join(
-            ["<", "｜DSML｜", self.tool_calls_block_name, ">"]
+            ["<", self.namespace, self.tool_calls_block_name, ">"]
         )
         self.tool_calls_end = "".join(
-            ["</", "｜DSML｜", self.tool_calls_block_name, ">"]
+            ["</", self.namespace, self.tool_calls_block_name, ">"]
         )
         self.invoke_prefix = "".join(
-            ["<", "｜DSML｜", self.tool_call_tag_name, ' name="']
+            ["<", self.namespace, self.tool_call_tag_name, ' name="']
         )
-        self.invoke_end = "".join(["</", "｜DSML｜", self.tool_call_tag_name, ">"])
+        self.invoke_end = "".join(["</", self.namespace, self.tool_call_tag_name, ">"])
         self.parameter_prefix = "".join(
-            ["<", "｜DSML｜", self.parameter_tag_name, ' name="']
+            [
+                "<",
+                self.namespace,
+                self.parameter_tag_name,
+                f' {self.parameter_key_attribute}="',
+            ]
         )
-        self.parameter_end = "".join(["</", "｜DSML｜", self.parameter_tag_name, ">"])
+        self.parameter_end = "".join(
+            ["</", self.namespace, self.parameter_tag_name, ">"]
+        )
 
     def __str__(self):
         return f"{type(self).__name__}({self.config})"
@@ -83,8 +100,8 @@ class DeepSeekV4ResponseTemplate:
 
         is_partial = message.get("finish_reason") not in COMPLETE_FINISH_REASONS
         reasoning = message.get("reasoning") or ""
-        while reasoning.startswith(THINK_BEGIN):
-            reasoning = reasoning[len(THINK_BEGIN) :]
+        while reasoning.startswith(self.reasoning_begin_marker):
+            reasoning = reasoning[len(self.reasoning_begin_marker) :]
         content = message.get("content") or ""
         tool_calls = message.get("tool_calls") or []
         if not message.get("role") and not (reasoning or content or tool_calls):
@@ -94,22 +111,37 @@ class DeepSeekV4ResponseTemplate:
             and message.get("finish_reason") != REASONING_END
             and not content
             and not tool_calls
+            and not (self.content_begin_marker and "content" in message)
         )
-        if reasoning or is_pure_reasoning_partial:
-            templated_prompt += THINK_BEGIN
+        has_reasoning = (
+            reasoning
+            or is_pure_reasoning_partial
+            or (self.content_begin_marker and "reasoning" in message)
+        )
+        if has_reasoning:
+            templated_prompt += self.reasoning_begin_marker
         if "reasoning" in message:
             append_mapped(
                 ["reasoning"],
                 reasoning,
                 len(message["reasoning"] or "") - len(reasoning),
             )
-        if not is_pure_reasoning_partial:
-            templated_prompt += THINK_END
+        if not is_pure_reasoning_partial and (
+            has_reasoning or not self.content_begin_marker
+        ):
+            templated_prompt += self.reasoning_end_marker
         if "content" in message:
+            if has_reasoning:
+                templated_prompt += self.reasoning_content_separator
+            templated_prompt += self.content_begin_marker
             append_mapped(["content"], content)
+            if not is_partial or tool_calls:
+                templated_prompt += self.content_end_marker
 
         if tool_calls:
-            templated_prompt += "\n\n" + self.tool_calls_begin
+            if templated_prompt:
+                templated_prompt += self.content_tool_calls_separator
+            templated_prompt += self.tool_calls_begin
             if tool_calls != [{}]:
                 templated_prompt += "\n"
             for position, tool_call in enumerate(
@@ -149,7 +181,7 @@ class DeepSeekV4ResponseTemplate:
                             break
                         # String offsets include decoded escape boundaries; nonstrings stay JSON.
                         is_string = "value_offsets" in parameter
-                        templated_prompt += f' string="{str(is_string).lower()}">'
+                        templated_prompt += f' {self.string_attribute}="{self.string_values[is_string]}">'
                         value = parameter["value"]
                         if parameter["complete"] and not is_string:
                             value = json.dumps(value, ensure_ascii=False)
@@ -179,6 +211,8 @@ class DeepSeekV4ResponseTemplate:
                     templated_prompt += "\n"
             if not is_partial and tool_calls != [{}]:
                 templated_prompt += "\n" + self.tool_calls_end
+        if not is_partial and self.emit_eos:
+            templated_prompt += ("\n" if templated_prompt else "") + self.eos
         return dict(
             templated_prompt=templated_prompt,
             key_path_prompt_mapping=key_path_prompt_mapping,
@@ -192,14 +226,18 @@ class DeepSeekV4ResponseTemplate:
         has_eos = text.endswith(self.eos)
         if has_eos:
             text = text[: -len(self.eos)]
+            if self.emit_eos:
+                finish_reason = finish_reason or "stop"
         message = dict(role="assistant")
         reasoning_closed = False
-        if text.startswith(THINK_BEGIN):
-            text = text[len(THINK_BEGIN) :]
-            while text.startswith(THINK_BEGIN):
-                text = text[len(THINK_BEGIN) :]
-            reasoning_end = text.find(THINK_END)
-            tool_calls_start = text.find(self.tool_calls_begin)
+        if text.startswith(self.reasoning_begin_marker):
+            text = text[len(self.reasoning_begin_marker) :]
+            while text.startswith(self.reasoning_begin_marker):
+                text = text[len(self.reasoning_begin_marker) :]
+            reasoning_end = text.find(self.reasoning_end_marker)
+            tool_calls_start = (
+                -1 if self.content_begin_marker else text.find(self.tool_calls_begin)
+            )
             if reasoning_end == -1 and tool_calls_start == -1:
                 # Even an empty prefix is in reasoning, which the continuation caller must know.
                 message["reasoning"] = text
@@ -207,23 +245,40 @@ class DeepSeekV4ResponseTemplate:
                     message["finish_reason"] = finish_reason
                 return message
             end = tool_calls_start if reasoning_end == -1 else reasoning_end
-            reasoning = text[:end].rstrip("\n")
-            if reasoning:
+            reasoning = text[:end]
+            if not self.content_begin_marker:
+                reasoning = reasoning.rstrip("\n")
+            if reasoning or self.content_begin_marker:
                 message["reasoning"] = reasoning
-            text = text[end + (0 if reasoning_end == -1 else len(THINK_END)) :]
+            text = text[
+                end + (0 if reasoning_end == -1 else len(self.reasoning_end_marker)) :
+            ]
+            text = text.removeprefix(self.reasoning_content_separator)
             reasoning_closed = True
-        elif THINK_END in text:
-            reasoning_end = text.index(THINK_END)
+        elif not self.content_begin_marker and self.reasoning_end_marker in text:
+            reasoning_end = text.index(self.reasoning_end_marker)
             if reasoning_end:
                 message["reasoning"] = text[:reasoning_end]
-            text = text[reasoning_end + len(THINK_END) :]
+            text = text[reasoning_end + len(self.reasoning_end_marker) :]
             reasoning_closed = True
 
+        if self.content_begin_marker and text.startswith(self.content_begin_marker):
+            content_start = len(self.content_begin_marker)
+            content_end = text.find(self.content_end_marker, content_start)
+            if content_end == -1:
+                message["content"] = text[content_start:]
+                text = ""
+            else:
+                message["content"] = text[content_start:content_end]
+                text = text[content_end + len(self.content_end_marker) :].removeprefix(
+                    self.content_tool_calls_separator
+                )
         tool_calls_start = text.find(self.tool_calls_begin)
-        if tool_calls_start == -1:
-            message["content"] = text
-        else:
-            message["content"] = text[:tool_calls_start].rstrip("\n")
+        if not self.content_begin_marker:
+            message["content"] = (
+                text if tool_calls_start == -1 else text[:tool_calls_start].rstrip("\n")
+            )
+        if tool_calls_start != -1:
             text = text[tool_calls_start + len(self.tool_calls_begin) :]
             section_end = text.find(self.tool_calls_end)
             if section_end != -1:
@@ -283,7 +338,8 @@ class DeepSeekV4ResponseTemplate:
                         raw_arguments[key_start:key_end], ensure_ascii=False
                     )
                     marker = re.match(
-                        r'"\s+string="(true|false)">', raw_arguments[key_end:]
+                        rf'"\s+{self.string_attribute}="({"|".join(self.string_values)})">',
+                        raw_arguments[key_end:],
                     )
                     if not marker:
                         argument_parts.append(key_text)
@@ -311,7 +367,7 @@ class DeepSeekV4ResponseTemplate:
                         has_parameter_close or next_parameter != -1 or function_closed
                     )
                     value = raw_arguments[value_start:value_end]
-                    if marker[1] == "true":
+                    if marker[1] == self.string_values[True]:
                         value = json.dumps(value, ensure_ascii=False)
                         if not parameter_complete:
                             value = value[:-1]
@@ -342,6 +398,7 @@ class DeepSeekV4ResponseTemplate:
         elif (
             reasoning_closed
             and not message.get("content")
+            and not (self.content_begin_marker and "content" in message)
             and "tool_calls" not in message
         ):
             message["finish_reason"] = REASONING_END

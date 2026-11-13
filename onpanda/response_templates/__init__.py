@@ -19,6 +19,7 @@ with mximport.inpkg():
     )
     from .deepseek_v4 import DeepSeekV4ResponseTemplate
     from .deepseek_v4p1 import DeepSeekV4p1ResponseTemplate
+    from .correction_call import CorrectionCallResponseTemplate
     from .qwen3p5 import Qwen3p5ResponseTemplate, test_qwen3p5_response_template
     from .step3p5 import Step3p5ResponseTemplate, test_step3p5_response_template
 
@@ -27,6 +28,7 @@ RESPONSE_TEMPLATE_CLASSES = [
     Step3p5ResponseTemplate,
     DeepSeekV4ResponseTemplate,
     DeepSeekV4p1ResponseTemplate,
+    CorrectionCallResponseTemplate,
 ]
 FLATTENED_MESSAGE_KEYS = (
     "reasoning",
