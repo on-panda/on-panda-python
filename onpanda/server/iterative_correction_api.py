@@ -11,7 +11,7 @@ Supported keys include:
 - `allow_repeat` (bool): for pass_at_k only, resample after a prompt consumes k cached candidates.
 - `rerun_bypass` (bool): direct-forward single-turn rerun extraction requests, default False.
 - `chat` (dict): kwargs for `mxlm.ChatAPI` used by correcting model.
-- `far` (dict): kwargs for `onpanda.FindAndReplaceCorrectionAdapter`.
+- `far` (dict): correcting adapter kwargs; its response template defaults to `onpanda/default`.
 - `name_or_path` (str): policy response template identity, defaults to its API model name.
 - `policy_far` (dict): policy adapter settings; `tokenizer` and `max_replacement_tokens`
   control replacement alignment. The policy ChatAPI owns its response template.
@@ -103,6 +103,8 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
 
         far = copy.deepcopy(correcting_config.get("far"))
         policy_far = copy.deepcopy(correcting_config.get("policy_far"))
+        if policy_far is not None:
+            policy_far["response_template"] = chat_policy.response_template
         chat = copy.deepcopy(correcting_config.get("chat"))
         if chat is not None:
             # chat_correcting uses the same upstream by default, while still

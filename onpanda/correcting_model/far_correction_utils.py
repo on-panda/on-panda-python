@@ -57,9 +57,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
     """
     Adapter of one model: its tokenizer, its response template and the FAR answer format.
 
-    Used as the correcting model's adapter by default. When passed as `adapter_policy` of
-    `CorrectingModel.correct_and_rollout`, only `tokenizer` and `max_replacement_tokens`
-    matter; the policy ChatAPI supplies its response template.
+    A policy adapter uses its own tokenizer and replacement limit, and the policy's response
+    template when available. Otherwise DefaultResponseTemplate handles content-only messages
+    through the same apply/parse path, including stop markers in the token budget.
     """
 
     def __init__(
@@ -489,32 +489,20 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
             partial_messages=partial_messages,
         )
 
-    def build_partial_templated_prompt(
-        self, rejected_message, partial_message, response_template=None
-    ):
+    def build_partial_templated_prompt(self, rejected_message, partial_message):
         """
-        Render the corrected partial message for continuation, then align the correction to this
-        model's own token boundary: diff the complete token sequences and keep only the first
-        `max_replacement_tokens` tokens after their fork.
+        Render the corrected partial message with this adapter's response template, then align
+        the correction to its token boundary: keep only the first `max_replacement_tokens`
+        tokens after the fork.
 
-        `response_template=None` means literal content, matching a policy without a template.
         An empty replacement means continuation starts at the fork without an injected token.
         """
-        if response_template is None:
-            assert not any(
-                message.get(key)
-                for message in (rejected_message, partial_message)
-                for key in ("reasoning", "reasoning_content", "tool_calls")
-            ), "Structured policy alignment requires a response template"
-            templated_prompt = partial_message.get("content") or ""
-            rejected_templated_prompt = rejected_message.get("content") or ""
-        else:
-            templated_prompt = response_template.apply(partial_message)[
-                "templated_prompt"
-            ]
-            rejected_templated_prompt = response_template.apply(rejected_message)[
-                "templated_prompt"
-            ]
+        templated_prompt = self.response_template.apply(partial_message)[
+            "templated_prompt"
+        ]
+        rejected_templated_prompt = self.response_template.apply(rejected_message)[
+            "templated_prompt"
+        ]
         templated_tokens = self.tokenizer.encode(
             templated_prompt, add_special_tokens=False
         )
@@ -553,6 +541,41 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
         return dict(
             templated_prompt=decodable_res["decoded_text"],
             replacement=replacement,
+        )
+
+    def truncate_partial_messages(self, rejected_messages, partial_messages, tools=None):
+        """Limit the last correction in this policy adapter's token/template space.
+
+        Keep the supplied history, including an earlier fork, without changing either input.
+        A shortened final message is parsed without its old finish_reason; an unshortened
+        message keeps its completion state, even when the template omits the stop token.
+        tools supplies the schema needed to recover typed Qwen/Step arguments.
+        """
+        truncated_prefix = self.build_partial_templated_prompt(
+            rejected_messages[len(partial_messages) - 1], partial_messages[-1]
+        )["templated_prompt"]
+        complete_templated_prompt = self.response_template.apply(partial_messages[-1])[
+            "templated_prompt"
+        ]
+        truncated_tokens = self.tokenizer.encode(
+            truncated_prefix, add_special_tokens=False
+        )
+        partial_messages = partial_messages[:]
+        if len(truncated_tokens) < len(
+            self.tokenizer.encode(complete_templated_prompt, add_special_tokens=False)
+        ):
+            partial_messages[-1] = dict(role="assistant") | self.response_template.parse(
+                truncated_prefix, messages=partial_messages[:-1], tools=tools
+            )
+        if partial_messages[-1].get("finish_reason") in ("stop", "tool_calls"):
+            complete_templated_prompt = self.response_template.apply(
+                partial_messages[-1]
+            )["templated_prompt"]
+            assert truncated_tokens == self.tokenizer.encode(
+                complete_templated_prompt, add_special_tokens=False
+            ), "Completed correction must match the truncated prefix"
+        return dict(
+            partial_messages=partial_messages, truncated_prefix=truncated_prefix
         )
 
 
@@ -648,9 +671,7 @@ def test_reasoning_and_tool_calls_correcting():
         ],
     )
     partial_templated = adapter_policy.build_partial_templated_prompt(
-        tool_call_messages[-1],
-        partial_tool_call_message,
-        response_template=adapter_policy.response_template,
+        tool_call_messages[-1], partial_tool_call_message
     )
     assert partial_templated["templated_prompt"] == (
         "<tool_call>\n<function=read_file>\n<parameter=path>\n/tmp/a"
@@ -665,7 +686,6 @@ def test_reasoning_and_tool_calls_correcting():
         dict(
             role="assistant", reasoning="thi", content="", finish_reason="reasoning_end"
         ),
-        response_template=adapter_policy.response_template,
     )
     assert reasoning_partial_templated == dict(
         templated_prompt="<think>\nthi\n", replacement="\n"

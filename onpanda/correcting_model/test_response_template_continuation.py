@@ -1,12 +1,14 @@
 """Offline correction integration checks for model-owned response templates."""
 
 if __name__ == "__main__":
+    import json
     from types import SimpleNamespace
     from unittest.mock import Mock
 
     import mximport
     import mxlm
     from mxlm.response_templates import (
+        DefaultResponseTemplate,
         DeepSeekV4ResponseTemplate,
         DeepSeekV4p1ResponseTemplate,
     )
@@ -42,6 +44,11 @@ if __name__ == "__main__":
             tokenizer=utf8_tokenizer, max_replacement_tokens=1000
         )
         correcting_model = CorrectingModel(SimpleNamespace(model="correcting"), adapter)
+        adapter_policy = FindAndReplaceCorrectionAdapter(
+            tokenizer=utf8_tokenizer,
+            max_replacement_tokens=1000,
+            response_template=template,
+        )
         user_message = dict(role="user", content="q")
         rejected = dict(role="assistant", content="wrong", finish_reason="stop")
         tool_partial = dict(
@@ -78,9 +85,9 @@ if __name__ == "__main__":
                 dict(content="", finish_reason="tool_calls"),
             ),
         ):
-            prefix = adapter.build_partial_templated_prompt(
-                rejected, partial, response_template=template
-            )["templated_prompt"]
+            prefix = adapter_policy.build_partial_templated_prompt(rejected, partial)[
+                "templated_prompt"
+            ]
             correcting_model.correct = Mock(
                 return_value=dict(
                     correction=dict(
@@ -114,6 +121,7 @@ if __name__ == "__main__":
                     dict(role="assistant", content="old answer", finish_reason="stop"),
                 ],
                 policy,
+                adapter_policy=adapter_policy,
             )["corrected_messages"]
             assert len(corrected_messages) == 2
             assert corrected_messages[0] == user_message
@@ -134,19 +142,13 @@ if __name__ == "__main__":
             assert request["skip_special_tokens"] is False
         print(template_class.__name__, "passed: correction trajectories, continuation")
 
-    # No template means literal content, even when that content resembles CM markers.
+    # Default handles plain content even when ChatAPI has no native template.
     # An open structured channel must not acquire an empty downstream content channel.
     for name_or_path, partial, delta in (
         (
             None,
-            dict(
-                role="assistant",
-                content="<|reasoning|>literal<|stop|>",
-                reasoning="",
-                reasoning_content="",
-                tool_calls=[],
-            ),
-            dict(content="!", reasoning="", reasoning_content="", tool_calls=[]),
+            dict(role="assistant", content="hi!"),
+            dict(content="!"),
         ),
         (
             "onpanda/correction-call",
@@ -155,6 +157,13 @@ if __name__ == "__main__":
         ),
     ):
         policy = mxlm.ChatAPI(model="deployment", name_or_path=name_or_path)
+        # Without adapter_policy, reuse the correcting adapter as configured.
+        correcting_model = CorrectingModel(
+            SimpleNamespace(model="correcting"),
+            FindAndReplaceCorrectionAdapter(
+                max_replacement_tokens=1000, response_template=policy.response_template
+            ),
+        )
         correcting_model.correct = Mock(
             return_value=dict(
                 correction=dict(
@@ -179,13 +188,14 @@ if __name__ == "__main__":
             [user_message, rejected], policy
         )["corrected_messages"][-1]
         if name_or_path is None:
+            assert policy.response_template is None
             assert corrected["content"] == partial["content"] + "!"
             assert "reasoning" not in corrected
         else:
             assert corrected["reasoning"] == "start end"
             assert "content" not in corrected
         assert corrected["finish_reason"] == "length"
-    print("Literal content and open correction-call reasoning passed")
+    print("Plain content and open correction-call reasoning passed")
 
     # Do not inject the separator before a model can emit a merged newline token.
     trajectory = get_test_trajectories("bad_argument_key")
@@ -202,10 +212,14 @@ if __name__ == "__main__":
                 tools=trajectory["tools"],
             )
         )
-        prefix = adapter.build_partial_templated_prompt(
+        adapter_policy = FindAndReplaceCorrectionAdapter(
+            tokenizer=utf8_tokenizer,
+            max_replacement_tokens=5,
+            response_template=policy.response_template,
+        )
+        prefix = adapter_policy.build_partial_templated_prompt(
             trajectory["messages"][-1],
             correcting_model.correct.return_value["partial_messages"][-1],
-            response_template=policy.response_template,
         )["templated_prompt"]
         assert prefix.endswith("<parameter=path>")
         policy.client.chat.completions.create = Mock(
@@ -224,7 +238,10 @@ if __name__ == "__main__":
             )
         )
         corrected = correcting_model.correct_and_rollout(
-            trajectory["messages"], policy, tools=trajectory["tools"]
+            trajectory["messages"],
+            policy,
+            adapter_policy=adapter_policy,
+            tools=trajectory["tools"],
         )["corrected_messages"][-1]
         request = policy.client.chat.completions.create.call_args.kwargs
         assert request["messages"][-1]["content"] == prefix

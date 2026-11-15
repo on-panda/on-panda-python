@@ -77,8 +77,9 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         from messages without the last assistant.
         When iid_sampling is True, skip correction and keep the sampled assistant.
 
-        adapter_policy supplies the tokenizer and replacement limit, defaulting to the correcting
-        adapter. The policy ChatAPI owns response rendering, continuation and parsing.
+        adapter_policy owns replacement alignment and defaults to self.adapter. The caller
+        supplies the policy's response template when available; otherwise the adapter uses
+        DefaultResponseTemplate for content-only messages. ChatAPI owns continuation and parsing.
         """
         adapter_policy = adapter_policy or self.adapter
         policy_kwargs = dict(skip_special_tokens=False)
@@ -126,46 +127,19 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
             elif corrected_result["correction"]["messages_location"].get("is_good"):
                 corrected_messages = messages
             else:  # has correction
-                partial_messages = correction_result["partial_messages"]
-                corrected_message_index = len(partial_messages) - 1
-                partial_templated = adapter_policy.build_partial_templated_prompt(
-                    messages[corrected_message_index],
-                    partial_messages[-1],
-                    response_template=chat_policy.response_template,
+                truncated = adapter_policy.truncate_partial_messages(
+                    messages, correction_result["partial_messages"], tools=tools
                 )
-                prefix = partial_templated["templated_prompt"]
+                partial_messages = truncated["partial_messages"]
+                prefix = truncated["truncated_prefix"]
                 corrected_result["correction"]["continue_prefix_right40"] = (
                     prefix if len(prefix) <= 40 else "..." + prefix[-37:]
                 )
-                complete_templated_prompt = (
-                    chat_policy.response_template.apply(partial_messages[-1])[
-                        "templated_prompt"
-                    ]
-                    if chat_policy.response_template is not None
-                    else partial_messages[-1].get("content") or ""
-                )
-                if partial_messages[-1].get("finish_reason") in (
-                    "stop",
-                    "tool_calls",
-                ) and adapter_policy.tokenizer.encode(
-                    prefix, add_special_tokens=False
-                ) == adapter_policy.tokenizer.encode(
-                    complete_templated_prompt, add_special_tokens=False
-                ):  # correction to stop
+                if partial_messages[-1].get("finish_reason") in ("stop", "tool_calls"):
                     corrected_messages = partial_messages
                 else:
-                    continuation_message = dict(role="assistant", content=prefix)
-                    if chat_policy.response_template is not None:
-                        continuation_message = dict(
-                            role="assistant"
-                        ) | chat_policy.response_template.parse(
-                            prefix, messages=partial_messages[:-1], tools=tools
-                        )
                     corrected_messages = chat_policy(
-                        dict(
-                            messages=partial_messages[:-1] + [continuation_message],
-                            tools=tools,
-                        ),
+                        dict(messages=partial_messages, tools=tools),
                         continue_final_message=True,
                         return_traj=True,
                         **policy_kwargs,
@@ -468,6 +442,7 @@ def build_correcting_model_with_policy(reasoning=True):
     )
     adapter_policy = onpanda.FindAndReplaceCorrectionAdapter(
         tokenizer=os.environ.get("POLICY_TOKENIZER_NAME_OR_PATH"),
+        response_template=chat_policy.response_template,
     )
     return dict(
         correcting_model=correcting_model,

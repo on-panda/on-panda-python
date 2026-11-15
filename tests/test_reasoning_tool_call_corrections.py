@@ -664,7 +664,9 @@ def test_structured_tool_calls_survive_policy_continuation(name_or_path):
             },
         ],
         policy,
-        adapter_policy=adapter,
+        adapter_policy=FindAndReplaceCorrectionAdapter(
+            max_replacement_tokens=200, response_template=policy.response_template
+        ),
         tools=tools,
     )["corrected_messages"][-1]
 
@@ -739,7 +741,9 @@ def test_mislabeled_content_continuation_does_not_leak_think_end():
     corrected = correcting_model.correct_and_rollout(
         [{"role": "user", "content": "q"}, rejected_message],
         policy,
-        adapter_policy=adapter,
+        adapter_policy=FindAndReplaceCorrectionAdapter(
+            max_replacement_tokens=200, response_template=policy.response_template
+        ),
     )["corrected_messages"][-1]
 
     assert corrected["reasoning"] == "think"

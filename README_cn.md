@@ -57,9 +57,7 @@ token_level_v1 = tree.build_token_level_supervision_data_v1(
 print("token_level_v1:", len(token_level_v1))
 
 # 3) Find-and-Replace 修正数据
-adapter = onpanda.FindAndReplaceCorrectionAdapter(
-    tokenizer
-)
+adapter = onpanda.FindAndReplaceCorrectionAdapter(tokenizer)
 correction_data = tree.build_far_correction_data_v1(adapter)
 print("correction_data:", len(correction_data))
 ```

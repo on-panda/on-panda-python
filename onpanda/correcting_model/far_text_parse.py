@@ -28,9 +28,7 @@ class FindAndReplaceCodecMixin:
         self.special_tokens = {**self.default_special_tokens, **(special_tokens or {})}
         self.response_template = build_response_template(
             response_template, special_tokens=self.special_tokens
-        ) or DefaultResponseTemplate(
-            response_template, special_tokens=self.special_tokens
-        )
+        ) or DefaultResponseTemplate(special_tokens=self.special_tokens)
 
     @staticmethod
     def _mean(nums):

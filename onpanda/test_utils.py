@@ -352,17 +352,13 @@ def get_test_trajectories(error_type=None):
         from .correcting_model.far_correction_utils import (
             FindAndReplaceCorrectionAdapter,
         )
-        from mxlm.response_templates import DefaultResponseTemplate
         from mxlm.response_templates.default import (
             CALL_BEGIN_MARKER,
             CALL_FIELD_MARKERS,
             TOOL_CALLS_MARKER,
         )
 
-    adapter = FindAndReplaceCorrectionAdapter(
-        response_template=DefaultResponseTemplate(),
-        max_replacement_tokens=20,
-    )
+    adapter = FindAndReplaceCorrectionAdapter(max_replacement_tokens=20)
     split = adapter.special_tokens["split"]
     stop = adapter.special_tokens["stop"]
     call_arguments_marker = dict(
@@ -644,12 +640,19 @@ def print_response_template_partial_messages(response_template):
         from .correcting_model.far_correction_utils import (
             FindAndReplaceCorrectionAdapter,
         )
-        from mxlm.response_templates import build_messages_location
+        from mxlm.response_templates import (
+            DefaultResponseTemplate,
+            build_messages_location,
+        )
         from .token_level_supervision_utils import compute_token_level_supervision
 
     adapter = FindAndReplaceCorrectionAdapter(
         response_template=response_template,
-        tokenizer=response_template.name_or_path or "utf8_tokenizer",
+        tokenizer=(
+            "utf8_tokenizer"
+            if isinstance(response_template, DefaultResponseTemplate)
+            else response_template.name_or_path or "utf8_tokenizer"
+        ),
         max_replacement_tokens=1,
     )
     for error_key, trajectory in get_test_trajectories().items():
@@ -665,7 +668,7 @@ def print_response_template_partial_messages(response_template):
             rejected_applied = response_template.apply(rejected_message)
             rejected_templated = rejected_applied["templated_prompt"]
             partial_result = adapter.build_partial_templated_prompt(
-                rejected_message, partial_message, response_template=response_template
+                rejected_message, partial_message
             )
             replacement_tokens_1 = partial_result["templated_prompt"]
             token_level = compute_token_level_supervision(
