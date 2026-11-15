@@ -10,21 +10,21 @@ from onpanda import FindAndReplaceCorrectionAdapter
 from onpanda import utf8_tokenizer
 from onpanda.correcting_model.correcting_model import CorrectingModel
 from onpanda.parser import PandaTree
-from onpanda.response_templates import (
+from mxlm.response_templates import (
     DefaultResponseTemplate,
     build_messages_location,
     build_templated_char_index,
     flatten_messages_for_correcting,
 )
-from onpanda.response_templates.default import CALL_BEGIN_MARKER
-from onpanda.response_templates.qwen3p5 import (
+from mxlm.response_templates.default import CALL_BEGIN_MARKER
+from mxlm.response_templates.qwen3p5 import (
     FUNCTION_BEGIN,
     PARAMETER_BEGIN,
     Qwen3p5ResponseTemplate,
     TOOL_CALL_BEGIN,
 )
-from onpanda.response_templates.step3p5 import Step3p5ResponseTemplate
-from onpanda.response_templates.partial_json import parse_partial_json_object
+from mxlm.response_templates.step3p5 import Step3p5ResponseTemplate
+from mxlm.response_templates.partial_json import parse_partial_json_object
 from onpanda.test_utils import get_test_trajectories
 
 
@@ -565,13 +565,10 @@ def test_complete_replacement_preserves_finish_reason():
 
 
 @pytest.mark.parametrize(
-    "response_template",
-    [None, {"name_or_path": "Qwen/Qwen3.5-35B-A3B"}],
+    "name_or_path", ["Qwen/Qwen3.5-35B-A3B", "stepfun-ai/Step-3.7-Flash"]
 )
-def test_structured_tool_calls_survive_policy_continuation(response_template):
-    adapter = FindAndReplaceCorrectionAdapter(
-        max_replacement_tokens=200, response_template=response_template
-    )
+def test_structured_tool_calls_survive_policy_continuation(name_or_path):
+    adapter = FindAndReplaceCorrectionAdapter(max_replacement_tokens=200)
     correcting_model = CorrectingModel(
         SimpleNamespace(model="correcting"), adapter, max_correction_attempts=1
     )
@@ -616,17 +613,16 @@ def test_structured_tool_calls_survive_policy_continuation(response_template):
         }
     ]
 
-    class Policy:
-        model = "policy"
-
-        def __call__(self, trajectory, **kwargs):
-            assert kwargs["skip_special_tokens"] is False
-            assert kwargs["tool_choice"] == "none"
-            assert trajectory["tools"] == tools
-            return {
-                "trajectory": {
-                    "messages": [
-                        {
+    policy = mxlm.ChatAPI(
+        base_url="http://policy/v1", model="policy", name_or_path=name_or_path
+    )
+    policy.client.chat.completions.create = Mock(
+        return_value=SimpleNamespace(
+            dict=lambda: {
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {
                             "role": "assistant",
                             "content": None,
                             "tool_calls": [
@@ -640,11 +636,12 @@ def test_structured_tool_calls_survive_policy_continuation(response_template):
                                     },
                                 }
                             ],
-                            "finish_reason": "tool_calls",
-                        }
-                    ]
-                }
+                        },
+                    }
+                ]
             }
+        )
+    )
 
     corrected = correcting_model.correct_and_rollout(
         [
@@ -666,11 +663,17 @@ def test_structured_tool_calls_survive_policy_continuation(response_template):
                 "finish_reason": "tool_calls",
             },
         ],
-        Policy(),
+        policy,
         adapter_policy=adapter,
         tools=tools,
     )["corrected_messages"][-1]
 
+    request = policy.client.chat.completions.create.call_args.kwargs
+    assert request["skip_special_tokens"] is False
+    assert request["tool_choice"] == "none"
+    assert request["continue_final_message"] is True
+    assert request["tools"] == tools
+    assert "tool_calls" not in request["messages"][-1]
     assert corrected["content"] == "fixed"
     assert [call["function"] for call in corrected["tool_calls"]] == [
         {"name": "read", "arguments": '{"path": "/tmp/fixed"}'},
@@ -680,9 +683,11 @@ def test_structured_tool_calls_survive_policy_continuation(response_template):
 
 
 def test_mislabeled_content_continuation_does_not_leak_think_end():
-    adapter = FindAndReplaceCorrectionAdapter(
-        max_replacement_tokens=200,
-        response_template={"name_or_path": "Qwen/Qwen3.5-35B-A3B"},
+    adapter = FindAndReplaceCorrectionAdapter(max_replacement_tokens=200)
+    policy = mxlm.ChatAPI(
+        base_url="http://policy/v1",
+        model="policy",
+        name_or_path="Qwen/Qwen3.5-35B-A3B",
     )
     correcting_model = CorrectingModel(
         SimpleNamespace(model="correcting"), adapter, max_correction_attempts=1
@@ -698,9 +703,6 @@ def test_mislabeled_content_continuation_does_not_leak_think_end():
         "reasoning": "think",
         "content": "answer /tmp/a",
     }
-    prefix = adapter.build_partial_templated_prompt(rejected_message, partial_message)[
-        "templated_prompt"
-    ]
     correcting_model.correct = Mock(
         return_value={
             "correction": {
@@ -712,28 +714,28 @@ def test_mislabeled_content_continuation_does_not_leak_think_end():
             "partial_messages": [{"role": "user", "content": "q"}, partial_message],
         }
     )
-    policy = Mock(
-        return_value={
-            "trajectory": {
-                "messages": [
+    policy.client.chat.completions.create = Mock(
+        return_value=SimpleNamespace(
+            dict=lambda: {
+                "choices": [
                     {
-                        "role": "assistant",
-                        # mxlm echoes the prefix before returning the vLLM response.
-                        "content": (
-                            prefix + "<tool_call>\n"
-                            "<function=read_file>\n"
-                            "<parameter=path>\n/tmp/a.txt\n</parameter>\n"
-                            "</function>\n"
-                            "</tool_call>"
-                        ),
-                        "reasoning": ".txt\n",
                         "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": (
+                                "<tool_call>\n"
+                                "<function=read_file>\n"
+                                "<parameter=path>\n/tmp/a.txt\n</parameter>\n"
+                                "</function>\n"
+                                "</tool_call>"
+                            ),
+                            "reasoning_content": ".txt\n",
+                        },
                     }
                 ]
             }
-        }
+        )
     )
-    policy.model = "policy"
     corrected = correcting_model.correct_and_rollout(
         [{"role": "user", "content": "q"}, rejected_message],
         policy,

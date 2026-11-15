@@ -11,7 +11,7 @@ import json
 import mximport
 
 with mximport.inpkg():
-    from ..response_templates import flatten_messages_for_correcting
+    from mxlm.response_templates import flatten_messages_for_correcting
 
 BEST_OF_N_JUDGE_TOOL_NAME = "set_best_of_n_scores"
 

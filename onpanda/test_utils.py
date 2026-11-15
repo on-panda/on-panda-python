@@ -352,8 +352,8 @@ def get_test_trajectories(error_type=None):
         from .correcting_model.far_correction_utils import (
             FindAndReplaceCorrectionAdapter,
         )
-        from .response_templates import DefaultResponseTemplate
-        from .response_templates.default import (
+        from mxlm.response_templates import DefaultResponseTemplate
+        from mxlm.response_templates.default import (
             CALL_BEGIN_MARKER,
             CALL_FIELD_MARKERS,
             TOOL_CALLS_MARKER,
@@ -644,7 +644,7 @@ def print_response_template_partial_messages(response_template):
         from .correcting_model.far_correction_utils import (
             FindAndReplaceCorrectionAdapter,
         )
-        from .response_templates import build_messages_location
+        from mxlm.response_templates import build_messages_location
         from .token_level_supervision_utils import compute_token_level_supervision
 
     adapter = FindAndReplaceCorrectionAdapter(
@@ -665,7 +665,7 @@ def print_response_template_partial_messages(response_template):
             rejected_applied = response_template.apply(rejected_message)
             rejected_templated = rejected_applied["templated_prompt"]
             partial_result = adapter.build_partial_templated_prompt(
-                rejected_message, partial_message
+                rejected_message, partial_message, response_template=response_template
             )
             replacement_tokens_1 = partial_result["templated_prompt"]
             token_level = compute_token_level_supervision(

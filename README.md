@@ -78,7 +78,6 @@ panda_json = onpanda.messages_to_panda_tree(messages, uuid="demo")
 ## ▮ Main Modules
 
 - `onpanda/parser.py`: `PandaTree` and data conversion entrypoints
-- `onpanda/response_templates/`: `apply`/`parse` between an assistant message and the model's own response text, so correcting reaches the reasoning and tool call channels
 - `onpanda/token_level_supervision_utils.py`: token-level patch extraction and masks
 - `onpanda/correcting_model/far_correction_utils.py`: FAR data builder and apply logic
 - `onpanda/correcting_model/far_text_parse.py`: FAR parser/locator/reward computation

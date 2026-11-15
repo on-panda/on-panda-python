@@ -13,7 +13,7 @@ from copy import deepcopy
 import mximport
 
 with mximport.inpkg():
-    from ..response_templates.partial_json import parse_partial_json_object
+    from mxlm.response_templates.partial_json import parse_partial_json_object
     from ..token_level_supervision_utils import build_tokenizer
 
 ON_PANDA_PLACEHOLDER = "ON_PANDA_PLACEHOLDER"

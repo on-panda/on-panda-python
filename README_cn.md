@@ -80,7 +80,6 @@ panda_json = onpanda.messages_to_panda_tree(messages, uuid="demo")
 ## ▮ 主要模块
 
 - `onpanda/parser.py`：`PandaTree` 和数据转换入口
-- `onpanda/response_templates/`：在 assistant message 和模型自己的 response 文本之间做 `apply`/`parse`，让修正能覆盖 reasoning 和 tool call 通道
 - `onpanda/token_level_supervision_utils.py`：token-level patch 提取和 mask
 - `onpanda/correcting_model/far_correction_utils.py`：FAR 数据构建和 apply 逻辑
 - `onpanda/correcting_model/far_text_parse.py`：FAR 解析、定位和 reward 计算

@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 """FAR parsing and locating helpers used by the legacy correction adapter."""
 
-import mximport
-
-with mximport.inpkg():
-    from ..response_templates import build_messages_location, build_response_template
+from mxlm.response_templates import (
+    DefaultResponseTemplate,
+    build_messages_location,
+    build_response_template,
+)
 
 
 class FindAndReplaceCodecMixin:
@@ -26,6 +27,8 @@ class FindAndReplaceCodecMixin:
     def __init__(self, special_tokens=None, response_template=None):
         self.special_tokens = {**self.default_special_tokens, **(special_tokens or {})}
         self.response_template = build_response_template(
+            response_template, special_tokens=self.special_tokens
+        ) or DefaultResponseTemplate(
             response_template, special_tokens=self.special_tokens
         )
 

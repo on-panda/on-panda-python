@@ -14,7 +14,7 @@ with mximport.inpkg():
     from .correcting_model.far_correction_utils import (
         FindAndReplaceCorrectionAdapter,
     )
-    from .response_templates import (
+    from mxlm.response_templates import (
         FLATTENED_MESSAGE_KEYS,
         build_messages_location,
         content_to_text,

@@ -12,9 +12,9 @@ Supported keys include:
 - `rerun_bypass` (bool): direct-forward single-turn rerun extraction requests, default False.
 - `chat` (dict): kwargs for `mxlm.ChatAPI` used by correcting model.
 - `far` (dict): kwargs for `onpanda.FindAndReplaceCorrectionAdapter`.
-- `policy_far` (dict): kwargs for the policy's `FindAndReplaceCorrectionAdapter`, whose
-  `response_template` renders the continuation prefix. Required when the policy is a reasoning
-  or tool calling model, otherwise the policy would be rendered by the correcting template.
+- `name_or_path` (str): policy response template identity, defaults to its API model name.
+- `policy_far` (dict): policy adapter settings; `tokenizer` and `max_replacement_tokens`
+  control replacement alignment. The policy ChatAPI owns its response template.
 
 url_config-path examples:
 - SFT correcting model for best_of_n mode:
@@ -24,7 +24,7 @@ url_config-path examples:
 - correcting model as reward model:
     - rollout_num@3,mode@best_of_n,iid_sampling@true,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false
 - agent policy (reasoning and tool calls), whose response template name needs url encoding:
-    - rollout_num@3,chat.model@step-3.7-flash,chat.is_reasoning@true,policy_far.response_template.name_or_path@Qwen%2FQwen3.6-35B-A3B
+    - rollout_num@3,chat.model@step-3.7-flash,chat.is_reasoning@true,name_or_path@Qwen%2FQwen3.6-35B-A3B
 """
 
 import argparse
@@ -189,7 +189,8 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
         - rerun_bypass: direct-forward single-turn rerun extraction, default False
         - chat: used to build correcting chat, mxlm.ChatAPI(**chat)
         - far: used to build correcting adapter, FindAndReplaceCorrectionAdapter(**far)
-        - policy_far: used to build the policy adapter, which renders the continuation prefix
+        - name_or_path: policy response template identity, defaults to its API model name
+        - policy_far: policy tokenizer and replacement limit
 
         Request body `tools` are forwarded to both the correcting model, so it can judge whether
         the arguments fit the schema, and the policy, so its continuation stays on schema.
@@ -248,6 +249,7 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             base_url=selected_base_url,
             api_key=(default_api_key if disable_auth else bearer_token) or "no-key",
             model=req_model,
+            name_or_path=correcting_config.get("name_or_path"),
         )
         for k in (
             "temperature",
@@ -440,8 +442,8 @@ if __name__ == "__main__":
           - Eval logs: {log_dir or "disabled"}; filenames use Panda prompt_hash
           - Request Bearer: {request_bearer_status}
           - chat.* -> mxlm.ChatAPI(**chat), far.* -> onpanda.FindAndReplaceCorrectionAdapter(**far)
-          - policy_far.* -> the policy's adapter; set policy_far.response_template.name_or_path for a
-            reasoning or tool calling policy, otherwise its continuation prefix uses the correcting template
+          - policy_far.* -> policy tokenizer and replacement limit
+          - name_or_path -> policy ChatAPI response template identity; defaults to the API model name
           - URL config overrides CLI config
           - Aggregation moved to: python -m mxlm.aggregate_apis
           - If using reasoning model as correcting model i.e. `chat.is_reasoning@true`, set `policy_far.max_replacement_tokens` to a small number like 1, otherwise the replacement token may inject too much information. It counts tokens of `policy_far.tokenizer`, which defaults to utf8_tokenizer i.e. bytes.

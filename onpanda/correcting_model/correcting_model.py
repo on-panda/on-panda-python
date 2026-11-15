@@ -77,15 +77,11 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
         from messages without the last assistant.
         When iid_sampling is True, skip correction and keep the sampled assistant.
 
-        adapter_policy is the policy model's adapter, defaults to the correcting one. Its tokenizer
-        and response_template render and align the continuation prefix, then parse it back.
+        adapter_policy supplies the tokenizer and replacement limit, defaulting to the correcting
+        adapter. The policy ChatAPI owns response rendering, continuation and parsing.
         """
         adapter_policy = adapter_policy or self.adapter
         policy_kwargs = dict(skip_special_tokens=False)
-        # A continuation comes back as raw text, so the server must not parse tool calls out of it.
-        continuation_kwargs = policy_kwargs.copy()
-        if tools:
-            continuation_kwargs["tool_choice"] = "none"
         corrected_result = dict(generate_new=False)
         if messages[-1]["role"] in RESPONSE_ROLES:
             failed_corrections = []
@@ -133,15 +129,21 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                 partial_messages = correction_result["partial_messages"]
                 corrected_message_index = len(partial_messages) - 1
                 partial_templated = adapter_policy.build_partial_templated_prompt(
-                    messages[corrected_message_index], partial_messages[-1]
+                    messages[corrected_message_index],
+                    partial_messages[-1],
+                    response_template=chat_policy.response_template,
                 )
                 prefix = partial_templated["templated_prompt"]
                 corrected_result["correction"]["continue_prefix_right40"] = (
                     prefix if len(prefix) <= 40 else "..." + prefix[-37:]
                 )
-                complete_templated_prompt = adapter_policy.response_template.apply(
-                    partial_messages[-1]
-                )["templated_prompt"]
+                complete_templated_prompt = (
+                    chat_policy.response_template.apply(partial_messages[-1])[
+                        "templated_prompt"
+                    ]
+                    if chat_policy.response_template is not None
+                    else partial_messages[-1].get("content") or ""
+                )
                 if partial_messages[-1].get("finish_reason") in (
                     "stop",
                     "tool_calls",
@@ -151,76 +153,24 @@ class CorrectingModel(BestOfNMixin, PandaScoreMixin):
                     complete_templated_prompt, add_special_tokens=False
                 ):  # correction to stop
                     corrected_messages = partial_messages
-                else:  # continue_final_message with policy response_template
+                else:
                     continuation_message = dict(role="assistant", content=prefix)
-                    model_name = chat_policy.model.lower()
-                    if "kimi" in model_name or "qwen" in model_name:
-                        continuation_message["partial"] = True
-                    if "deepseek" in model_name:
-                        continuation_message["prefix"] = True
-                    policy_message = chat_policy(
+                    if chat_policy.response_template is not None:
+                        continuation_message = dict(
+                            role="assistant"
+                        ) | chat_policy.response_template.parse(
+                            prefix, messages=partial_messages[:-1], tools=tools
+                        )
+                    corrected_messages = chat_policy(
                         dict(
                             messages=partial_messages[:-1] + [continuation_message],
                             tools=tools,
                         ),
                         continue_final_message=True,
-                        add_generation_prompt=False,
-                        echo=True,
                         return_traj=True,
-                        **continuation_kwargs,
-                    )["trajectory"]["messages"][-1]
-                    response_text = policy_message.get("content") or prefix
-                    generated_reasoning = policy_message.get("reasoning")
-                    if generated_reasoning:
-                        # Some servers parse generated text into the reasoning channel while the
-                        # echoed prefix stays in content. Only close reasoning when the prefix
-                        # itself still ends in that channel.
-                        generated_content = response_text[len(prefix) :]
-                        if generated_content:
-                            prefix_message = adapter_policy.response_template.parse(
-                                prefix,
-                                messages=partial_messages[:-1],
-                                tools=tools,
-                            )
-                            if (
-                                "reasoning" in prefix_message
-                                and "content" not in prefix_message
-                                and "tool_calls" not in prefix_message
-                                and prefix_message.get("finish_reason")
-                                != "reasoning_end"
-                            ):
-                                generated_reasoning += (
-                                    adapter_policy.response_template.reasoning_end_marker
-                                )
-                        response_text = prefix + generated_reasoning + generated_content
-                    corrected_message = adapter_policy.response_template.parse(
-                        response_text,
-                        messages=partial_messages[:-1],
-                        tools=tools,
-                        finish_reason=policy_message.get("finish_reason"),
-                    )
-                    policy_tool_calls = policy_message.get("tool_calls")
-                    if policy_tool_calls and policy_tool_calls != [{}]:
-                        # vLLM parses generated text before echoing the prefix, so these calls
-                        # follow any calls already parsed from response_text.
-                        corrected_tool_calls = corrected_message.get("tool_calls", [])
-                        if corrected_tool_calls == [{}]:
-                            corrected_tool_calls = []
-                        corrected_message["tool_calls"] = (
-                            corrected_tool_calls + policy_tool_calls
-                        )
-                        corrected_message = adapter_policy.response_template.parse(
-                            adapter_policy.response_template.apply(corrected_message)[
-                                "templated_prompt"
-                            ],
-                            messages=partial_messages[:-1],
-                            tools=tools,
-                            finish_reason=policy_message.get("finish_reason"),
-                        )
+                        **policy_kwargs,
+                    )["trajectory"]["messages"]
                     corrected_result["policy_model_name"] = chat_policy.model
-                    corrected_messages = messages[:corrected_message_index] + [
-                        corrected_message
-                    ]
         else:  # make new message
             # Corrected result without correcting_model_name key means new message.
             corrected_messages = chat_policy(
@@ -500,29 +450,24 @@ def build_correcting_model_with_policy(reasoning=True):
         )  # should support continue_final_message
     else:
         correcting_model = build_test_correcting_model()
-    chat_policy = deepcopy(correcting_model.chat_correcting)
     extra_parameters_json5_str = os.environ.get("POLICY_API_EXTRA_PARAMETERS_JSON5", "")
     if extra_parameters_json5_str:
         import json5
 
         extra_parameters = json5.loads(extra_parameters_json5_str)
         new_kwargs.update(extra_parameters)
-    chat_policy.default_kwargs.update(new_kwargs)
-    if os.environ.get("POLICY_API_BASE_URL"):
-        chat_policy = mxlm.ChatAPI(
-            os.environ.get("POLICY_API_BASE_URL"),
-            os.environ.get("POLICY_API_KEY"),
-            **chat_policy.default_kwargs,
-        )
-    # The policy renders its own response template, which is usually named after the policy, and
-    # its own tokenizer decides how far a correction may reach into the continuation prefix.
+    chat_policy = mxlm.ChatAPI(
+        base_url=os.environ.get(
+            "POLICY_API_BASE_URL", correcting_model.chat_correcting.base_url
+        ),
+        api_key=os.environ.get(
+            "POLICY_API_KEY", correcting_model.chat_correcting.api_key
+        ),
+        name_or_path=os.environ.get("POLICY_RESPONSE_TEMPLATE_NAME_OR_PATH"),
+        **(correcting_model.chat_correcting.default_kwargs | new_kwargs),
+    )
     adapter_policy = onpanda.FindAndReplaceCorrectionAdapter(
         tokenizer=os.environ.get("POLICY_TOKENIZER_NAME_OR_PATH"),
-        response_template=dict(
-            name_or_path=os.environ.get(
-                "POLICY_RESPONSE_TEMPLATE_NAME_OR_PATH", chat_policy.model
-            )
-        ),
     )
     return dict(
         correcting_model=correcting_model,

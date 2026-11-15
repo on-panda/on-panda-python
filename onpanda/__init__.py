@@ -27,4 +27,3 @@ from .correcting_model.verifier import (
     ON_PANDA_TRUNCATE_PREFIX,
 )
 from .correcting_model.correcting_model import CorrectingModel
-from .response_templates import build_response_template

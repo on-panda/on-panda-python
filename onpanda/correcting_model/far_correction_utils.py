@@ -13,7 +13,7 @@ from copy import deepcopy
 with mximport.inpkg():
     from ..token_level_supervision_utils import build_tokenizer
     from .far_text_parse import FindAndReplaceCodecMixin
-    from ..response_templates import (
+    from mxlm.response_templates import (
         build_messages_location,
         build_templated_char_index,
         flatten_messages_for_correcting,
@@ -58,8 +58,8 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
     Adapter of one model: its tokenizer, its response template and the FAR answer format.
 
     Used as the correcting model's adapter by default. When passed as `adapter_policy` of
-    `CorrectingModel.correct_and_rollout`, only `tokenizer`, `response_template` and
-    `max_replacement_tokens` matter, to render and token align the continuation prefix.
+    `CorrectingModel.correct_and_rollout`, only `tokenizer` and `max_replacement_tokens`
+    matter; the policy ChatAPI supplies its response template.
     """
 
     def __init__(
@@ -489,20 +489,32 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
             partial_messages=partial_messages,
         )
 
-    def build_partial_templated_prompt(self, rejected_message, partial_message):
+    def build_partial_templated_prompt(
+        self, rejected_message, partial_message, response_template=None
+    ):
         """
         Render the corrected partial message for continuation, then align the correction to this
         model's own token boundary: diff the complete token sequences and keep only the first
         `max_replacement_tokens` tokens after their fork.
 
+        `response_template=None` means literal content, matching a policy without a template.
         An empty replacement means continuation starts at the fork without an injected token.
         """
-        templated_prompt = self.response_template.apply(partial_message)[
-            "templated_prompt"
-        ]
-        rejected_templated_prompt = self.response_template.apply(rejected_message)[
-            "templated_prompt"
-        ]
+        if response_template is None:
+            assert not any(
+                message.get(key)
+                for message in (rejected_message, partial_message)
+                for key in ("reasoning", "reasoning_content", "tool_calls")
+            ), "Structured policy alignment requires a response template"
+            templated_prompt = partial_message.get("content") or ""
+            rejected_templated_prompt = rejected_message.get("content") or ""
+        else:
+            templated_prompt = response_template.apply(partial_message)[
+                "templated_prompt"
+            ]
+            rejected_templated_prompt = response_template.apply(rejected_message)[
+                "templated_prompt"
+            ]
         templated_tokens = self.tokenizer.encode(
             templated_prompt, add_special_tokens=False
         )
@@ -636,7 +648,9 @@ def test_reasoning_and_tool_calls_correcting():
         ],
     )
     partial_templated = adapter_policy.build_partial_templated_prompt(
-        tool_call_messages[-1], partial_tool_call_message
+        tool_call_messages[-1],
+        partial_tool_call_message,
+        response_template=adapter_policy.response_template,
     )
     assert partial_templated["templated_prompt"] == (
         "<tool_call>\n<function=read_file>\n<parameter=path>\n/tmp/a"
@@ -651,6 +665,7 @@ def test_reasoning_and_tool_calls_correcting():
         dict(
             role="assistant", reasoning="thi", content="", finish_reason="reasoning_end"
         ),
+        response_template=adapter_policy.response_template,
     )
     assert reasoning_partial_templated == dict(
         templated_prompt="<think>\nthi\n", replacement="\n"
