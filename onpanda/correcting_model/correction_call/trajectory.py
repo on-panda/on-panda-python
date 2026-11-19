@@ -10,25 +10,25 @@ with mximport.inpkg():
     from .schema import correct_once_tool_cn, system_prompt_cn
 
 
-def build_init_cm_traj(
-    policy_traj, base_cm_traj=None, addition_info=None, correction_area="last_assistant"
+def build_initial_cm_traj(
+    policy_traj, base_cm_traj=None, extra_context=None, correction_scope="last_assistant"
 ):
-    """Build a CM trajectory, optionally reusing shared instructions and few-shot turns in base_cm_traj.
+    """Build the initial CM trajectory, marking the policy's correction scope in place.
 
-    Only policy messages' derived correction-area flags are changed in place. The base
-    owns reusable CM messages/tools, while this builder supplies iterative_correction.
+    base_cm_traj can supply shared instructions, few-shot turns and other tools. It
+    must not include correct_once; this builder registers it. extra_context is optional
+    text specific to this policy trajectory.
     Adjacent text items are merged without crossing nontext content items.
-    addition_info is optional text specific to this policy trajectory. Assistant completion
-    follows the response template: a missing finish_reason still means partial output.
+    A missing assistant finish_reason still means partial output.
     """
-    assert correction_area in ("last_assistant", "last_user", "all"), correction_area
+    assert correction_scope in ("last_assistant", "after_last_user", "all"), correction_scope
     area_start = 0
-    if correction_area != "all":
+    if correction_scope != "all":
         area_start = next(
             index
             for index in range(len(policy_traj["messages"]) - 1, -1, -1)
             if policy_traj["messages"][index]["role"]
-            == ("assistant" if correction_area == "last_assistant" else "user")
+            == ("assistant" if correction_scope == "last_assistant" else "user")
         )
 
     cm_traj = deepcopy(base_cm_traj) if base_cm_traj is not None else {}
@@ -58,8 +58,8 @@ def build_init_cm_traj(
         cm_traj["tools"].append(deepcopy(correct_once_tool_cn))
 
     text = ""
-    if addition_info is not None:
-        text += f"{marker}\n## 本轮 Correcting 的补充信息\n{addition_info}\n\n"
+    if extra_context is not None:
+        text += f"{marker}\n## 本轮 Correcting 的补充信息\n{extra_context}\n\n"
     if policy_traj.get("tools"):
         text += (
             "### Tool Schemas for Policy Model Only\n```json\n"
@@ -190,7 +190,7 @@ if __name__ == "__main__":
             },
         ],
     }
-    cm_traj = build_init_cm_traj(policy_traj)
+    cm_traj = build_initial_cm_traj(policy_traj)
     agent = AgentSession(ChatAPI.free_api(stream=False), cm_traj)
     loop_res = agent.run_agentic_loop()
     tree(loop_res)

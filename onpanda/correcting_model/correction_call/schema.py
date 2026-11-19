@@ -31,14 +31,14 @@ correct_once_tool_cn = {
 - 使用 location_left、location_right 和 location_index 共同定位一个修改位置：
     - location_left 是紧贴修改位置左侧、需要保留的原文；location_right 是从修改位置开始、紧贴其右侧的原文
     - 两者必须相邻，location_left + location_right 必须是原文中的连续字符串；修改位置就在两者之间，而不是替换两者之间的一段区间
-    - 可以只使用 location_right，location_left 填空字符串；需要修改时 location_right 不能为空
+    - 可以只使用 location_right，省略 location_left 等同于传空字符串；需要修改时 location_right 不能为空
     - 尽量用简短且准确的锚点定位；可以向左或向右多摘抄几个 token 来消除重复，通常合计不超过 20 个 token
     - 摘抄范围是展示给你的 response template 文本，包括通道标记；可以包含但不要超过 `</｜CM｜message>` 的范畴
     - 工具参数的锚点必须与原文逐字符相等，保留标点、Markdown、空格、换行等；不要把真实换行替换成两个字符的 `\\n`
 - location_index 指修改位置是能精确匹配 location_left + location_right 的所有匹配位置的第几处
     - 只在可修改范围内计数，不计入 correction!="1" 的 assistant、user、system、tool、工具定义或补充信息中的相同文本
     - 所有匹配位置按 policy 消息顺序、再按消息体内字符顺序排列；重叠匹配也分别计数
-    - location_index 是整数，从 0 开始，支持 Python list 风格的负数；只有一处匹配时填 0
+    - location_index 是整数，从 0 开始，支持 Python list 风格的负数；省略时默认为 0
     - 当负数索引的绝对值明显更小时，推荐使用负数
     - 绝大多数情况 location_left、location_right 就能确定唯一修改位置，即 location_index = 0。只在有在上下文中大量重复，有多个匹配的极少数情况下，才需要使用非零索引
 - replacement_text 是从修改位置开始的新文本
@@ -130,7 +130,7 @@ __________
                 },
                 "is_good": {
                     "type": "boolean",
-                    "description": "当前可修改范围是否无需修改；false 时定位并纠正首个不恰当 token。",
+                    "description": "当前可修改范围是否无需修改；false 时必须提供 location_right 和 replacement_text，以纠正首个不恰当 token。",
                 },
                 "location_right": {
                     "type": "string",
@@ -138,10 +138,12 @@ __________
                 },
                 "location_left": {
                     "type": "string",
+                    "default": "",
                     "description": "紧贴修改位置之前、应保留的左锚点",
                 },
                 "location_index": {
                     "type": "integer",
+                    "default": 0,
                     "description": "左右锚点拼接后在可修改消息体中的匹配序号，0-based；除非回答有大量重复内容，否则通常为 0。",
                 },
                 "replacement_text": {
