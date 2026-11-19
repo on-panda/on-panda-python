@@ -7,7 +7,7 @@ import mximport
 from mxlm.response_templates import CorrectionCallResponseTemplate
 
 with mximport.inpkg():
-    from .schema import iterative_correction_tool_cn, system_prompt_cn
+    from .schema import correct_once_tool_cn, system_prompt_cn
 
 
 def build_init_cm_traj(
@@ -52,10 +52,10 @@ def build_init_cm_traj(
         ),
     )
     cm_traj.setdefault("tool_configs", []).append(
-        dict(deepcopy(iterative_correction_tool_cn), require_approval="always")
+        dict(deepcopy(correct_once_tool_cn), require_approval="always")
     )
     if "tools" in cm_traj:
-        cm_traj["tools"].append(deepcopy(iterative_correction_tool_cn))
+        cm_traj["tools"].append(deepcopy(correct_once_tool_cn))
 
     text = ""
     if addition_info is not None:
