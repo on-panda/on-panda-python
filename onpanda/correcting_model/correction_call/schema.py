@@ -107,6 +107,17 @@ __________
 - 两个 token 的 ` state</｜CM｜reasoning>` 就做到了全局唯一定位修改位置，可以不需要 location_left
 - 续写足够长度的 replacement_text，且不截断 function 模板标记
 
+## Dialog
+- 每次 is_good=false 时的 correction 都会
+    1. 先基于旧的 dialog 做截断
+    2. 拼接上 replacement_text 后根据要求用 policy 的 tokenizer 对前缀做 round 和归一化
+    3. 再用 policy 基于处理后的前缀继续生成，最终形成新的 dialog
+- 每个 dialog 都有一个唯一的、递增的 key，同时会用 list 的形式告知其 ancestor_keys
+- 新的 dialog 会以 correct_once 的 tool message 的形式返回
+- 为节省 context，tool message 往往只会返回基于旧 dialog 续写的新部分，需要你根据其 ancestor_keys 和历史 corrections，在脑海中拼凑出完整的新 dialog
+- 如果不满意最近的修改，可以通过 dialog_key 指定更早的 dialog_key，基于之前的对话继续纠正；dialog_key 默认为最新的，也就是数值最大的 key
+    - correction 和 location_index 的范围是 dialog_key 对应的完整的 dialog（可能需要脑补完整 dailog）；指定 dialog_key 之外的 context 可以忽略（往往忽略历史 dialog 中被截断的部分）
+- is_good=true 则表示对应的 dialog_key 就是恰当答复，并结束 iterative correction
 
 </correcting_prompt>
 ''',
@@ -135,7 +146,7 @@ __________
                 },
                 "replacement_text": {
                     "type": "string",
-                    "description": "优先以直接纠正错误的词开头，自然续写到 6 个 token 的长度，或输出了 `</｜CM｜message>` 后截止。其开头 token 应该包含纠正方向的关键信息，直接接续修改位置之前的原文。满 6 个 token 后可以停止，无需补齐剩余结构。模板标记按一个整体计一个 token，且不得截断。",
+                    "description": "优先以直接纠正错误的词开头，自然续写到 6 个 token 的长度，或输出了 `</｜CM｜message>` 后截止。其开头 token 应该包含纠正方向的关键信息，直接接续修改位置之前的原文。满 6 个 token 后默认停止，无需补齐剩余结构。模板标记按一个整体计一个 token，且不得截断。",
                 },
                 "dialog_key": {
                     "type": "integer",
