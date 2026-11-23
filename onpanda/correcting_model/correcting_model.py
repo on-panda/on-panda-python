@@ -23,6 +23,8 @@ with mximport.inpkg():
 
 
 class CorrectingModel(BestOfNMixin, PandaScoreMixin):
+    """Deprecated FAR interface; use CorrectingAgent for tool-based correction."""
+
     def __init__(
         self,
         chat_correcting,

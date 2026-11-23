@@ -37,7 +37,7 @@ correct_once_tool_cn = {
     - 工具参数的锚点必须与原文逐字符相等，保留标点、Markdown、空格、换行等；不要把真实换行替换成两个字符的 `\\n`
 - location_index 指修改位置是能精确匹配 location_left + location_right 的所有匹配位置的第几处
     - 只在可修改范围内计数，不计入 correction!="1" 的 assistant、user、system、tool、工具定义或补充信息中的相同文本
-    - 所有匹配位置按 policy 消息顺序、再按消息体内字符顺序排列；重叠匹配也分别计数
+    - 所有匹配位置按 policy 消息顺序、再按消息体内字符顺序排列；重叠匹配也分别计数，不跨消息匹配
     - location_index 是整数，从 0 开始，支持 Python list 风格的负数；省略时默认为 0
     - 当负数索引的绝对值明显更小时，推荐使用负数
     - 绝大多数情况 location_left、location_right 就能确定唯一修改位置，即 location_index = 0。只在有在上下文中大量重复，有多个匹配的极少数情况下，才需要使用非零索引
@@ -61,7 +61,7 @@ correct_once_tool_cn = {
 - 消息严格按 policy messages 原始顺序展示，index 与展示顺序一致；tool 消息的 tool_call_id 对应其上游 tool call 的 id
 - 消息体按 reasoning、content、tool_calls 的顺序展示：
     - <｜CM｜reasoning>思考内容</｜CM｜reasoning>
-    - <｜CM｜content>回答内容或多模 items</｜CM｜content>
+    - <｜CM｜content>回答内容或多模 content items</｜CM｜content>
     - <｜CM｜tool_calls> 内是 <｜CM｜function name="工具名" id="调用ID">，参数形如 <｜CM｜item key="参数名" str="1">字符串原文</｜CM｜item>
     - str="1" 表示字符串原文，不做 XML 转义；str="0" 表示 JSON 值，可表示数值、布尔、数组、对象和 null
 - 通道闭合不等于消息结束，</｜CM｜message> 才表示完整消息结束；
@@ -112,12 +112,13 @@ __________
     1. 先基于旧的 dialog 做截断
     2. 拼接上 replacement_text 后根据要求用 policy 的 tokenizer 对前缀做 round 和归一化
     3. 再用 policy 基于处理后的前缀继续生成，最终形成新的 dialog
-- 每个 dialog 都有一个唯一的、递增的 key，同时会用 list 的形式告知其 ancestor_keys
-- 新的 dialog 会以 correct_once 的 tool message 的形式返回
-- 为节省 context，tool message 往往只会返回基于旧 dialog 续写的新部分，需要你根据其 ancestor_keys 和历史 corrections，在脑海中拼凑出完整的新 dialog
+- 每个 dialog 都有一个唯一的、递增的正整数 key，同时会用 list 的形式告知其 ancestor_keys
+- 新的 dialog 通过 correct_once 的 tool message 返回。若判 is_good 后，会从原 policy prompt 独立采样出新消息
+- partial_dialog="true" 省略未变化的历史。对于子 dialog，用父 dialog 同一 message index 的消息作基准：`<｜CM｜message_delta>` 中的 common_prefix_chars 是父子两条最终消息体在 CM 模板下的公共前缀字符数（不含消息头）。`<｜CM｜fork/>` 左边只摘录公共前缀末尾最多 50 个 UTF-8 字节，右边是新消息的全部剩余原文，可以为空
+- 新消息是 ancestor_keys 为空的独立新根，收到了新消息后，避免回选旧消息的 dialog_key
 - 如果不满意最近的修改，可以通过 dialog_key 指定更早的 dialog_key，基于之前的对话继续纠正；dialog_key 默认为最新的，也就是数值最大的 key
     - correction 和 location_index 的范围是 dialog_key 对应的完整的 dialog（可能需要脑补完整 dailog）；指定 dialog_key 之外的 context 可以忽略（往往忽略历史 dialog 中被截断的部分）
-- is_good=true 则表示对应的 dialog_key 就是恰当答复，并结束 iterative correction
+- is_good=true 表示对应的 dialog_key 的答复已经恰当，本轮纠正结束
 
 </correcting_prompt>
 ''',
@@ -126,7 +127,7 @@ __________
             "properties": {
                 "justification": {
                     "type": "string",
-                    "description": "简要说明，比如为什么修改、修改方向，或无需修改的原因。",
+                    "description": "简要说明，比如为什么修改、修改方向，或无需修改的原因。（用中文）",
                 },
                 "is_good": {
                     "type": "boolean",
@@ -152,7 +153,8 @@ __________
                 },
                 "dialog_key": {
                     "type": "integer",
-                    "description": "在哪个对话中进行纠正，默认为最新的，也就是数值最大的对话 key；如果不满意最近的修改，可以指定更早的对话 key，基于之前的对话继续纠正",
+                    "minimum": 1,
+                    "description": "在哪个对话中进行纠正，取已展示的正整数 key，默认为最新的，也就是数值最大的对话 key；如果不满意最近的修改，可以指定更早的对话 key，基于之前的对话继续纠正",
                 },
             },
             "required": [

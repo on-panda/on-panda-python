@@ -301,71 +301,86 @@ class BestOfNMixin:
         )
 
     def choose_best_of_n_by_judge(self, candidate_messages_list, candidate_tools=None):
-        candidates = []
-        query_messages = None
-        for candidate_messages in candidate_messages_list:
-            if query_messages is None:
-                query_messages = copy.deepcopy(candidate_messages[:-1])
-            candidates.append(
-                dict(
-                    candidate_index=len(candidates) + 1,
-                    message=copy.deepcopy(candidate_messages[-1]),
-                )
+        judge_context = (
+            flatten_messages_for_correcting(
+                copy.deepcopy(candidate_messages_list[0][:-1]),
+                self.adapter.response_template,
             )
+            if candidate_messages_list
+            else []
+        )
+        return self.judge_candidates(
+            self.chat_correcting,
+            candidate_messages_list,
+            candidate_tools,
+            judge_context,
+        )
 
-        if not candidates:
+    @staticmethod
+    def judge_candidates(
+        chat_correcting,
+        candidate_messages_list,
+        candidate_tools,
+        judge_context,
+        *,
+        reply_start=-1,
+    ):
+        """Rank each candidate's reply, using the caller's common prompt."""
+        if not candidate_messages_list:
             raise ValueError("No corrected messages found for best_of_n candidates.")
 
         candidate_blocks = []
-        for candidate in candidates:
-            message = candidate["message"]
-            block_parts = [f"## candidate_index={candidate['candidate_index']}"]
-            # An agent's mistake often lives in the thinking, so the judge has to see it.
-            if message.get("reasoning"):
-                block_parts.append("<|candidate_reasoning_begin|>")
-                block_parts.append(message["reasoning"])
-                block_parts.append("<|candidate_reasoning_end|>")
-            block_parts.append("<|candidate_answer_begin|>")
-            content = message.get("content", "")
-            if content is None:
-                content = ""
-            if isinstance(content, str):
-                block_parts.append(content)
-            else:
-                block_parts.append(
-                    json.dumps(content, ensure_ascii=False, indent=2, default=str)
-                )
-            for tool_call in message.get("tool_calls") or []:
-                if not tool_call:
-                    continue
-                function = tool_call["function"]
-                arguments = function.get("arguments", {})
-                invalid_json_arguments = False
-                if isinstance(arguments, str):
-                    try:
-                        arguments = json.loads(arguments)
-                    except json.JSONDecodeError:
-                        invalid_json_arguments = True
-                block_parts.append("<tool_call>")
-                block_parts.append(f"<function={function['name']}>")
-                if invalid_json_arguments:
-                    block_parts.append("Invalid JSON function.arguments:")
-                    block_parts.append(arguments)
+        for index, messages in enumerate(candidate_messages_list, 1):
+            block_parts = [f"## candidate_index={index}"]
+            for message in messages[reply_start:]:
+                # An agent's mistake often lives in the thinking, so the judge has to see it.
+                assert (
+                    "reasoning_content" not in message
+                ), f"candidate_index={index}: normalize reasoning_content to reasoning before judging"
+                if message.get("reasoning"):
+                    block_parts.append("<|candidate_reasoning_begin|>")
+                    block_parts.append(message["reasoning"])
+                    block_parts.append("<|candidate_reasoning_end|>")
+                block_parts.append("<|candidate_answer_begin|>")
+                content = message.get("content", "")
+                if content is None:
+                    content = ""
+                if isinstance(content, str):
+                    block_parts.append(content)
                 else:
-                    for key, value in arguments.items():
-                        if not isinstance(value, str):
-                            value = json.dumps(value, ensure_ascii=False, default=str)
-                        block_parts.append(f"<parameter={key}>")
-                        block_parts.append(value)
-                        block_parts.append(f"</parameter>")
-                block_parts.append("</function>")
-                block_parts.append("</tool_call>")
-            block_parts.append("<|candidate_answer_end|>")
+                    block_parts.append(
+                        json.dumps(content, ensure_ascii=False, indent=2, default=str)
+                    )
+                for tool_call in message.get("tool_calls") or []:
+                    if not tool_call:
+                        continue
+                    function = tool_call["function"]
+                    arguments = function.get("arguments", {})
+                    invalid_json_arguments = False
+                    if isinstance(arguments, str):
+                        try:
+                            arguments = json.loads(arguments)
+                        except json.JSONDecodeError:
+                            invalid_json_arguments = True
+                    block_parts.append("<tool_call>")
+                    block_parts.append(f"<function={function['name']}>")
+                    if invalid_json_arguments:
+                        block_parts.append("Invalid JSON function.arguments:")
+                        block_parts.append(arguments)
+                    else:
+                        for key, value in arguments.items():
+                            if not isinstance(value, str):
+                                value = json.dumps(
+                                    value, ensure_ascii=False, default=str
+                                )
+                            block_parts.append(f"<parameter={key}>")
+                            block_parts.append(value)
+                            block_parts.append("</parameter>")
+                    block_parts.append("</function>")
+                    block_parts.append("</tool_call>")
+                block_parts.append("<|candidate_answer_end|>")
             candidate_blocks.append("\n".join(block_parts))
 
-        # Flatten the context, so the judge sees the trajectory's reasoning and tool calls as
-        # text instead of losing them to its own chat template. Without candidate tools, a content
-        # only history stays byte identical.
         judge_system_parts = [BEST_OF_N_JUDGE_SYSTEM_PROMPT]
         if candidate_tools:
             judge_system_parts.append(
@@ -376,9 +391,7 @@ class BestOfNMixin:
                 "<|candidate_tools_end|>"
             )
         judge_system_parts.extend(candidate_blocks)
-        judge_messages = flatten_messages_for_correcting(
-            query_messages or [], self.adapter.response_template
-        ) + [
+        judge_messages = judge_context + [
             {
                 "role": "system",
                 "content": "\n\n".join(judge_system_parts),
@@ -392,13 +405,13 @@ class BestOfNMixin:
         for attempt_idx in range(1, max_attempts + 1):
             judge_trajectory = None
             try:
-                judge_trajectory = self.chat_correcting(
+                judge_trajectory = chat_correcting(
                     dict(messages=judge_messages, tools=[BEST_OF_N_JUDGE_TOOL]),
                     return_traj=True,
                 )["trajectory"]
                 # __import__("boxx").savejson(dict(messages=judge_messages, tools=[BEST_OF_N_JUDGE_TOOL]),"/tmp/judge_response.panda.json",)
                 validated = validate_best_of_n_judge_score(
-                    judge_trajectory["messages"][-1], len(candidates)
+                    judge_trajectory["messages"][-1], len(candidate_messages_list)
                 )
                 judge_message = judge_trajectory["messages"][-1].copy()
                 judge_message.pop("tool_calls", None)
@@ -452,8 +465,8 @@ class BestOfNMixin:
             )
 
         scores = [
-            judge_result["scores"][str(candidate["candidate_index"])]
-            for candidate in candidates
+            judge_result["scores"][str(i)]
+            for i in range(1, len(candidate_messages_list) + 1)
         ]
         return dict(
             best_of_n_scores=scores,

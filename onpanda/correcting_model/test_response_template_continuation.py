@@ -21,7 +21,9 @@ if __name__ == "__main__":
 
     for template_class in (DeepSeekV4ResponseTemplate, DeepSeekV4p1ResponseTemplate):
         policy = mxlm.ChatAPI(
-            base_url="http://policy/v1", model=template_class.default_name_or_path
+            base_url="http://policy/v1",
+            model=template_class.default_name_or_path,
+            name_or_path=template_class.default_name_or_path,
         )
         template = policy.response_template
         assert isinstance(template, template_class)
@@ -203,7 +205,9 @@ if __name__ == "__main__":
         tokenizer=utf8_tokenizer, max_replacement_tokens=5
     )
     for model in ("Qwen/Qwen3.5-35B-A3B", "stepfun-ai/Step-3.7-Flash"):
-        policy = mxlm.ChatAPI(base_url="http://policy/v1", model=model)
+        policy = mxlm.ChatAPI(
+            base_url="http://policy/v1", model=model, name_or_path=model
+        )
         correcting_model = CorrectingModel(SimpleNamespace(model="correcting"), adapter)
         correcting_model.correct = Mock(
             return_value=adapter.apply(

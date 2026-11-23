@@ -72,6 +72,7 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
         system_prompt_language=None,
         response_template=None,
     ):
+        assert max_replacement_tokens >= 1, "max_replacement_tokens must be at least 1"
         FindAndReplaceCodecMixin.__init__(
             self,
             special_tokens=special_tokens,
@@ -133,8 +134,6 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
         )
         if len(replacement_tokens) <= self.max_replacement_tokens:
             return replacement_token
-        if self.max_replacement_tokens <= 0:
-            return ""
         decodable_res = next_decodable_num(
             replacement_tokens, self.max_replacement_tokens - 1, self.tokenizer
         )
@@ -492,10 +491,8 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
     def build_partial_templated_prompt(self, rejected_message, partial_message):
         """
         Render the corrected partial message with this adapter's response template, then align
-        the correction to its token boundary: keep only the first `max_replacement_tokens`
-        tokens after the fork.
-
-        An empty replacement means continuation starts at the fork without an injected token.
+        the correction to its token boundary: keep the first `max_replacement_tokens`
+        tokens after the fork, extending the end if needed to decode a complete prefix.
         """
         templated_prompt = self.response_template.apply(partial_message)[
             "templated_prompt"
@@ -519,31 +516,34 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
             ),
             common_length,
         )
-        if (
-            fork_token_index == len(templated_tokens)
-            or self.max_replacement_tokens <= 0
-        ):
+        if fork_token_index == len(templated_tokens):
             return dict(
-                templated_prompt=self.tokenizer.decode(
-                    templated_tokens[:fork_token_index]
-                ),
-                replacement="",
+                templated_prompt=self.tokenizer.decode(templated_tokens), replacement=""
             )
         target_token_num = min(
             fork_token_index + self.max_replacement_tokens, len(templated_tokens)
         )
-        decodable_res = next_decodable_num(
+        prefix = next_decodable_num(
             templated_tokens, target_token_num - 1, self.tokenizer
         )
-        replacement = self.tokenizer.decode(
-            templated_tokens[fork_token_index : decodable_res["next_num"]]
-        )
-        return dict(
-            templated_prompt=decodable_res["decoded_text"],
-            replacement=replacement,
-        )
 
-    def truncate_partial_messages(self, rejected_messages, partial_messages, tools=None):
+        # If the fork splits a UTF-8 character, extend the replacement left
+        # until its tokens decode losslessly.
+        for start in range(fork_token_index, 0, -1):
+            tokens = templated_tokens[start : prefix["next_num"]]
+            try:
+                replacement = self.tokenizer.decode(tokens)
+            except UnicodeDecodeError:
+                continue
+            if self.tokenizer.encode(replacement, add_special_tokens=False) == tokens:
+                break
+        else:
+            replacement = prefix["decoded_text"]
+        return dict(templated_prompt=prefix["decoded_text"], replacement=replacement)
+
+    def truncate_partial_messages(
+        self, rejected_messages, partial_messages, tools=None
+    ):
         """Limit the last correction in this policy adapter's token/template space.
 
         Keep the supplied history, including an earlier fork, without changing either input.
@@ -551,9 +551,10 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
         message keeps its completion state, even when the template omits the stop token.
         tools supplies the schema needed to recover typed Qwen/Step arguments.
         """
-        truncated_prefix = self.build_partial_templated_prompt(
+        aligned = self.build_partial_templated_prompt(
             rejected_messages[len(partial_messages) - 1], partial_messages[-1]
-        )["templated_prompt"]
+        )
+        truncated_prefix = aligned["templated_prompt"]
         complete_templated_prompt = self.response_template.apply(partial_messages[-1])[
             "templated_prompt"
         ]
@@ -564,7 +565,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
         if len(truncated_tokens) < len(
             self.tokenizer.encode(complete_templated_prompt, add_special_tokens=False)
         ):
-            partial_messages[-1] = dict(role="assistant") | self.response_template.parse(
+            partial_messages[-1] = dict(
+                role="assistant"
+            ) | self.response_template.parse(
                 truncated_prefix, messages=partial_messages[:-1], tools=tools
             )
         if partial_messages[-1].get("finish_reason") in ("stop", "tool_calls"):
@@ -575,7 +578,9 @@ class FindAndReplaceCorrectionAdapter(CorrectionAdapter, FindAndReplaceCodecMixi
                 complete_templated_prompt, add_special_tokens=False
             ), "Completed correction must match the truncated prefix"
         return dict(
-            partial_messages=partial_messages, truncated_prefix=truncated_prefix
+            partial_messages=partial_messages,
+            truncated_prefix=truncated_prefix,
+            replacement=aligned["replacement"],
         )
 
 

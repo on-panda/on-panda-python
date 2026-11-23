@@ -7,12 +7,12 @@ Supported keys include:
 - `rollout_num` (int): iterative correction rollouts, default 5.
 - `mode` (str): iterative correction mode, default "till_good".
 - `iid_sampling` (bool): sample each rollout independently, default False.
-- `eval_name` (str): in-memory cache namespace for pass_at_k mode.
+- `eval_name` (str): unique name for one pass_at_k evaluation run; each prompt hash gets one batch by default.
 - `allow_repeat` (bool): for pass_at_k only, resample after a prompt consumes k cached candidates.
 - `rerun_bypass` (bool): direct-forward single-turn rerun extraction requests, default False.
 - `chat` (dict): kwargs for `mxlm.ChatAPI` used by correcting model.
 - `far` (dict): correcting adapter kwargs; its response template defaults to `onpanda/default`.
-- `name_or_path` (str): policy response template identity, defaults to its API model name.
+- `name_or_path` (str): set the policy response template explicitly to continue reasoning or tool calls.
 - `policy_far` (dict): policy adapter settings; `tokenizer` and `max_replacement_tokens`
   control replacement alignment. The policy ChatAPI owns its response template.
 
@@ -31,11 +31,10 @@ import argparse
 import copy
 import json
 import os
-import threading
 import textwrap
+import threading
 from urllib.parse import quote
 
-from flask import Flask
 import mxlm
 
 UPSTREAM_TIMEOUT = (10, 4 * 60 * 60)
@@ -51,7 +50,10 @@ def dump_corrected_log(corrected, *, log_dir, prompt_hash, eval_name=None):
     if not log_dir:
         return
     if eval_name:
-        log_dir = os.path.join(log_dir, eval_name)
+        root = os.path.realpath(log_dir)
+        log_dir = os.path.realpath(os.path.join(root, str(eval_name)))
+        if os.path.commonpath([root, log_dir]) != root:
+            raise ValueError("eval_name cannot escape the configured log directory")
     os.makedirs(log_dir, exist_ok=True)
     target_path = os.path.join(log_dir, f"{quote(prompt_hash, safe='%')}.json")
     with DUMP_FILE_LOCKS_GUARD:
@@ -90,16 +92,13 @@ def parse_url_config(value):
 
 
 def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_dir=None):
-    app = Flask(__name__)
-    default_base_url = base_url
-    default_api_key = api_key
     correcting_model_holder = {}
 
     def get_correcting_model(correcting_config, chat_policy):
+        import onpanda
         from onpanda.correcting_model.correcting_model import (
             build_test_correcting_model,
         )
-        import onpanda
 
         far = copy.deepcopy(correcting_config.get("far"))
         policy_far = copy.deepcopy(correcting_config.get("policy_far"))
@@ -152,6 +151,60 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             correcting_model_holder[model_key] = (correcting_model, adapter_policy)
         return correcting_model, adapter_policy
 
+    def run_correction(config, chat_policy, messages, tools, **options):
+        model, adapter_policy = get_correcting_model(config, chat_policy)
+        corrected = model.iterative_correction(
+            copy.deepcopy(messages),
+            chat_policy,
+            tools=tools,
+            adapter_policy=adapter_policy,
+            **options,
+        )
+        if options["mode"] == "pass_at_k":
+            candidates = [
+                step["corrected_messages"][-1]
+                for chain in corrected["correction_till_goods"]
+                for step in chain["correction_steps"]
+            ]
+        else:
+            final = corrected.get("corrected_messages") or [
+                {"role": "assistant", "content": ""}
+            ]
+            candidates = [final[-1]]
+        return corrected, candidates
+
+    return _create_correction_app(
+        base_url,
+        api_key,
+        cli_config,
+        disable_auth,
+        log_dir,
+        hijack_path="iterative_correction",
+        run_correction=run_correction,
+    )
+
+
+def _create_correction_app(
+    base_url,
+    api_key,
+    cli_config,
+    disable_auth,
+    log_dir,
+    *,
+    hijack_path,
+    run_correction,
+    validate_request=None,
+):
+    """Share the HTTP protocol; each backend returns a JSON log and messages to issue."""
+    from flask import Flask, request
+
+    app = Flask(__name__)
+    if disable_auth:
+        # Direct-forwarded requests must ignore the caller's bearer even without a server key.
+        @app.before_request
+        def ignore_request_bearer():
+            request.environ.pop("HTTP_AUTHORIZATION", None)
+
     def build_hijack_result(final_message, iterative_correction_info):
         finish_reason = final_message.get("finish_reason")
         if (
@@ -182,35 +235,13 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
         }
 
     def iterative_correction_process_func(body, headers, url_config):
-        """
-        `correcting_config` keys used here:
-        - model: default policy model if the request body omits model
-        - rollout_num: correction rollouts, default 5
-        - mode: iterative mode, default till_good
-        - iid_sampling: sample each rollout independently, default False
-        - rerun_bypass: direct-forward single-turn rerun extraction, default False
-        - chat: used to build correcting chat, mxlm.ChatAPI(**chat)
-        - far: used to build correcting adapter, FindAndReplaceCorrectionAdapter(**far)
-        - name_or_path: policy response template identity, defaults to its API model name
-        - policy_far: policy tokenizer and replacement limit
-
-        Request body `tools` are forwarded to both the correcting model, so it can judge whether
-        the arguments fit the schema, and the policy, so its continuation stays on schema.
-
-        Return dict:
-        - direct_forward: bool
-        - message: dict, contains role/content/tool_calls/reasoning*
-        - extra_info: dict, merged into response root
-        """
+        """Intercept chat/completions; other paths are direct-forwarded by mxlm."""
+        if validate_request is not None:
+            validate_request(body, url_config)
         if body.get("prompt_logprobs") and int(body.get("max_tokens", 10000)) <= 1:
             return {"direct_forward": True}
 
         correcting_config = deep_merge(cli_config, url_config)
-        print(
-            "[iterative_correction] correcting_config="
-            + json.dumps(correcting_config, ensure_ascii=False),
-            flush=True,
-        )
 
         req_messages = body.get("messages", [])
         rerun_bypass = bool(correcting_config.get("rerun_bypass", False))
@@ -233,7 +264,9 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             eval_name = str(eval_name)
         # TODO: support structured response_format in iterative correction.
         tools = body.get("tools")
-        prompt_object = mxlm.remove_last_assistant(req_messages)
+        prompt_object = req_messages
+        while prompt_object and prompt_object[-1]["role"] == "assistant":
+            prompt_object = prompt_object[:-1]
         if tools:
             # Same messages with different tools are different prompts for pass_at_k and logs.
             prompt_object = [prompt_object, tools]
@@ -245,14 +278,11 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             if auth_header.startswith("Bearer ")
             else ""
         )
-        selected_base_url = default_base_url
-
-        policy_kwargs = dict(
-            base_url=selected_base_url,
-            api_key=(default_api_key if disable_auth else bearer_token) or "no-key",
-            model=req_model,
-            name_or_path=correcting_config.get("name_or_path"),
-        )
+        policy_kwargs = {
+            "base_url": base_url,
+            "model": req_model,
+            "name_or_path": correcting_config.get("name_or_path"),
+        }
         for k in (
             "temperature",
             "max_tokens",
@@ -264,14 +294,32 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
             if k in body:
                 policy_kwargs[k] = body[k]
 
-        chat_policy = mxlm.ChatAPI(**policy_kwargs)
-        correcting_model, adapter_policy = get_correcting_model(
-            correcting_config, chat_policy
-        )
-        print("correcting_model.chat_correcting:")
-        print(correcting_model.chat_correcting)
-        print("chat_policy:")
-        print(chat_policy)
+        def generate():
+            corrected, candidates = run_correction(
+                correcting_config,
+                mxlm.ChatAPI(
+                    **policy_kwargs,
+                    api_key=(api_key if disable_auth else bearer_token) or "no-key",
+                ),
+                req_messages,
+                tools,
+                rollout_num=rollout_num,
+                mode=mode,
+                iid_sampling=iid_sampling,
+            )
+            expected = rollout_num if mode == "pass_at_k" else 1
+            if len(candidates) != expected:
+                raise ValueError(
+                    f"Expected {expected} correction candidates, got {len(candidates)}"
+                )
+            dump_corrected_log(
+                corrected,
+                log_dir=log_dir,
+                prompt_hash=prompt_hash,
+                eval_name=eval_name,
+            )
+            return corrected, candidates
+
         if mode == "pass_at_k":
             with PASS_AT_K_TASKS_LOCK:
                 task_state = PASS_AT_K_TASKS.setdefault(
@@ -299,75 +347,25 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
                     extra_info = (
                         f"{rollout_num - len(prompt_state['candidates']) + 1}/"
                         f"{rollout_num} of "
-                        "iterative_correction cached pass@k candidates"
+                        f"{hijack_path} cached pass@k candidates"
                     )
                 else:
-                    extra_info = corrected = correcting_model.iterative_correction(
-                        copy.deepcopy(req_messages),
-                        chat_policy,
-                        rollout_num=rollout_num,
-                        mode=mode,
-                        iid_sampling=iid_sampling,
-                        adapter_policy=adapter_policy,
-                        tools=tools,
-                    )
-                    try:
-                        __import__("boxx").tree([eval_name, prompt_hash, corrected])
-                    except ModuleNotFoundError:
-                        pass
-                    dump_corrected_log(
-                        corrected,
-                        log_dir=log_dir,
-                        prompt_hash=prompt_hash,
-                        eval_name=eval_name,
-                    )
-                    prompt_state["candidates"] = [
-                        correction_step["corrected_messages"][-1]
-                        for correction_till_good in corrected["correction_till_goods"]
-                        for correction_step in correction_till_good["correction_steps"]
-                    ]
-                    assert len(prompt_state["candidates"]) == rollout_num
+                    extra_info, prompt_state["candidates"] = generate()
 
                 selected_message = prompt_state["candidates"].pop(0)
                 prompt_state["times"] += 1
 
             return build_hijack_result(selected_message, extra_info)
 
-        # print("chat_policy created:", chat_policy, correcting_model.chat_correcting, flush=True)
-        corrected = correcting_model.iterative_correction(
-            copy.deepcopy(req_messages),
-            chat_policy,
-            rollout_num=rollout_num,
-            mode=mode,
-            iid_sampling=iid_sampling,
-            adapter_policy=adapter_policy,
-            tools=tools,
-        )
-        try:
-            __import__("boxx").tree(corrected)
-        except ModuleNotFoundError:
-            pass
-        dump_corrected_log(
-            corrected,
-            log_dir=log_dir,
-            prompt_hash=prompt_hash,
-            eval_name=eval_name,
-        )
-
-        corrected_messages = corrected.get("corrected_messages", [])
-        final_message = (
-            corrected_messages[-1]
-            if corrected_messages
-            else {"role": "assistant", "content": ""}
-        )
-        return build_hijack_result(final_message, corrected)
+        corrected, candidates = generate()
+        return build_hijack_result(candidates[0], corrected)
 
     mxlm.hijack_chat_api(
         app,
-        hijack_path="iterative_correction",
+        hijack_path=hijack_path,
         process_func=iterative_correction_process_func,
-        base_url=default_base_url,
-        api_key=default_api_key if disable_auth else None,
+        base_url=base_url,
+        api_key=api_key if disable_auth else None,
         heartbeat_interval_seconds=HEARTBEAT_INTERVAL_SECONDS,
         upstream_timeout=UPSTREAM_TIMEOUT,
         enable_cors=True,
@@ -376,9 +374,9 @@ def create_onpanda_app(base_url, api_key, cli_config, disable_auth=False, log_di
     return app
 
 
-if __name__ == "__main__":
+def _serve(create_app, hijack_path, description, example_config):
     parser = argparse.ArgumentParser(
-        description=__doc__.strip(),
+        description=description.strip(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -399,11 +397,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--default_url_config",
         default="",
-        help=(
-            "Default correcting config in url_config-path format. "
-            "Example: rollout_num@3,chat.model@peqwen3-sft-cm-it1000,"
-            "chat.is_reasoning@false"
-        ),
+        help=f"Default correcting config as JSON or url_config-path. Example: {example_config}",
     )
     parser.add_argument(
         "--model", default="", help="Default policy model if request body omits model"
@@ -432,31 +426,18 @@ if __name__ == "__main__":
     )
 
     startup_message = textwrap.dedent(f"""
-        [iterative_correction_api] listening on http://{args.host}:{args.port}
-        [iterative_correction_api] routes:
-          - /iterative_correction/v1/* (empty url_config)
-          - /iterative_correction/{{url_config}}/v1/*
-        [iterative_correction_api] config:
-          - CLI config: from --default_url_config and --model
-          - URL config: url_config in /iterative_correction/{{url_config}}/v1/*
-          - Merge in process_func: correcting_config = deep_merge(cli_config, url_config)
-          - Common correcting_config keys: rollout_num, mode, iid_sampling, chat.*, far.*, policy_far.*
-          - Eval logs: {log_dir or "disabled"}; filenames use Panda prompt_hash
-          - Request Bearer: {request_bearer_status}
-          - chat.* -> mxlm.ChatAPI(**chat), far.* -> onpanda.FindAndReplaceCorrectionAdapter(**far)
-          - policy_far.* -> policy tokenizer and replacement limit
-          - name_or_path -> policy ChatAPI response template identity; defaults to the API model name
-          - URL config overrides CLI config
-          - Aggregation moved to: python -m mxlm.aggregate_apis
-          - If using reasoning model as correcting model i.e. `chat.is_reasoning@true`, set `policy_far.max_replacement_tokens` to a small number like 1, otherwise the replacement token may inject too much information. It counts tokens of `policy_far.tokenizer`, which defaults to utf8_tokenizer i.e. bytes.
-        [iterative_correction_api] examples:
-          - curl http://{args.host}:{args.port}/iterative_correction/chat.model@model_name,chat.is_reasoning@false/v1/models
-          - curl http://{args.host}:{args.port}/iterative_correction/rollout_num@3,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false,far.tokenizer@utf8_tokenizer/v1/models
-          - python -m onpanda.server.iterative_correction_api --base_url http://127.0.0.1:9200/v1 --api_key key1 --default_url_config rollout_num@3,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false,far.tokenizer@utf8_tokenizer --model model_name
+        [{hijack_path}_api] listening on http://{args.host}:{args.port}
+        Routes: /{hijack_path}/v1/* and /{hijack_path}/{{url_config}}/v1/*
+        Route options override --default_url_config and --model; see --help for supported keys.
+        Eval logs: {log_dir or "disabled"}; filenames use the Panda prompt hash.
+        Request Bearer: {request_bearer_status}
+        Examples:
+          curl http://{args.host}:{args.port}/{hijack_path}/{example_config}/v1/models
+          python -m onpanda.server.{hijack_path}_api --base_url http://127.0.0.1:9200/v1 --default_url_config {example_config} --model policy-model
         """).strip()
     print(startup_message)
 
-    app = create_onpanda_app(
+    app = create_app(
         base_url=base_url,
         api_key=api_key,
         cli_config=cli_config,
@@ -469,4 +450,13 @@ if __name__ == "__main__":
         threaded=True,
         debug=args.debug,
         use_reloader=args.debug,
+    )
+
+
+if __name__ == "__main__":
+    _serve(
+        create_onpanda_app,
+        "iterative_correction",
+        __doc__,
+        "rollout_num@3,chat.model@peqwen3-sft-cm-it1000,chat.is_reasoning@false",
     )
